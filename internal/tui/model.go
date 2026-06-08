@@ -1,0 +1,252 @@
+// Package tui implements the deadman terminal UI with Bubble Tea. The original
+// imperative curses drawing is reframed as the Elm architecture: Update mutates
+// model state in a single goroutine (so target stats need no locks), View renders
+// the whole screen each frame, and probes run in commands (goroutines) that feed
+// results back as messages.
+package tui
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/yuu61/deadman/internal/config"
+	"github.com/yuu61/deadman/internal/monitor"
+	"github.com/yuu61/deadman/internal/ping"
+)
+
+// Row is either a ping target or a visual separator.
+type Row struct {
+	Sep    bool
+	Target *monitor.Target
+}
+
+// Options holds the command-line configuration.
+type Options struct {
+	Async      bool
+	Blink      bool
+	Scale      int
+	LogDir     string
+	ConfigPath string
+}
+
+// Model is the Bubble Tea model.
+type Model struct {
+	rows []Row
+	opts Options
+
+	width, height int
+
+	// column layout, recomputed on resize (the original update_info)
+	hostW, addrW, resW int
+
+	tick     int  // round counter, drives the spinner
+	arrowIdx int  // sync mode: target currently being probed
+	blinkOn  bool // async + blink: arrow visibility toggle
+
+	gen        int       // target-set generation; bumped on reload to drop stale msgs
+	pending    int       // async: probes still in flight this round
+	roundStart time.Time // async: when the current round began
+
+	hostInfo string
+}
+
+// New builds the initial model from parsed specs and options.
+func New(specs []config.TargetSpec, opts Options) (Model, error) {
+	rows, err := buildRows(specs, opts.Scale, nil)
+	if err != nil {
+		return Model{}, err
+	}
+	return Model{rows: rows, opts: opts, hostInfo: hostInfo()}, nil
+}
+
+// buildRows turns specs into rows. Targets present in existing (matched by Key)
+// are reused so their history/stats survive a reload.
+func buildRows(specs []config.TargetSpec, scale int, existing []Row) ([]Row, error) {
+	index := map[string]*monitor.Target{}
+	for _, r := range existing {
+		if r.Target != nil {
+			index[r.Target.Key()] = r.Target
+		}
+	}
+
+	rows := make([]Row, 0, len(specs))
+	for _, s := range specs {
+		if s.IsSeparator {
+			rows = append(rows, Row{Sep: true})
+			continue
+		}
+		spec := ping.Spec{
+			Addr:   s.Addr,
+			OSName: s.Relay["os"],
+			Source: s.Source,
+			TCP:    s.TCP,
+			Relay:  s.Relay,
+		}
+		t, err := monitor.NewTarget(s.Name, spec, scale)
+		if err != nil {
+			return nil, err
+		}
+		if old, ok := index[t.Key()]; ok {
+			rows = append(rows, Row{Target: old})
+		} else {
+			rows = append(rows, Row{Target: t})
+		}
+	}
+	return rows, nil
+}
+
+// loadRows reparses the config file for a SIGHUP/manual reload.
+func loadRows(path string, scale int, existing []Row) ([]Row, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	specs, err := config.ParseConfig(f)
+	if err != nil {
+		return nil, false
+	}
+	rows, err := buildRows(specs, scale, existing)
+	if err != nil {
+		return nil, false
+	}
+	return rows, true
+}
+
+func hostInfo() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	if addrs, err := net.LookupHost(host); err == nil && len(addrs) > 0 {
+		return fmt.Sprintf("From: %s (%s)", host, addrs[0])
+	}
+	return fmt.Sprintf("From: %s", host)
+}
+
+// Init starts the first ping round immediately.
+func (m Model) Init() tea.Cmd {
+	return m.beginRound()
+}
+
+// Update is the Elm-style state transition.
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		m.recalcWidths()
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		case "r":
+			for _, r := range m.rows {
+				if r.Target != nil {
+					r.Target.Refresh()
+				}
+			}
+			return m, nil
+		case "R":
+			return m, func() tea.Msg { return reloadMsg{} }
+		}
+		return m, nil
+
+	case reloadMsg:
+		if rows, ok := loadRows(m.opts.ConfigPath, m.opts.Scale, m.rows); ok {
+			m.rows = rows
+			m.recalcWidths()
+		}
+		// New generation: stale timers/results from the previous target set are
+		// ignored, and a fresh round starts cleanly.
+		m.gen++
+		m.pending = 0
+		return m, m.beginRound()
+
+	case roundStartMsg:
+		if msg.gen != m.gen {
+			return m, nil
+		}
+		m.tick++
+		if m.opts.Blink {
+			m.blinkOn = !m.blinkOn
+		}
+		if m.opts.Async {
+			return m.startAsyncRound()
+		}
+		return m.startSyncRound()
+
+	case pingStartMsg:
+		if msg.gen != m.gen {
+			return m, nil
+		}
+		m.arrowIdx = msg.idx
+		return m, m.pingOne(msg.idx, msg.gen)
+
+	case pingResultMsg:
+		if msg.gen != m.gen {
+			return m, nil
+		}
+		if msg.target != nil {
+			msg.target.Consume(msg.res)
+			if m.opts.LogDir != "" {
+				_ = monitor.AppendLog(m.opts.LogDir, msg.target, time.Now())
+			}
+		}
+		if m.opts.Async {
+			m.pending--
+			if m.pending <= 0 {
+				m.tick++ // second spinner step per round, matching the original
+				return m, m.scheduleNextRound()
+			}
+			return m, nil
+		}
+		return m, m.advanceSync(msg.idx)
+	}
+
+	return m, nil
+}
+
+// recalcWidths recomputes the dynamic column widths (the original update_info).
+func (m *Model) recalcWidths() {
+	// Seed the floors with a trailing space, matching the original update_info
+	// (len("HOSTNAME ") = 9, len("ADDRESS ") = 8).
+	hlen := len("HOSTNAME ")
+	for _, r := range m.rows {
+		if r.Target == nil {
+			continue
+		}
+		if l := displayWidth(r.Target.Name); l > hlen {
+			hlen = l
+		}
+	}
+	if hlen > maxHostnameLength {
+		hlen = maxHostnameLength
+	}
+	m.hostW = hlen
+
+	alen := len("ADDRESS ")
+	for _, r := range m.rows {
+		if r.Target == nil {
+			continue
+		}
+		if l := displayWidth(r.Target.Addr); l > alen {
+			alen = l
+		}
+	}
+	if alen > maxAddressLength {
+		alen = maxAddressLength
+	} else {
+		alen += 5
+	}
+	m.addrW = alen
+
+	// arrow + host + 1 + addr + 1 + refHeader + 2 + result
+	used := len(arrow) + m.hostW + 1 + m.addrW + 1 + len(refHeader) + 2
+	m.resW = max(m.width-used, 10)
+}
