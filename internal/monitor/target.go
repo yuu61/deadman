@@ -23,6 +23,11 @@ const (
 // percentMultiplier scales a 0..1 ratio to a 0..100 percentage.
 const percentMultiplier = 100.0
 
+// jitterGain is the RFC 3550 §6.4.1 smoothing divisor: Jit += (|ΔRTT| - Jit)/16.
+// The 1/16 EWMA self-decays, so JIT reflects recent variation on this unbounded
+// stream rather than freezing into a lifetime statistic.
+const jitterGain = 16.0
+
 // historyCap bounds the retained result history. Unlike the original (which
 // capped on insert using the terminal-width-dependent length, losing history on
 // shrink/grow), we keep a fixed ring and slice to the current width at render.
@@ -41,6 +46,9 @@ type Target struct {
 	Loss     int
 	LossRate float64
 	RTT      float64 // current.
+	Min      float64 // min successful RTT (lifetime).
+	Max      float64 // max successful RTT (lifetime).
+	Jit      float64 // RFC 3550 smoothed jitter (EWMA of |ΔRTT|), ms.
 	Tot      float64 // sum of all successful RTTs.
 	Avg      float64 // mean RTT.
 	Snt      int     // number sent.
@@ -48,6 +56,7 @@ type Target struct {
 
 	history []string
 	scale   int
+	prevRTT float64 // previous successful RTT, for the jitter delta.
 }
 
 // NewTarget builds a Target and its Pinger from a Spec.
@@ -78,6 +87,7 @@ func (t *Target) Consume(res ping.Result) {
 		t.Tot += res.RTT
 		t.Avg = t.Tot / float64(t.Snt)
 		t.TTL = res.TTL
+		t.foldSuccessRTT(res.RTT)
 	} else {
 		t.Loss++
 		t.State = Down
@@ -110,11 +120,15 @@ func (t *Target) Refresh() {
 	t.Loss = 0
 	t.LossRate = 0
 	t.RTT = 0
+	t.Min = 0
+	t.Max = 0
+	t.Jit = 0
 	t.Tot = 0
 	t.Avg = 0
 	t.Snt = 0
 	t.TTL = 0
 	t.history = nil
+	t.prevRTT = 0
 }
 
 // Key is a stable identity used to preserve history across SIGHUP reloads. It is
@@ -151,6 +165,34 @@ func (t *Target) Key() string {
 	}
 
 	return sb.String()
+}
+
+// foldSuccessRTT folds a successful probe's RTT into the running min/max and the
+// RFC 3550 smoothed jitter. It assumes t.Snt is already incremented, so Snt-Loss
+// is the number of successes including this one; 1 means the first sample (seed
+// min/max, no jitter delta yet). The success count is used rather than a
+// prevRTT==0 sentinel so a genuine 0ms RTT is not mistaken for "no predecessor".
+// Jitter is measured between consecutive successes; failures in between are
+// skipped (matching mtr).
+func (t *Target) foldSuccessRTT(rtt float64) {
+	if t.Snt-t.Loss == 1 {
+		t.Min = rtt
+		t.Max = rtt
+		t.prevRTT = rtt
+
+		return
+	}
+
+	t.Min = min(t.Min, rtt)
+	t.Max = max(t.Max, rtt)
+
+	d := rtt - t.prevRTT
+	if d < 0 {
+		d = -d
+	}
+
+	t.Jit += (d - t.Jit) / jitterGain
+	t.prevRTT = rtt
 }
 
 // rttBars are the block elements for ascending RTT buckets; bar i is used when

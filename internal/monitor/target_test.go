@@ -58,6 +58,16 @@ func TestConsume(t *testing.T) {
 	if tg.State != Up {
 		t.Errorf("State = %v, want Up", tg.State)
 	}
+	// min/max over the successful RTTs (10, 30).
+	if tg.Min != 10 || tg.Max != 30 {
+		t.Errorf("Min/Max = %v/%v, want 10/30", tg.Min, tg.Max)
+	}
+	// Jitter is the RFC 3550 EWMA of |ΔRTT| over consecutive successes: the first
+	// success (RTT 10) only seeds prevRTT; the second (RTT 30) gives
+	// Jit = 0 + (|30-10| - 0)/16 = 1.25. The failure between them is skipped.
+	if math.Abs(tg.Jit-1.25) > 1e-9 {
+		t.Errorf("Jit = %v, want 1.25", tg.Jit)
+	}
 	// History is newest-first: last result was RTT 30 (scale 10 -> ▄).
 	if got := tg.Glyphs(1); len(got) != 1 || got[0] != "▄" {
 		t.Errorf("Glyphs(1) = %v, want [▄]", got)
@@ -71,10 +81,17 @@ func TestConsume(t *testing.T) {
 func TestRefresh(t *testing.T) {
 	tg := &Target{scale: 10}
 	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 5})
+	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 25})
 	tg.Refresh()
 
 	if tg.Snt != 0 || tg.Loss != 0 || tg.State != Unknown || len(tg.Glyphs(10)) != 0 {
 		t.Errorf("after Refresh: %+v history=%v", tg, tg.Glyphs(10))
+	}
+	// The new running stats must reset too, or a refreshed target keeps stale
+	// min/max/jitter (the fields above do not cover them).
+	if tg.Min != 0 || tg.Max != 0 || tg.Jit != 0 || tg.prevRTT != 0 {
+		t.Errorf("after Refresh: Min=%v Max=%v Jit=%v prevRTT=%v, want all 0",
+			tg.Min, tg.Max, tg.Jit, tg.prevRTT)
 	}
 }
 

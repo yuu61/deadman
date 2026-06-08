@@ -53,7 +53,10 @@ func TestViewRendersTargetsAndSeparator(t *testing.T) {
 
 	for _, want := range []string{
 		"Dead Man", "HOSTNAME", "ADDRESS", "LOSS",
+		"MIN", "MAX", "JIT", "FAIL", // the added statistics columns.
 		"host1", "1.2.3.4", "host2", "5.6.7.8", "▁",
+		// The footer lists every key (always expanded, no toggle).
+		"(q)uit", "(r)efresh", "(R)eload", "(m)in/max",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("View output missing %q\n---\n%s", want, out)
@@ -62,6 +65,83 @@ func TestViewRendersTargetsAndSeparator(t *testing.T) {
 	// The separator row renders as a run of dashes.
 	if !strings.Contains(out, "----------") {
 		t.Errorf("View output missing separator dashes\n---\n%s", out)
+	}
+}
+
+func TestMinMaxToggleHidesColumns(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "host1", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(
+		t,
+		m,
+		tea.WindowSizeMsg{Width: 120, Height: 40},
+		pingResultMsg{
+			idx:    0,
+			target: m.rows[0].Target,
+			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
+		},
+	)
+	// MIN/MAX shown by default.
+	for _, want := range []string{"MIN", "MAX", "JIT", "FAIL"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("before toggle: output missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// 'm' hides MIN/MAX; JIT/FAIL and the rest stay.
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+
+	for _, gone := range []string{"MIN", "MAX"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("after toggle: %q should be hidden\n---\n%s", gone, out)
+		}
+	}
+
+	for _, want := range []string{"LOSS", "JIT", "FAIL"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("after toggle: output missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// 'm' again restores them.
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if !strings.Contains(out, "MIN") || !strings.Contains(out, "MAX") {
+		t.Errorf("after second toggle: MIN/MAX should be back\n---\n%s", out)
+	}
+}
+
+func TestColumnsConfigHidesAtStart(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "host1", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10, Columns: map[string]bool{"MIN": false, "MAX": false}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(
+		t,
+		m,
+		tea.WindowSizeMsg{Width: 120, Height: 40},
+		pingResultMsg{
+			idx:    0,
+			target: m.rows[0].Target,
+			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
+		},
+	)
+	// Config hides MIN/MAX from the very first render (no key needed).
+	if strings.Contains(out, "MIN") || strings.Contains(out, "MAX") {
+		t.Errorf("MIN/MAX should be hidden by config at startup\n---\n%s", out)
+	}
+
+	for _, want := range []string{"LOSS", "RTT", "AVG", "JIT", "SNT", "FAIL"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n---\n%s", want, out)
+		}
 	}
 }
 

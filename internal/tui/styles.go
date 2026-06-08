@@ -21,8 +21,6 @@ const (
 	// too narrow to give it the leftover space.
 	minResultWidth = 10
 
-	refHeader = " LOSS  RTT  AVG  SNT"
-
 	// pingInterval is the gap between consecutive targets in sync mode;
 	// allTargetInterval is the pause between full ping rounds.
 	pingInterval      = 50 * time.Millisecond

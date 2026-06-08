@@ -78,7 +78,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	specs, err := config.ParseConfig(f)
+	cfg, err := config.ParseConfig(f)
 	_ = f.Close()
 
 	if err != nil {
@@ -86,7 +86,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	m, err := tui.New(specs, opts)
+	opts.Columns = cfg.Columns
+
+	m, err := tui.New(cfg.Targets, opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

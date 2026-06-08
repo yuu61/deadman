@@ -20,10 +20,12 @@ tcp-t	1.2.3.4 tcp=dstport:80
 `
 
 func TestParseConfig(t *testing.T) {
-	specs, err := ParseConfig(strings.NewReader(sample))
+	cfg, err := ParseConfig(strings.NewReader(sample))
 	if err != nil {
 		t.Fatalf("ParseConfig error: %v", err)
 	}
+
+	specs := cfg.Targets
 
 	if len(specs) != 8 {
 		t.Fatalf("got %d specs, want 8: %+v", len(specs), specs)
@@ -74,22 +76,47 @@ func TestParseConfig(t *testing.T) {
 
 func TestParseConfigCommentTrailer(t *testing.T) {
 	// A ";#" trailer is stripped.
-	specs, err := ParseConfig(strings.NewReader("host 1.2.3.4 ;# trailing comment\n"))
+	cfg, err := ParseConfig(strings.NewReader("host 1.2.3.4 ;# trailing comment\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	specs := cfg.Targets
 	if len(specs) != 1 || specs[0].Name != "host" || specs[0].Addr != "1.2.3.4" {
 		t.Fatalf("got %+v", specs)
 	}
 }
 
-func TestParseConfigEmpty(t *testing.T) {
-	specs, err := ParseConfig(strings.NewReader("\n  \n#only comments\n"))
+func TestParseConfigColumns(t *testing.T) {
+	cfg, err := ParseConfig(strings.NewReader(
+		"columns MIN=off MAX=off snt=on\n---\nhost 1.2.3.4\n",
+	))
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	// The directive line is not a target; the real target still parses.
+	if len(cfg.Targets) != 2 || cfg.Targets[1].Name != "host" {
+		t.Fatalf("targets = %+v", cfg.Targets)
+	}
+
+	// Only the named columns appear; keys are upper-cased; on/off both parse.
+	if cfg.Columns["MIN"] || cfg.Columns["MAX"] || !cfg.Columns["SNT"] {
+		t.Errorf("columns = %+v", cfg.Columns)
+	}
+
+	if _, ok := cfg.Columns["RTT"]; ok {
+		t.Errorf("unspecified RTT should be absent from overrides: %+v", cfg.Columns)
+	}
+}
+
+func TestParseConfigEmpty(t *testing.T) {
+	cfg, err := ParseConfig(strings.NewReader("\n  \n#only comments\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := cfg.Targets
 	if len(specs) != 0 {
 		t.Fatalf("got %d specs, want 0: %+v", len(specs), specs)
 	}

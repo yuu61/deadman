@@ -21,7 +21,7 @@ func (m Model) View() string {
 	b.WriteString(m.titleLine()) // line 1: host info (+spinner) and version.
 	b.WriteByte('\n')
 	b.WriteString(rear) // line 2.
-	fmt.Fprintf(&b, "RTT Scale %dms. Keys: (r)efresh", m.opts.Scale)
+	fmt.Fprintf(&b, "RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max", m.opts.Scale)
 	b.WriteByte('\n')
 	b.WriteByte('\n')             // line 3: blank.
 	b.WriteString(m.headerLine()) // line 4: column headers.
@@ -66,7 +66,7 @@ func (m Model) headerLine() string {
 	) + " " + padRight(
 		"ADDRESS",
 		m.addrW,
-	) + " " + refHeader + "  RESULT"
+	) + " " + m.statsHeader() + "  RESULT"
 
 	return styleBold.Render(h)
 }
@@ -100,8 +100,7 @@ func (m Model) arrowFor(idx int) string {
 func (m Model) targetLine(idx int, t *monitor.Target) string {
 	ar := m.arrowFor(idx)
 
-	stats := fmt.Sprintf(" %3d%% %4d %4d %4d  ",
-		int(t.LossRate), int(t.RTT), int(t.Avg), t.Snt)
+	stats := m.statsLine(t)
 
 	text := ar + padRight(t.Name, m.hostW) + " " + padRight(t.Addr, m.addrW) + " " + stats
 	if t.State != monitor.Up {

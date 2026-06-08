@@ -24,6 +24,18 @@ type TargetSpec struct {
 	IsSeparator bool
 }
 
+// Config is the parsed configuration: the target list plus optional column
+// visibility overrides from "columns" directive lines. Columns holds only the
+// columns explicitly named; absent columns keep their default (shown).
+type Config struct {
+	Targets []TargetSpec
+	Columns map[string]bool // column key (upper-case) -> shown.
+}
+
+// columnDirective is the first token of a column-visibility line:
+// "columns KEY=on KEY=off ..." (a host named "columns" is not expected).
+const columnDirective = "columns"
+
 var (
 	reSpaces      = regexp.MustCompile(`\s+`)
 	reComment     = regexp.MustCompile(`^#.*`)
@@ -38,9 +50,10 @@ var relayKeys = map[string]bool{
 	"username": true, "password": true, "verify": true,
 }
 
-// ParseConfig reads a deadman config from r and returns the parsed target specs.
-func ParseConfig(r io.Reader) ([]TargetSpec, error) {
-	var specs []TargetSpec
+// ParseConfig reads a deadman config from r and returns the parsed targets plus
+// any column-visibility overrides.
+func ParseConfig(r io.Reader) (Config, error) {
+	cfg := Config{Columns: map[string]bool{}}
 
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
@@ -57,25 +70,39 @@ func ParseConfig(r io.Reader) ([]TargetSpec, error) {
 
 		fields := strings.Split(line, " ")
 
-		spec := TargetSpec{Name: fields[0], Relay: map[string]string{}}
-		if len(fields) > 1 {
-			spec.Addr = fields[1]
-		}
-
-		if len(fields) > 2 {
-			for _, kv := range fields[2:] {
-				applyAttr(&spec, kv)
+		if fields[0] == columnDirective {
+			for _, kv := range fields[1:] {
+				applyColumn(cfg.Columns, kv)
 			}
+
+			continue
 		}
 
-		if reSeparator.MatchString(spec.Name) {
-			spec.IsSeparator = true
-		}
-
-		specs = append(specs, spec)
+		cfg.Targets = append(cfg.Targets, parseTarget(fields))
 	}
 
-	return specs, sc.Err()
+	return cfg, sc.Err()
+}
+
+// parseTarget builds a TargetSpec from the whitespace-split fields of one
+// non-directive config line.
+func parseTarget(fields []string) TargetSpec {
+	spec := TargetSpec{Name: fields[0], Relay: map[string]string{}}
+	if len(fields) > 1 {
+		spec.Addr = fields[1]
+	}
+
+	if len(fields) > 2 {
+		for _, kv := range fields[2:] {
+			applyAttr(&spec, kv)
+		}
+	}
+
+	if reSeparator.MatchString(spec.Name) {
+		spec.IsSeparator = true
+	}
+
+	return spec
 }
 
 // applyAttr parses one "key=value" token and stores it on spec. Relay keys land
@@ -98,5 +125,25 @@ func applyAttr(spec *TargetSpec, kv string) {
 		spec.TCP = value
 	default:
 		// unknown attribute key: ignored.
+	}
+}
+
+// applyColumn parses one "KEY=on|off" token from a "columns" directive and records
+// the column's visibility (key upper-cased) in cols. on/off, true/false, yes/no and
+// 1/0 are accepted (case-insensitive); malformed tokens and unknown bool spellings
+// are ignored, matching applyAttr's lenient handling.
+func applyColumn(cols map[string]bool, kv string) {
+	p := strings.SplitN(kv, "=", 2)
+	if len(p) != 2 {
+		return
+	}
+
+	switch strings.ToLower(p[1]) {
+	case "on", "true", "yes", "1":
+		cols[strings.ToUpper(p[0])] = true
+	case "off", "false", "no", "0":
+		cols[strings.ToUpper(p[0])] = false
+	default:
+		// unknown bool spelling: ignored.
 	}
 }

@@ -25,13 +25,15 @@ type Row struct {
 	Target *monitor.Target
 }
 
-// Options holds the command-line configuration.
+// Options holds the command-line configuration plus the column-visibility
+// overrides parsed from the config file.
 type Options struct {
 	Async      bool
 	Blink      bool
 	Scale      int
 	LogDir     string
 	ConfigPath string
+	Columns    map[string]bool // per-column visibility overrides (config file).
 }
 
 // Model is the Bubble Tea model.
@@ -43,6 +45,8 @@ type Model struct {
 
 	// column layout, recomputed on resize (the original update_info).
 	hostW, addrW, resW int
+
+	visible map[string]bool // per-column visibility (config defaults + 'm' toggle).
 
 	tick     int  // round counter, drives the spinner.
 	arrowIdx int  // sync mode: target currently being probed.
@@ -63,7 +67,12 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 		return Model{}, err
 	}
 
-	return Model{rows: rows, opts: opts, hostInfo: hostInfo()}, nil
+	return Model{
+		rows:     rows,
+		opts:     opts,
+		hostInfo: hostInfo(),
+		visible:  buildVisible(opts.Columns),
+	}, nil
 }
 
 // buildRows turns specs into rows. Targets present in existing (matched by Key)
@@ -108,26 +117,27 @@ func buildRows(specs []config.TargetSpec, scale int, existing []Row) ([]Row, err
 	return rows, nil
 }
 
-// loadRows reparses the config file for a SIGHUP/manual reload.
-func loadRows(path string, scale int, existing []Row) ([]Row, bool) {
+// loadRows reparses the config file for a SIGHUP/manual reload, returning the new
+// rows and the column-visibility overrides.
+func loadRows(path string, scale int, existing []Row) ([]Row, map[string]bool, bool) {
 	// #nosec G304 -- path is the operator-supplied config file, not remote input.
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	defer func() { _ = f.Close() }()
 
-	specs, err := config.ParseConfig(f)
+	cfg, err := config.ParseConfig(f)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 
-	rows, err := buildRows(specs, scale, existing)
+	rows, err := buildRows(cfg.Targets, scale, existing)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 
-	return rows, true
+	return rows, cfg.Columns, true
 }
 
 func hostInfo() string {
@@ -188,6 +198,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "R":
 		return m, func() tea.Msg { return reloadMsg{} }
+	case "m":
+		// Toggle the MIN/MAX pair: show both unless both are already shown.
+		// The header width changes, so the result-bar column is recomputed.
+		show := !m.visible[colMin] || !m.visible[colMax]
+		m.visible[colMin] = show
+		m.visible[colMax] = show
+		m = m.recalcWidths()
+
+		return m, nil
 	}
 
 	return m, nil
@@ -196,8 +215,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleReload reparses the config and starts a fresh generation, so stale
 // timers/results from the previous target set are ignored.
 func (m Model) handleReload() (tea.Model, tea.Cmd) {
-	if rows, ok := loadRows(m.opts.ConfigPath, m.opts.Scale, m.rows); ok {
+	if rows, cols, ok := loadRows(m.opts.ConfigPath, m.opts.Scale, m.rows); ok {
 		m.rows = rows
+		m.visible = buildVisible(cols)
 		m = m.recalcWidths()
 	}
 
@@ -313,8 +333,8 @@ func (m Model) recalcWidths() Model {
 
 	m.addrW = alen
 
-	// arrow + host + 1 + addr + 1 + refHeader + 2 + result.
-	used := len(arrow) + m.hostW + 1 + m.addrW + 1 + len(refHeader) + 2
+	// arrow + host + 1 + addr + 1 + statsHeader + 2 + result.
+	used := len(arrow) + m.hostW + 1 + m.addrW + 1 + len(m.statsHeader()) + 2
 	m.resW = max(m.width-used, minResultWidth)
 
 	return m
