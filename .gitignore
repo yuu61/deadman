@@ -1,6 +1,7 @@
 myconf
 test.conf
 *.exe
+/plans/
 
 # ビルド生成物 (Makefile)
 /bin/
