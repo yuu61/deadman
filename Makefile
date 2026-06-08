@@ -12,6 +12,9 @@ PKG       := ./cmd/deadman
 BIN_DIR   := bin
 DIST_DIR  := dist
 
+# 実行ファイルの拡張子 (Windows は .exe、その他は空)。go env GOEXE は GOOS の上書きにも追従する。
+EXE       := $(shell $(GO) env GOEXE)
+
 # git から導出するバージョン文字列 (タグが無ければコミットハッシュ、未コミット差分は -dirty)。
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
@@ -30,7 +33,7 @@ PLATFORMS := \
 # ---- ビルド ----------------------------------------------------------------
 .PHONY: build
 build: ## 現在の OS/アーキテクチャ向けにビルド (bin/deadman)
-	$(GO) build $(BUILDFLAGS) -o $(BIN_DIR)/$(BIN_NAME) $(PKG)
+	$(GO) build $(BUILDFLAGS) -o $(BIN_DIR)/$(BIN_NAME)$(EXE) $(PKG)
 
 .PHONY: cross
 cross: ## 全プラットフォーム向けにクロスコンパイル (dist/ へ出力)
