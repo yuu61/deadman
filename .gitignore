@@ -1,3 +1,9 @@
 myconf
 test.conf
 *.exe
+
+# ビルド生成物 (Makefile)
+/bin/
+/dist/
+/coverage.out
+/coverage.html
