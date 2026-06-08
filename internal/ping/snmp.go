@@ -12,9 +12,8 @@ import (
 
 const snmpTimeout = 5 * time.Second
 
-// snmpPinger shells out to `snmpping` (SNMPv2, RFC4560). With exec's argv passing
-// there is no shell, so the community string needs no escaping (unlike the
-// original which built a shell command line).
+// snmpPinger shells out to `snmpping` (SNMPv2, RFC4560). exec passes argv directly
+// with no shell, so the community string needs no escaping.
 type snmpPinger struct {
 	addr      string
 	relay     string

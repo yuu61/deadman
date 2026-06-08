@@ -6,10 +6,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Layout constants ported from the original curses UI.
+// Layout constants for the TUI screen.
 const (
 	titleProgName = "Dead Man"
-	titleVersion  = "[ver go-1.0.0]"
+	titleVersion  = "[ver 1.0.0]"
 
 	arrow = " > "
 	rear  = "   "

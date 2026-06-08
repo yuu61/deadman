@@ -2,27 +2,26 @@
 //
 // Each probing mode (direct ICMP, SSH relay, SNMP, network namespace, VRF,
 // RouterOS REST API, TCP/hping3) implements the Pinger interface. New selects an
-// implementation from a Spec the same way the original Python Ping class branched
-// on its "via" attribute.
+// implementation from a Spec based on its "via" and other relay attributes.
 package ping
 
 import "context"
 
-// ResultCode classifies a probe outcome. The values match the original numeric
-// constants so the result glyphs (X/t/s) map cleanly.
+// ResultCode classifies a probe outcome. The monitor layer maps each code to its
+// result-bar glyph (a success bar, or one of X/t/s).
 type ResultCode int
 
-// Probe outcome codes. The values match the original numeric constants so the
-// result glyphs (X/t/s) map cleanly.
+// Probe outcome codes. The concrete values are unobserved outside this package;
+// callers always compare against these named constants.
 const (
-	Success    ResultCode = 0
-	Failed     ResultCode = -1
-	SSHTimeout ResultCode = -2
-	SSHFailed  ResultCode = -3
+	Success ResultCode = iota
+	Failed
+	SSHTimeout
+	SSHFailed
 )
 
 // Result is the outcome of a single probe. RTT is in milliseconds; TTL is -1 when
-// unknown (it is captured but, as in the original, never displayed).
+// unknown (it is captured but not displayed).
 type Result struct {
 	Success bool
 	Code    ResultCode
@@ -31,7 +30,8 @@ type Result struct {
 }
 
 // Pinger sends a single probe. Failures are reported via Result.Code rather than
-// an error, mirroring the original design.
+// an error, so a missing relay binary (e.g. no ssh on Windows) degrades to a
+// failure glyph instead of an error path.
 type Pinger interface {
 	Send(ctx context.Context) Result
 }

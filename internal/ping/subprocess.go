@@ -42,7 +42,7 @@ func newSubprocessPinger(s Spec, mode subprocessMode) (Pinger, error) {
 		return nil, fmt.Errorf("'relay' is not specified for %s", s.Addr)
 	}
 	// The remote `ping` only takes a source flag on Linux (-I) / Darwin (-S);
-	// fail loudly otherwise, matching the original RuntimeError.
+	// reject a source on any other OS.
 	if s.Source != "" && s.OSName != osLinux && s.OSName != osDarwin {
 		return nil, fmt.Errorf("'source' not supported on %s", s.OSName)
 	}
@@ -89,10 +89,10 @@ func (p *subprocessPinger) Send(ctx context.Context) Result {
 	return ParsePingOutput(stdout.String())
 }
 
-// sshFailure classifies an ssh-level failure into the result glyphs the original
-// intended but never reached: connect timeout -> t, other ssh-level failure
-// (exit 255) -> s. ok is false when this was not an ssh-level failure, in which
-// case the caller falls back to parsing the remote ping output (no reply -> X).
+// sshFailure classifies an ssh-level failure into a result glyph: connect timeout
+// -> t, other ssh-level failure (exit 255) -> s. ok is false when this was not an
+// ssh-level failure, in which case the caller falls back to parsing the remote
+// ping output (no reply -> X).
 func sshFailure(ctx context.Context, err error, stderr string) (Result, bool) {
 	if ctx.Err() == context.DeadlineExceeded {
 		return Result{Code: SSHTimeout, TTL: -1}, true

@@ -1,8 +1,7 @@
-// Package tui implements the deadman terminal UI with Bubble Tea. The original
-// imperative curses drawing is reframed as the Elm architecture: Update mutates
-// model state in a single goroutine (so target stats need no locks), View renders
-// the whole screen each frame, and probes run in commands (goroutines) that feed
-// results back as messages.
+// Package tui implements the deadman terminal UI with Bubble Tea. It follows the
+// Elm architecture: Update mutates model state in a single goroutine (so target
+// stats need no locks), View renders the whole screen each frame, and probes run
+// in commands (goroutines) that feed results back as messages.
 package tui
 
 import (
@@ -43,7 +42,7 @@ type Model struct {
 
 	width, height int
 
-	// column layout, recomputed on resize (the original update_info).
+	// column layout, recomputed on resize.
 	hostW, addrW, resW int
 
 	visible map[string]bool // per-column visibility (config defaults + 'm' toggle).
@@ -282,7 +281,7 @@ func (m Model) handlePingResult(msg pingResultMsg) (tea.Model, tea.Cmd) {
 
 	m.pending--
 	if m.pending <= 0 {
-		m.tick++ // second spinner step per round, matching the original.
+		m.tick++ // second spinner step per round.
 
 		return m, m.scheduleNextRound()
 	}
@@ -290,11 +289,11 @@ func (m Model) handlePingResult(msg pingResultMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// recalcWidths recomputes the dynamic column widths (the original update_info)
-// and returns the updated model, keeping every Model method a value receiver.
+// recalcWidths recomputes the dynamic column widths and returns the updated model,
+// keeping every Model method a value receiver.
 func (m Model) recalcWidths() Model {
-	// Seed the floors with a trailing space, matching the original update_info
-	// (len("HOSTNAME ") = 9, len("ADDRESS ") = 8).
+	// Seed the floors with a trailing space (len("HOSTNAME ") = 9,
+	// len("ADDRESS ") = 8).
 	hlen := len("HOSTNAME ")
 
 	for _, r := range m.rows {

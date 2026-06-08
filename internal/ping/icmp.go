@@ -14,9 +14,9 @@ const icmpTimeout = 1 * time.Second
 // usPerMs converts microseconds to milliseconds.
 const usPerMs = 1000.0
 
-// icmpPinger sends a native ICMP echo using pro-bing, replacing the original's
-// shell-out to `ping -c 1`. Native ICMP is portable (Windows/Linux/macOS) and
-// avoids OS-specific output parsing.
+// icmpPinger sends a native ICMP echo using pro-bing. Native ICMP is portable
+// (Windows/Linux/macOS) and avoids shelling out to `ping -c 1` and parsing
+// OS-specific output.
 type icmpPinger struct {
 	addr       string
 	source     string
@@ -48,8 +48,8 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 	pinger.RecordTTLs = true
 
 	if p.source != "" {
-		// The original `ping -I` accepted either a source IP or (on Linux) an
-		// interface name. pro-bing's Source binds by IP, InterfaceName by name.
+		// A source may be a source IP or (on Linux) an interface name:
+		// pro-bing's Source binds by IP, InterfaceName by name.
 		if net.ParseIP(p.source) != nil {
 			pinger.Source = p.source
 		} else {

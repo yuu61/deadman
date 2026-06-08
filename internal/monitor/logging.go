@@ -13,9 +13,9 @@ const (
 	logFilePerm os.FileMode = 0o600
 )
 
-// AppendLog appends one line per probe to <dir>/<target name>, matching the
-// original format: "<timestamp> <rtt> <avg> <snt>". The timestamp is passed in so
-// the function stays testable.
+// AppendLog appends one line per probe to <dir>/<target name> in the format
+// "<timestamp> <rtt> <avg> <snt>". The timestamp is passed in so the function
+// stays testable.
 func AppendLog(dir string, t *Target, now time.Time) error {
 	err := os.MkdirAll(dir, logDirPerm)
 	if err != nil {

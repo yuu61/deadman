@@ -24,9 +24,8 @@ func newHPingPinger(s Spec) (Pinger, error) {
 	opts := map[string]string{}
 
 	for opt := range strings.SplitSeq(s.TCP, ",") {
-		kv := strings.SplitN(opt, ":", 2)
-		if len(kv) == 2 {
-			opts[kv[0]] = kv[1]
+		if k, v, ok := strings.Cut(opt, ":"); ok {
+			opts[k] = v
 		}
 	}
 

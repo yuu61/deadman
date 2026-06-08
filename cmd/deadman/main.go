@@ -1,6 +1,6 @@
-// Command deadman is a TUI host-status monitor using ping. It is a Go rewrite of
-// the original Python tool, keeping the config-file format and CLI flags
-// compatible while adding cross-platform (Windows/Linux/macOS) support.
+// Command deadman is a cross-platform (Windows/Linux/macOS) TUI host-status
+// monitor that probes hosts with ICMP echo (or a relay) and renders their
+// reachability, loss, and RTT as a live result bar.
 package main
 
 import (
@@ -19,9 +19,9 @@ import (
 const defaultScale = 10
 
 // parseArgs parses the command line into TUI options. Flags may appear before or
-// after the configfile (the original argparse intermixed them freely), which Go's
-// flag package does not do on its own; we collect positionals while re-parsing the
-// remainder.
+// after the configfile; Go's flag package stops at the first non-flag argument, so
+// we collect positionals and re-parse the remainder to let flags and the
+// configfile intermix.
 func parseArgs(args []string) (tui.Options, error) {
 	fs := flag.NewFlagSet("deadman", flag.ContinueOnError)
 	scale := fs.Int("s", defaultScale, "scale of ping RTT bar gap, default 10 (ms)")

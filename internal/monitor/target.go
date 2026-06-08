@@ -28,9 +28,10 @@ const percentMultiplier = 100.0
 // stream rather than freezing into a lifetime statistic.
 const jitterGain = 16.0
 
-// historyCap bounds the retained result history. Unlike the original (which
-// capped on insert using the terminal-width-dependent length, losing history on
-// shrink/grow), we keep a fixed ring and slice to the current width at render.
+// historyCap bounds the retained result history. We keep a fixed-size ring and
+// slice it to the current terminal width at render time, so history survives a
+// terminal resize rather than being capped at insert time by a width-dependent
+// length.
 const historyCap = 256
 
 // Target tracks one ping destination and its running statistics.
@@ -131,9 +132,8 @@ func (t *Target) Refresh() {
 	t.prevRTT = 0
 }
 
-// Key is a stable identity used to preserve history across SIGHUP reloads. It is
-// the Go equivalent of the original __str__/__eq__ but with relay keys sorted so
-// map iteration order cannot affect equality.
+// Key is a stable identity used to preserve history across SIGHUP reloads. Relay
+// keys are sorted so map iteration order cannot affect equality.
 func (t *Target) Key() string {
 	keys := make([]string, 0, len(t.Relay))
 	for k := range t.Relay {

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-deadman は ping によるホスト死活監視 TUI。**オリジナルの Python 実装（旧 pingman / <https://github.com/upa/deadman>）を Go へ書き換えたもの**。
+deadman は ping によるホスト死活監視 TUI（Go 製）。設定構文と CLI は旧 pingman / オリジナル deadman（<https://github.com/upa/deadman>）を源流に持つが、現在は deadman 自身の契約として管理する。
 ツールの使い方・設定構文・CLI フラグ・プラットフォーム別の権限要件は README.md を参照（ここでは重複させない）。
 
 このファイルは、コードを編集する際に知っておくべき不変条件と作業コマンドだけを記す。
@@ -21,13 +21,14 @@ deadman は ping によるホスト死活監視 TUI。**オリジナルの Pytho
 
 コミット・PR を出す前、および「完了」と判断する前に必ず `make check` を通すこと。
 
-## 編集時の最重要原則：Python 互換
+## 編集時の原則：設定構文と CLI は利用者向けの契約
 
-設定ファイルの文法と CLI フラグは、オリジナル Python 版と**意図的にバイト単位で互換**に
-保たれている。コード中に多数ある「matching the original」「mirrors」「like the Python
-method」というコメントはそのための注記であり、**Python 版の挙動から外れることはバグ**で
-あって裁量の余地ではない。パース・フラグ・結果コードまわりを変更するときは、まず
-オリジナルの挙動を基準に考える。
+設定ファイルの文法と CLI フラグは deadman の **user-facing なインタフェース**であり、
+利用者の設定ファイルやスクリプトが依存する契約である。源流（pingman / オリジナル
+deadman）から引き継いだものだが、もはや Python 版とのバイト互換に縛られはしない。
+ただし変更は破壊的になりうるため、**意図的に行い、README を必ず同時に更新する**こと。
+一方、パース・フラグ・結果コードの**内部表現**は Go のイディオムに従ってよい
+（外部から観測できる挙動を変えない限り）。
 
 ## アーキテクチャの不変条件
 
@@ -46,9 +47,8 @@ method」というコメントはそのための注記であり、**Python 版�
 ## パッケージ構成
 
 - `cmd/deadman` — エントリポイント。`parseArgs` はフラグと位置引数の混在を許す
-  （Python の argparse 互換のため `flag` を繰り返し呼ぶ）。
-- `internal/config` — 設定ファイルのパース（`TargetSpec`）。文法は Python の
-  `gettargetlist` 準拠。
+  （`flag` を繰り返し呼んで実現する）。
+- `internal/config` — 設定ファイルのパース（`TargetSpec`）。文法は README に記載。
 - `internal/ping` — 単一プローブの抽象化。`Pinger` インタフェースと各モード実装
   （直接 ICMP / SSH / SNMP / netns / vrf / RouterOS REST / tcp(hping3)）。`ping.New` が
   `via` 属性などからモードを選択してディスパッチする。

@@ -7,11 +7,11 @@ deadman は多機能ではありません。ICMP echo によるホストの死�
 カンファレンスやイベントネットワークのような一時的なネットワークの構築用途に適して
 います。元々は Interop Tokyo ShowNet 向けに設計・実装されたツール（旧 "pingman"）です。
 
-本リポジトリは、オリジナルの Python 実装を **Go へ書き換えた** ものです。設定ファイル
-形式とコマンドラインフラグは互換を維持したまま、クロスプラットフォーム対応（Windows /
-Linux / macOS）と単一バイナリ配布を実現しています。
+deadman は Go で実装されており、クロスプラットフォーム対応（Windows / Linux / macOS）と
+単一バイナリ配布を特長とします。設定ファイル形式とコマンドラインフラグは、その源流である
+pingman / オリジナル deadman から引き継いでいます。
 
-オリジナル（Python 版）は <https://github.com/upa/deadman> にあります。
+源流となったオリジナルの実装は <https://github.com/upa/deadman> にあります。
 
 ![demo](/img/deadman-demo.gif)
 
@@ -34,8 +34,7 @@ Go 1.26 以上が必要です。
 
  ./deadman deadman.conf                 # Windows: deadman.exe deadman.conf
 
-監視対象を変更するには、設定ファイルを編集または新規作成します。形式はオリジナルの
-deadman から変更ありません。
+監視対象を変更するには、設定ファイルを編集または新規作成します。
 
 $ cat deadman.conf
  google          173.194.117.176

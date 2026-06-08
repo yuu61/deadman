@@ -38,7 +38,7 @@ func (m Model) beginRound() tea.Cmd {
 
 // pingOne returns a command that probes the target at idx and reports the result.
 // It carries the *target pointer* so the result is always folded into the correct
-// object (like the Python method bound to its target), and is bounds/nil-guarded.
+// object even if rows are reindexed, and is bounds/nil-guarded.
 func (m Model) pingOne(idx, gen int) tea.Cmd {
 	if idx < 0 || idx >= len(m.rows) || m.rows[idx].Target == nil {
 		return nil
@@ -56,7 +56,8 @@ func (m Model) pingOne(idx, gen int) tea.Cmd {
 	}
 }
 
-// startAsyncRound fires every target concurrently (the original asyncio.gather).
+// startAsyncRound fires every target's probe concurrently and counts them as
+// in-flight so the round completes only once all results land.
 func (m Model) startAsyncRound() (tea.Model, tea.Cmd) {
 	m.roundStart = time.Now()
 	m.inflight = make([]bool, len(m.rows))

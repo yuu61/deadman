@@ -15,8 +15,8 @@ var (
 	reRouterOS  = regexp.MustCompile(`((\d+)ms)?(\d+)us`)
 )
 
-// ParsePingOutput extracts a Result from the stdout of a `ping`/`ping6` run, the
-// same way the original regexes did (time=<float|int>, ttl=/hlim=).
+// ParsePingOutput extracts a Result from the stdout of a `ping`/`ping6` run,
+// matching the time=<float|int> and ttl=/hlim= fields.
 func ParsePingOutput(out string) Result {
 	var rtt float64
 

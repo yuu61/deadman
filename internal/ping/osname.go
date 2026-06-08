@@ -7,7 +7,7 @@ import (
 	"runtime"
 )
 
-// Canonical OS names, matching what the original obtained from `uname -s`.
+// Canonical OS names, as reported by `uname -s`.
 const (
 	osLinux   = "Linux"
 	osDarwin  = "Darwin"
@@ -21,9 +21,9 @@ const (
 	ipv6 = 6
 )
 
-// DefaultOSName maps the host GOOS to the OS name the original obtained from
-// `uname -s`. It controls the source-interface flag (-I/-S) and the remote ping
-// command used by the subprocess relay modes.
+// DefaultOSName maps the host GOOS to its canonical `uname -s` name. It controls
+// the source-interface flag (-I/-S) and the remote ping command used by the
+// subprocess relay modes.
 func DefaultOSName() string {
 	switch runtime.GOOS {
 	case "linux":
@@ -58,8 +58,8 @@ func ipVersion(ctx context.Context, addr string) int {
 	return ipv6
 }
 
-// pingCommand builds the base ping argv for the subprocess relay modes. As in the
-// original, ping6 is preferred for IPv6 when available locally.
+// pingCommand builds the base ping argv for the subprocess relay modes. ping6 is
+// preferred for IPv6 when available locally.
 func pingCommand(ipv int) []string {
 	if ipv == ipv6 {
 		_, err := exec.LookPath("ping6")

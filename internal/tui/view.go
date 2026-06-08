@@ -9,7 +9,7 @@ import (
 	"github.com/yuu61/deadman/internal/monitor"
 )
 
-// View renders the entire screen, mirroring the original curses layout.
+// View renders the entire screen.
 func (m Model) View() string {
 	if m.width == 0 {
 		return ""
@@ -128,8 +128,8 @@ func displayWidth(s string) int {
 	return runewidth.StringWidth(s)
 }
 
-// padRight truncates s to width w (no ellipsis, matching the original slice) and
-// pads it with spaces to exactly w display columns.
+// padRight truncates s to width w (no ellipsis) and pads it with spaces to exactly
+// w display columns.
 func padRight(s string, w int) string {
 	return runewidth.FillRight(runewidth.Truncate(s, w, ""), w)
 }
