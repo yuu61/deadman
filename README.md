@@ -1,122 +1,121 @@
 deadman
 =======
 
-deadman is an observation software for host status using ping.
+deadman は ping を使ってホストの死活を監視する TUI ツールです。
 
-deadman does not have rich functionalities. It only checks host
-statuses using ICMP echo. We recomend using deadman for building
-temporary networks such as conference and event networks. This
-software was originally designed and implemented for Interop Tokyo
-ShowNet.
+deadman は多機能ではありません。ICMP echo によるホストの死活確認に特化しています。
+カンファレンスやイベントネットワークのような一時的なネットワークの構築用途に適して
+います。元々は Interop Tokyo ShowNet 向けに設計・実装されたツール（旧 "pingman"）です。
 
-This repository is a **Go rewrite** of the original Python implementation.
-It keeps the configuration-file format and command-line flags compatible,
-while adding cross-platform support (Windows, Linux, macOS) and shipping as a
-single static binary.
+本リポジトリは、オリジナルの Python 実装を **Go へ書き換えた** ものです。設定ファイル
+形式とコマンドラインフラグは互換を維持したまま、クロスプラットフォーム対応（Windows /
+Linux / macOS）と単一バイナリ配布を実現しています。
 
-![demo](https://github.com/upa/deadman/raw/master/img/deadman-demo.gif)
+オリジナル（Python 版）は <https://github.com/upa/deadman> にあります。
 
-Build
-=====
+![demo](/img/deadman-demo.gif)
 
-Requires Go 1.24 or later.
+ビルド
+======
 
-	$ git clone https://github.com/yuu61/deadman
-	$ cd deadman
-	$ go build -o deadman ./cmd/deadman      # Windows: go build -o deadman.exe ./cmd/deadman
+Go 1.26 以上が必要です。
 
-You can also run it directly or install it:
+ git clone <https://github.com/yuu61/deadman>
+ cd deadman
+ go build -o deadman ./cmd/deadman      # Windows: go build -o deadman.exe ./cmd/deadman
 
-	$ go run ./cmd/deadman deadman.conf
-	$ go install github.com/yuu61/deadman/cmd/deadman@latest
+直接実行・インストールも可能です。
 
-How to use
+ go run ./cmd/deadman deadman.conf
+ go install github.com/yuu61/deadman/cmd/deadman@latest
+
+使い方
+======
+
+ ./deadman deadman.conf                 # Windows: deadman.exe deadman.conf
+
+監視対象を変更するには、設定ファイルを編集または新規作成します。形式はオリジナルの
+deadman から変更ありません。
+
+$ cat deadman.conf
+ google          173.194.117.176
+ googleDNS       8.8.8.8
+ ---
+
+ kame            203.178.141.194
+ kame6           2001:200:dff:fff1:216:3eff:feb1:44d7
+
+設定ファイルの各行が 1 つの監視対象ホストを表します。ダッシュのみの行（`---`）は
+区切り線として描画され、対象をグループ化するのに便利です。
+
+中継方法やプロービングのオプションは、アドレスの後ろに `key=value` 形式の属性として
+記述します。たとえば、リモートホスト経由（ssh）で ping を送る場合は次のようにします。
+
+ google-via-ssh  173.194.117.176 relay=X.X.X.X os=Linux
+
+これはリモートサーバ X.X.X.X 経由で google のサーバへ ping を送ります。ssh の
+ユーザ名と鍵は `user=USER`、`key=KEYPATH` で指定できます。その他の中継モードは
+`deadman.conf` 内にも記載があります。
+
+| モード        | 記述例                                                                   |
+|--------------|--------------------------------------------------------------------------|
+| 直接 ICMP    | `googleDNS 8.8.8.8`                                                       |
+| ssh 中継     | `name ADDR relay=SSHHOST os=Linux user=USER key=KEY`                     |
+| snmp         | `name ADDR relay=SNMPHOST via=snmp community=COMMUNITY`                  |
+| netns        | `name ADDR relay=NETNSNAME via=netns`（Linux・root）                      |
+| vrf          | `name ADDR relay=VRFNAME via=vrf`（Linux・root）                          |
+| routeros     | `name ADDR relay=ROS via=routeros_api username=U password=P method=https verify=false` |
+| tcp/hping3   | `name ADDR tcp=dstport:80`（Linux・root）                                 |
+
+任意の `source=...` 属性で、プローブの送信元を指定できます。指定できるのは IP アドレス
+（全モード）か、もしくは直接 ICMP と Linux/macOS 上の ssh/netns/vrf 中継に限り、
+`source=eth0` のようなネットワークインターフェース名です。
+
+オプション
 ==========
 
-	$ ./deadman deadman.conf                 # Windows: deadman.exe deadman.conf
+ -s, --scale N       RTT バーグラフのスケール（ms 単位、既定 10）
+ -a, --async-mode    全対象へ並列に ping を送る
+ -b, --blink-arrow   async モードで矢印を点滅させる
+ -l, --logging DIR   DIR 配下に対象ごとのログファイルを書き出す
 
-To change the targets, modify or create a config file. The format is unchanged
-from the original deadman:
+操作
+====
 
-	$ cat deadman.conf
-	google          173.194.117.176
-	googleDNS       8.8.8.8
-	---
-	kame            203.178.141.194
-	kame6           2001:200:dff:fff1:216:3eff:feb1:44d7
+ r           全対象の統計をリセットする（プログラムは動作したまま）
+ R           設定ファイルを再読み込みする（Windows。Unix では SIGHUP を使用）
+ q / Ctrl-C  終了する
 
-Each line in the config file indicates a target host. A line of dashes (`---`)
-renders a separator, which is useful for grouping targets.
+Unix では deadman に SIGHUP を送ると設定ファイルを再読み込みします。このとき、既存の
+エントリは履歴を保持します（名前・アドレスおよび中継属性で同一性を判定）。端末の
+リサイズには自動で追随します。
 
-Relay and probing options are written as `key=value` attributes after the
-address. For example, ping via a remote host through ssh:
+権限とプラットフォームに関する注意
+==================================
 
-	google-via-ssh  173.194.117.176 relay=X.X.X.X os=Linux
+直接 ICMP はネイティブソケットを使用します（`ping` バイナリは不要）。
 
-This sends ping to a google server via the remote server X.X.X.X. The ssh
-username and key can be specified by `user=USER`, `key=KEYPATH`. Other relay
-modes are documented in `deadman.conf`:
+- **Windows**: 管理者権限への昇格なしで動作します。
+- **Linux**: 非特権 ICMP には
+  `sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"` の設定、もしくは
+  `setcap cap_net_raw+ep ./deadman` を付与して実行するか、root での実行が必要です。
+- **macOS**: そのまま動作します。
 
-| Mode        | Example                                                                 |
-|-------------|-------------------------------------------------------------------------|
-| direct ICMP | `googleDNS 8.8.8.8`                                                      |
-| ssh relay   | `name ADDR relay=SSHHOST os=Linux user=USER key=KEY`                    |
-| snmp        | `name ADDR relay=SNMPHOST via=snmp community=COMMUNITY`                 |
-| netns       | `name ADDR relay=NETNSNAME via=netns` (Linux, root)                     |
-| vrf         | `name ADDR relay=VRFNAME via=vrf` (Linux, root)                         |
-| routeros    | `name ADDR relay=ROS via=routeros_api username=U password=P method=https verify=false` |
-| tcp/hping3  | `name ADDR tcp=dstport:80` (Linux, root)                                |
+中継モードは外部コマンドを呼び出すため、それらが存在する環境でのみ動作します。
+`ssh`（ssh 中継）、`snmpping`（snmp）、`ip`（netns/vrf）、`hping3`（tcp）が該当します。
+netns・vrf・hping3 は Linux + root が前提です。RouterOS API モードは HTTP を使うため
+OS 非依存です。必要なコマンドが存在しない環境（たとえば Windows）では、その対象は
+クラッシュせず失敗（`X`）として表示されます。
 
-The optional `source=...` attribute binds the probe to a source address: an IP
-address (any mode), or — for direct ICMP and the ssh/netns/vrf relays on
-Linux/macOS — a network interface name such as `source=eth0`.
+ブロック文字による RTT バー（`▁▂▃▄▅▆▇█`）を正しく表示するため、Unicode と色に対応した
+端末を推奨します（Windows では Windows Terminal）。
 
-Options
-=======
-
-	-s, --scale N       scale of the RTT bar graph in ms (default 10)
-	-a, --async-mode    send pings to all targets concurrently
-	-b, --blink-arrow   blink the arrow in async mode
-	-l, --logging DIR   write a per-target log file under DIR
-
-Controls
-========
-
-	r           reset the statistics of all targets (keeps the program running)
-	R           reload the configuration file (Windows; on Unix use SIGHUP)
-	q / Ctrl-C  quit
-
-On Unix you can send deadman a SIGHUP to reload its configuration file. When
-this happens, existing entries keep their history (matched by name/address and
-relay attributes). Terminal resizing is handled automatically.
-
-Privileges and platform notes
-=============================
-
-Direct ICMP uses a native socket (no `ping` binary required):
-
-- **Windows**: works without administrator elevation.
-- **Linux**: unprivileged ICMP needs
-  `sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"`, or run with
-  `setcap cap_net_raw+ep ./deadman` or as root.
-- **macOS**: works out of the box.
-
-The relay modes shell out to external commands and only work where those exist:
-`ssh` (ssh relay), `snmpping` (snmp), `ip` (netns/vrf), `hping3` (tcp). netns,
-vrf and hping3 are Linux + root. The RouterOS API mode uses HTTP and is
-OS-independent. Where a required command is unavailable (e.g. on Windows), that
-target simply shows as failed (`X`) rather than crashing.
-
-A Unicode- and color-capable terminal is recommended (Windows Terminal on
-Windows) so the block-character RTT bars (`▁▂▃▄▅▆▇█`) render correctly.
-
-License
-=======
+ライセンス
+==========
 
 MIT
 
+連絡先
+======
 
-Contact
-=======
-
-upa@haeena.net
+<yuu@tukushityann.net>
