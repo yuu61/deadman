@@ -1,0 +1,157 @@
+version: "2"
+
+run:
+  tests: true
+  # ビルドタグ付きファイル (reload_unix.go など) も検査するため必要に応じて追加
+  # build-tags: []
+
+linters:
+  default: all
+
+  disable:
+    - wsl
+    - gomodguard
+    - varnamelen
+    - exhaustruct
+    - ireturn
+    - err113
+    - wrapcheck
+    - testpackage
+    - paralleltest
+    - gochecknoglobals
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+
+    gocritic:
+      enable-all: true
+      disabled-checks:
+        # Model は bubbletea の value-Model (Elm) 設計で値レシーバにより状態を
+        # 受け渡すため hugeParam と相反する。
+        - hugeParam
+        # nonamedreturns を有効にしているため、名前付き戻り値を促す
+        # unnamedResult とは方針が衝突する。
+        - unnamedResult
+
+    mnd:
+      ignored-numbers:
+        - "2"
+
+    staticcheck:
+      checks:
+        - all
+
+    revive:
+      enable-all-rules: true
+      rules:
+        - name: add-constant
+          disabled: true
+        - name: line-length-limit
+          disabled: true
+        - name: unhandled-error
+          disabled: true
+        - name: cognitive-complexity
+          disabled: true
+        - name: cyclomatic
+          disabled: true
+        - name: function-length
+          disabled: true
+        - name: bare-return
+          disabled: true
+
+    # --- 複雑度・サイズ系 (厳しいが現実的な値。必要に応じて緩める) ---
+    cyclop:
+      max-complexity: 10
+      package-average: 10.0
+    gocyclo:
+      min-complexity: 10
+    gocognit:
+      min-complexity: 15
+    nestif:
+      min-complexity: 4
+    funlen:
+      lines: 60
+      statements: 40
+    maintidx:
+      under: 20
+    nakedret:
+      max-func-lines: 0
+    lll:
+      line-length: 120
+      tab-width: 4
+
+    # --- エラー・型まわり ---
+    errchkjson:
+      check-error-free-encoding: true
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+
+    # --- スタイル・コメント ---
+    godot:
+      scope: all
+    misspell:
+      locale: US
+    nolintlint:
+      # //nolint には理由コメントと対象リンター名を必須にする
+      require-explanation: true
+      require-specific: true
+
+    # --- 列挙・網羅性 ---
+    exhaustive:
+      default-signifies-exhaustive: false
+
+    # depguard はポリシー指定が必須。
+    # デフォルトのままだと「標準ライブラリ以外すべて禁止」になり自前パッケージも弾かれるため、非推奨パッケージのみを禁止するdenyリスト方式 (lax: それ以外は許可) にする。
+    depguard:
+      rules:
+        all:
+          list-mode: lax
+          deny:
+            - pkg: github.com/pkg/errors
+              desc: 標準の errors と fmt.Errorf の %w を使う
+            - pkg: io/ioutil
+              desc: io/ioutil は非推奨。io と os を使う
+            - pkg: github.com/golang/protobuf
+              desc: google.golang.org/protobuf を使う
+
+  exclusions:
+    generated: lax
+    rules:
+      # テストのテーブル/ヘルパーは構造上「複雑・長大」になりがちだが、
+      # 分割すると可読性が下がるため複雑度・長さ系のみ除外する。
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - gocognit
+          - cyclop
+          - funlen
+          - maintidx
+          - goconst
+
+issues:
+  # 同種・同一リンターの指摘を間引かず、すべて表示する (既定は 3 / 50)。
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - golines
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+    gofumpt:
+      extra-rules: true

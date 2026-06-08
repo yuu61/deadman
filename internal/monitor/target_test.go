@@ -9,6 +9,7 @@ import (
 
 func TestGlyph(t *testing.T) {
 	const scale = 10
+
 	cases := []struct {
 		name string
 		res  ping.Result
@@ -41,16 +42,19 @@ func TestConsume(t *testing.T) {
 	if tg.Snt != 3 {
 		t.Errorf("Snt = %d, want 3", tg.Snt)
 	}
+
 	if tg.Loss != 1 {
 		t.Errorf("Loss = %d, want 1", tg.Loss)
 	}
+
 	if math.Abs(tg.LossRate-100.0/3.0) > 1e-9 {
 		t.Errorf("LossRate = %v, want %v", tg.LossRate, 100.0/3.0)
 	}
-	// avg = sum(success RTT) / total sent = (10+30)/3
+	// avg = sum(success RTT) / total sent = (10+30)/3.
 	if math.Abs(tg.Avg-40.0/3.0) > 1e-9 {
 		t.Errorf("Avg = %v, want %v", tg.Avg, 40.0/3.0)
 	}
+
 	if tg.State != Up {
 		t.Errorf("State = %v, want Up", tg.State)
 	}
@@ -58,6 +62,7 @@ func TestConsume(t *testing.T) {
 	if got := tg.Glyphs(1); len(got) != 1 || got[0] != "▄" {
 		t.Errorf("Glyphs(1) = %v, want [▄]", got)
 	}
+
 	if len(tg.Glyphs(10)) != 3 {
 		t.Errorf("history length = %d, want 3", len(tg.Glyphs(10)))
 	}
@@ -67,19 +72,34 @@ func TestRefresh(t *testing.T) {
 	tg := &Target{scale: 10}
 	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 5})
 	tg.Refresh()
+
 	if tg.Snt != 0 || tg.Loss != 0 || tg.State != Unknown || len(tg.Glyphs(10)) != 0 {
 		t.Errorf("after Refresh: %+v history=%v", tg, tg.Glyphs(10))
 	}
 }
 
 func TestKeyStableAndMatches(t *testing.T) {
-	a := &Target{Name: "n", Addr: "1.2.3.4", Relay: map[string]string{"via": "snmp", "relay": "5.6.7.8", "community": "c"}}
-	b := &Target{Name: "n", Addr: "1.2.3.4", Relay: map[string]string{"community": "c", "relay": "5.6.7.8", "via": "snmp"}}
+	a := &Target{
+		Name:  "n",
+		Addr:  "1.2.3.4",
+		Relay: map[string]string{"via": "snmp", "relay": "5.6.7.8", "community": "c"},
+	}
+
+	b := &Target{
+		Name:  "n",
+		Addr:  "1.2.3.4",
+		Relay: map[string]string{"community": "c", "relay": "5.6.7.8", "via": "snmp"},
+	}
 	if a.Key() != b.Key() {
 		t.Errorf("Key mismatch despite same data:\n a=%q\n b=%q", a.Key(), b.Key())
 	}
-	c := &Target{Name: "n", Addr: "1.2.3.4", Relay: map[string]string{"via": "snmp", "relay": "5.6.7.8", "community": "different"}}
+
+	c := &Target{
+		Name:  "n",
+		Addr:  "1.2.3.4",
+		Relay: map[string]string{"via": "snmp", "relay": "5.6.7.8", "community": "different"},
+	}
 	if a.Key() == c.Key() {
-		t.Errorf("Key collision for differing community")
+		t.Error("Key collision for differing community")
 	}
 }

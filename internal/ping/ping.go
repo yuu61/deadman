@@ -12,6 +12,8 @@ import "context"
 // constants so the result glyphs (X/t/s) map cleanly.
 type ResultCode int
 
+// Probe outcome codes. The values match the original numeric constants so the
+// result glyphs (X/t/s) map cleanly.
 const (
 	Success    ResultCode = 0
 	Failed     ResultCode = -1
@@ -37,7 +39,7 @@ type Pinger interface {
 // Spec describes how to probe one target.
 type Spec struct {
 	Addr   string
-	OSName string // "Linux"/"Darwin"/"FreeBSD"/"Windows"; defaults to host OS
+	OSName string // "Linux"/"Darwin"/"FreeBSD"/"Windows"; defaults to host OS.
 	Source string
 	TCP    string
 	Relay  map[string]string
@@ -48,9 +50,11 @@ func New(s Spec) (Pinger, error) {
 	if s.OSName == "" {
 		s.OSName = DefaultOSName()
 	}
+
 	if s.TCP != "" {
 		return newHPingPinger(s)
 	}
+
 	switch s.Relay["via"] {
 	case "snmp":
 		return newSNMPPinger(s)
@@ -58,11 +62,13 @@ func New(s Spec) (Pinger, error) {
 		return newSubprocessPinger(s, modeNetns)
 	case "vrf":
 		return newSubprocessPinger(s, modeVRF)
-	case "routeros_api":
+	case "routers_api":
 		return newRouterOSPinger(s)
 	}
+
 	if s.Relay["relay"] != "" {
 		return newSubprocessPinger(s, modeSSH)
 	}
+
 	return newICMPPinger(s)
 }

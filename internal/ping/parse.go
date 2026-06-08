@@ -19,7 +19,9 @@ var (
 // same way the original regexes did (time=<float|int>, ttl=/hlim=).
 func ParsePingOutput(out string) Result {
 	var rtt float64
+
 	matched := false
+
 	if m := reTimeFloat.FindStringSubmatch(out); m != nil {
 		rtt, _ = strconv.ParseFloat(m[1], 64)
 		matched = true
@@ -27,6 +29,7 @@ func ParsePingOutput(out string) Result {
 		rtt, _ = strconv.ParseFloat(m[1], 64)
 		matched = true
 	}
+
 	if !matched {
 		return Result{Code: Failed, TTL: -1}
 	}
@@ -37,6 +40,7 @@ func ParsePingOutput(out string) Result {
 	} else if m := reHlim.FindStringSubmatch(out); m != nil {
 		ttl, _ = strconv.Atoi(m[1])
 	}
+
 	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
 }
 
@@ -47,12 +51,15 @@ func ParseRouterOSMinRTT(s string) (float64, bool) {
 	if m == nil {
 		return 0, false
 	}
+
 	var ms, us float64
 	if m[2] != "" {
 		ms, _ = strconv.ParseFloat(m[2], 64)
 	}
+
 	if m[3] != "" {
 		us, _ = strconv.ParseFloat(m[3], 64)
 	}
-	return ms + us/1000.0, true
+
+	return ms + us/usPerMs, true
 }

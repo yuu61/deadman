@@ -16,15 +16,15 @@ func (m Model) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(m.centerTitle()) // line 0: centered program name
+	b.WriteString(m.centerTitle()) // line 0: centered program name.
 	b.WriteByte('\n')
-	b.WriteString(m.titleLine()) // line 1: host info (+spinner) and version
+	b.WriteString(m.titleLine()) // line 1: host info (+spinner) and version.
 	b.WriteByte('\n')
-	b.WriteString(rear) // line 2
+	b.WriteString(rear) // line 2.
 	fmt.Fprintf(&b, "RTT Scale %dms. Keys: (r)efresh", m.opts.Scale)
 	b.WriteByte('\n')
-	b.WriteByte('\n')             // line 3: blank
-	b.WriteString(m.headerLine()) // line 4: column headers
+	b.WriteByte('\n')             // line 3: blank.
+	b.WriteString(m.headerLine()) // line 4: column headers.
 	b.WriteByte('\n')
 
 	for i, r := range m.rows {
@@ -33,13 +33,16 @@ func (m Model) View() string {
 		} else {
 			b.WriteString(m.targetLine(i, r.Target))
 		}
+
 		b.WriteByte('\n')
 	}
+
 	return b.String()
 }
 
 func (m Model) centerTitle() string {
 	pad := max((m.width-len(titleProgName))/2, 0)
+
 	return strings.Repeat(" ", pad) + styleBold.Render(titleProgName)
 }
 
@@ -48,36 +51,54 @@ func (m Model) titleLine() string {
 	if m.opts.Async {
 		left += " " + spinner(m.tick)
 	}
+
 	leftW := runewidth.StringWidth(left)
-	target := m.width - len(arrow) - len(titleVersion) // column where the version starts
+	target := m.width - len(arrow) - len(titleVersion) // column where the version starts.
 	gap := max(target-(len(arrow)+leftW), 1)
+
 	return rear + styleBold.Render(left) + strings.Repeat(" ", gap) + styleBold.Render(titleVersion)
 }
 
 func (m Model) headerLine() string {
-	h := rear + padRight("HOSTNAME", m.hostW) + " " + padRight("ADDRESS", m.addrW) + " " + refHeader + "  RESULT"
+	h := rear + padRight(
+		"HOSTNAME",
+		m.hostW,
+	) + " " + padRight(
+		"ADDRESS",
+		m.addrW,
+	) + " " + refHeader + "  RESULT"
+
 	return styleBold.Render(h)
 }
 
 func (m Model) separatorLine() string {
 	n := max(m.width-2*len(arrow), 0)
+
 	return rear + strings.Repeat("-", n)
 }
 
-func (m Model) targetLine(idx int, t *monitor.Target) string {
-	ar := rear
+// arrowFor returns the leading arrow ("> ") for the target at idx, or the blank
+// rear when it is not being probed. In sync mode only the current target shows
+// it; in async mode every in-flight target does (blinking with -b).
+func (m Model) arrowFor(idx int) string {
 	switch {
 	case !m.opts.Async:
 		if m.arrowIdx == idx {
-			ar = arrow
+			return arrow
 		}
 	case idx < len(m.inflight) && m.inflight[idx]:
-		// async: arrow on every target currently being probed, so the round's
-		// parallelism is visible. With -b the arrows blink instead of staying lit.
 		if !m.opts.Blink || m.blinkOn {
-			ar = arrow
+			return arrow
 		}
+	default:
+		// async target not currently in flight: no arrow.
 	}
+
+	return rear
+}
+
+func (m Model) targetLine(idx int, t *monitor.Target) string {
+	ar := m.arrowFor(idx)
 
 	stats := fmt.Sprintf(" %3d%% %4d %4d %4d  ",
 		int(t.LossRate), int(t.RTT), int(t.Avg), t.Snt)
@@ -88,6 +109,7 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 	}
 
 	var g strings.Builder
+
 	for _, ch := range t.Glyphs(m.resW) {
 		if monitor.IsFailGlyph(ch) {
 			g.WriteString(styleDown.Render(ch))
@@ -95,6 +117,7 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 			g.WriteString(styleUp.Render(ch))
 		}
 	}
+
 	return text + g.String()
 }
 

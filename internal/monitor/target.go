@@ -4,7 +4,7 @@
 package monitor
 
 import (
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/yuu61/deadman/internal/ping"
@@ -13,11 +13,15 @@ import (
 // State is the reachability state of a target.
 type State int
 
+// Reachability states of a target.
 const (
 	Unknown State = iota
 	Up
 	Down
 )
+
+// percentMultiplier scales a 0..1 ratio to a 0..100 percentage.
+const percentMultiplier = 100.0
 
 // historyCap bounds the retained result history. Unlike the original (which
 // capped on insert using the terminal-width-dependent length, losing history on
@@ -36,11 +40,11 @@ type Target struct {
 	State    State
 	Loss     int
 	LossRate float64
-	RTT      float64 // current
-	Tot      float64 // sum of all successful RTTs
-	Avg      float64 // mean RTT
-	Snt      int     // number sent
-	TTL      int     // last TTL (captured, not displayed)
+	RTT      float64 // current.
+	Tot      float64 // sum of all successful RTTs.
+	Avg      float64 // mean RTT.
+	Snt      int     // number sent.
+	TTL      int     // last TTL (captured, not displayed).
 
 	history []string
 	scale   int
@@ -52,6 +56,7 @@ func NewTarget(name string, spec ping.Spec, scale int) (*Target, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return &Target{
 		Name:   name,
 		Addr:   spec.Addr,
@@ -77,7 +82,8 @@ func (t *Target) Consume(res ping.Result) {
 		t.Loss++
 		t.State = Down
 	}
-	t.LossRate = float64(t.Loss) / float64(t.Snt) * 100.0
+
+	t.LossRate = float64(t.Loss) / float64(t.Snt) * percentMultiplier
 
 	t.history = append([]string{glyph(res, t.scale)}, t.history...)
 	if len(t.history) > historyCap {
@@ -90,9 +96,11 @@ func (t *Target) Glyphs(n int) []string {
 	if n > len(t.history) {
 		n = len(t.history)
 	}
+
 	if n < 0 {
 		n = 0
 	}
+
 	return t.history[:n]
 }
 
@@ -117,28 +125,37 @@ func (t *Target) Key() string {
 	for k := range t.Relay {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+
+	slices.Sort(keys)
 
 	var sb strings.Builder
 	sb.WriteString(t.Name)
 	sb.WriteString(":")
 	sb.WriteString(t.Addr)
+
 	for _, k := range keys {
 		sb.WriteString(":")
 		sb.WriteString(k)
 		sb.WriteString("=")
 		sb.WriteString(t.Relay[k])
 	}
+
 	if t.Source != "" {
 		sb.WriteString(":src=")
 		sb.WriteString(t.Source)
 	}
+
 	if t.TCP != "" {
 		sb.WriteString(":tcp=")
 		sb.WriteString(t.TCP)
 	}
+
 	return sb.String()
 }
+
+// rttBars are the block elements for ascending RTT buckets; bar i is used when
+// RTT < scale*(i+1), and the full block "█" for anything above the last bucket.
+var rttBars = []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇"}
 
 // glyph maps a result to its result-bar character. Failures map to X/t/s; a
 // success maps to a block element scaled by the RTT scale (ms per step).
@@ -148,29 +165,28 @@ func glyph(res ping.Result, scale int) string {
 		return "t"
 	case ping.SSHFailed:
 		return "s"
-	}
-	if !res.Success {
+	case ping.Success, ping.Failed:
+		if !res.Success {
+			return "X"
+		}
+
+		return rttGlyph(res.RTT, scale)
+	default:
+		// unknown code: treat as a plain failure.
 		return "X"
 	}
-	s := float64(scale)
-	switch {
-	case res.RTT < s*1:
-		return "▁"
-	case res.RTT < s*2:
-		return "▂"
-	case res.RTT < s*3:
-		return "▃"
-	case res.RTT < s*4:
-		return "▄"
-	case res.RTT < s*5:
-		return "▅"
-	case res.RTT < s*6:
-		return "▆"
-	case res.RTT < s*7:
-		return "▇"
-	default:
-		return "█"
+}
+
+// rttGlyph picks the block element for a successful probe's RTT.
+func rttGlyph(rtt float64, scale int) string {
+	step := float64(scale)
+	for i, bar := range rttBars {
+		if rtt < step*float64(i+1) {
+			return bar
+		}
 	}
+
+	return "█"
 }
 
 // IsFailGlyph reports whether a glyph represents a failure (rendered in red).

@@ -17,6 +17,10 @@ const (
 	maxHostnameLength = 20
 	maxAddressLength  = 40
 
+	// minResultWidth is the floor for the result-bar column when the terminal is
+	// too narrow to give it the leftover space.
+	minResultWidth = 10
+
 	refHeader = " LOSS  RTT  AVG  SNT"
 
 	// pingInterval is the gap between consecutive targets in sync mode;
@@ -30,6 +34,6 @@ const spinnerChars = `|/-\`
 
 var (
 	styleBold = lipgloss.NewStyle().Bold(true)
-	styleUp   = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green
-	styleDown = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // red
+	styleUp   = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green.
+	styleDown = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // red.
 )

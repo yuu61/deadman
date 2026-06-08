@@ -15,14 +15,17 @@ import (
 	"github.com/yuu61/deadman/internal/tui"
 )
 
+// defaultScale is the default RTT bar gap in milliseconds.
+const defaultScale = 10
+
 // parseArgs parses the command line into TUI options. Flags may appear before or
 // after the configfile (the original argparse intermixed them freely), which Go's
 // flag package does not do on its own; we collect positionals while re-parsing the
 // remainder.
 func parseArgs(args []string) (tui.Options, error) {
 	fs := flag.NewFlagSet("deadman", flag.ContinueOnError)
-	scale := fs.Int("s", 10, "scale of ping RTT bar gap, default 10 (ms)")
-	fs.IntVar(scale, "scale", 10, "scale of ping RTT bar gap, default 10 (ms)")
+	scale := fs.Int("s", defaultScale, "scale of ping RTT bar gap, default 10 (ms)")
+	fs.IntVar(scale, "scale", defaultScale, "scale of ping RTT bar gap, default 10 (ms)")
 	async := fs.Bool("a", false, "send ping asynchronously")
 	fs.BoolVar(async, "async-mode", false, "send ping asynchronously")
 	blink := fs.Bool("b", false, "blink arrow in async mode")
@@ -31,21 +34,27 @@ func parseArgs(args []string) (tui.Options, error) {
 	fs.StringVar(logdir, "logging", "", "directory for log files")
 
 	var positional []string
+
 	rest := args
 	for {
-		if err := fs.Parse(rest); err != nil {
+		err := fs.Parse(rest)
+		if err != nil {
 			return tui.Options{}, err
 		}
+
 		rest = fs.Args()
 		if len(rest) == 0 {
 			break
 		}
+
 		positional = append(positional, rest[0])
 		rest = rest[1:]
 	}
+
 	if len(positional) < 1 {
 		return tui.Options{}, errors.New("configfile is required")
 	}
+
 	return tui.Options{
 		Async:      *async,
 		Blink:      *blink,
@@ -68,8 +77,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
 	specs, err := config.ParseConfig(f)
-	f.Close()
+	_ = f.Close()
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -83,7 +94,9 @@ func main() {
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	tui.InstallReloadSignal(p)
-	if _, err := p.Run(); err != nil {
+
+	_, err = p.Run()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

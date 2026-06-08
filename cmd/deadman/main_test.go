@@ -21,9 +21,11 @@ func TestParseArgsAsync(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if opts.Async != c.async {
 				t.Errorf("Async = %v, want %v", opts.Async, c.async)
 			}
+
 			if opts.ConfigPath != c.path {
 				t.Errorf("ConfigPath = %q, want %q", opts.ConfigPath, c.path)
 			}
@@ -36,19 +38,23 @@ func TestParseArgsScaleBlinkLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if opts.Scale != 20 {
 		t.Errorf("Scale = %d, want 20", opts.Scale)
 	}
+
 	if !opts.Blink {
-		t.Errorf("Blink = false, want true")
+		t.Error("Blink = false, want true")
 	}
+
 	if opts.LogDir != "logs" {
 		t.Errorf("LogDir = %q, want logs", opts.LogDir)
 	}
 }
 
 func TestParseArgsMissingConfig(t *testing.T) {
-	if _, err := parseArgs([]string{"-a"}); err == nil {
-		t.Errorf("expected error when configfile is missing")
+	_, err := parseArgs([]string{"-a"})
+	if err == nil {
+		t.Error("expected error when configfile is missing")
 	}
 }

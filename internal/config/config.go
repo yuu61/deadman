@@ -41,6 +41,7 @@ var relayKeys = map[string]bool{
 // ParseConfig reads a deadman config from r and returns the parsed target specs.
 func ParseConfig(r io.Reader) ([]TargetSpec, error) {
 	var specs []TargetSpec
+
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := sc.Text()
@@ -48,39 +49,54 @@ func ParseConfig(r io.Reader) ([]TargetSpec, error) {
 		line = reSpaces.ReplaceAllString(line, " ")
 		line = reComment.ReplaceAllString(line, "")
 		line = reSemiComment.ReplaceAllString(line, "")
+
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 
 		fields := strings.Split(line, " ")
+
 		spec := TargetSpec{Name: fields[0], Relay: map[string]string{}}
 		if len(fields) > 1 {
 			spec.Addr = fields[1]
 		}
-		var attrs []string
+
 		if len(fields) > 2 {
-			attrs = fields[2:]
-		}
-		for _, kv := range attrs {
-			p := strings.SplitN(kv, "=", 2)
-			if len(p) != 2 {
-				continue
-			}
-			key, value := p[0], p[1]
-			switch {
-			case relayKeys[key]:
-				spec.Relay[key] = value
-			case key == "source":
-				spec.Source = value
-			case key == "tcp":
-				spec.TCP = value
+			for _, kv := range fields[2:] {
+				applyAttr(&spec, kv)
 			}
 		}
+
 		if reSeparator.MatchString(spec.Name) {
 			spec.IsSeparator = true
 		}
+
 		specs = append(specs, spec)
 	}
+
 	return specs, sc.Err()
+}
+
+// applyAttr parses one "key=value" token and stores it on spec. Relay keys land
+// in the relay map; source and tcp have their own fields; unknown keys are
+// ignored, matching the original.
+func applyAttr(spec *TargetSpec, kv string) {
+	p := strings.SplitN(kv, "=", 2)
+	if len(p) != 2 {
+		return
+	}
+
+	key, value := p[0], p[1]
+
+	switch {
+	case relayKeys[key]:
+		spec.Relay[key] = value
+	case key == "source":
+		spec.Source = value
+	case key == "tcp":
+		spec.TCP = value
+	default:
+		// unknown attribute key: ignored.
+	}
 }

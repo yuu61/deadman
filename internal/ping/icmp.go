@@ -11,6 +11,9 @@ import (
 
 const icmpTimeout = 1 * time.Second
 
+// usPerMs converts microseconds to milliseconds.
+const usPerMs = 1000.0
+
 // icmpPinger sends a native ICMP echo using pro-bing, replacing the original's
 // shell-out to `ping -c 1`. Native ICMP is portable (Windows/Linux/macOS) and
 // avoids OS-specific output parsing.
@@ -38,10 +41,12 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 	if err != nil {
 		return Result{Code: Failed, TTL: -1}
 	}
+
 	pinger.SetPrivileged(p.privileged)
 	pinger.Count = 1
 	pinger.Timeout = icmpTimeout
 	pinger.RecordTTLs = true
+
 	if p.source != "" {
 		// The original `ping -I` accepted either a source IP or (on Linux) an
 		// interface name. pro-bing's Source binds by IP, InterfaceName by name.
@@ -52,7 +57,8 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 		}
 	}
 
-	if err := pinger.RunWithContext(ctx); err != nil {
+	err = pinger.RunWithContext(ctx)
+	if err != nil {
 		return Result{Code: Failed, TTL: -1}
 	}
 
@@ -62,12 +68,14 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 		if len(st.TTLs) > 0 {
 			ttl = int(st.TTLs[0])
 		}
+
 		return Result{
 			Success: true,
 			Code:    Success,
-			RTT:     float64(st.AvgRtt.Microseconds()) / 1000.0,
+			RTT:     float64(st.AvgRtt.Microseconds()) / usPerMs,
 			TTL:     ttl,
 		}
 	}
+
 	return Result{Code: Failed, TTL: -1}
 }

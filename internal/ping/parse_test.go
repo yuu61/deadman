@@ -25,10 +25,12 @@ func TestParsePingOutput(t *testing.T) {
 			if res.Success != c.success {
 				t.Fatalf("Success = %v, want %v", res.Success, c.success)
 			}
+
 			if c.success {
 				if math.Abs(res.RTT-c.rtt) > 1e-9 {
 					t.Errorf("RTT = %v, want %v", res.RTT, c.rtt)
 				}
+
 				if res.TTL != c.ttl {
 					t.Errorf("TTL = %d, want %d", res.TTL, c.ttl)
 				}
@@ -55,8 +57,10 @@ func TestParseRouterOSMinRTT(t *testing.T) {
 		got, ok := ParseRouterOSMinRTT(c.in)
 		if ok != c.ok {
 			t.Errorf("%q: ok = %v, want %v", c.in, ok, c.ok)
+
 			continue
 		}
+
 		if ok && math.Abs(got-c.want) > 1e-9 {
 			t.Errorf("%q: got %v, want %v", c.in, got, c.want)
 		}

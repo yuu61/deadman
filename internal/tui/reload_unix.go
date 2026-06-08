@@ -14,6 +14,7 @@ import (
 // handler injects a reloadMsg into the running program.
 func InstallReloadSignal(p *tea.Program) {
 	c := make(chan os.Signal, 1)
+
 	signal.Notify(c, syscall.SIGHUP)
 	go func() {
 		for range c {
