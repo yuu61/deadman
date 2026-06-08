@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -14,32 +15,55 @@ import (
 	"github.com/yuu61/deadman/internal/tui"
 )
 
-func main() {
-	scale := flag.Int("s", 10, "scale of ping RTT bar gap, default 10 (ms)")
-	flag.IntVar(scale, "scale", 10, "scale of ping RTT bar gap, default 10 (ms)")
-	async := flag.Bool("a", false, "send ping asynchronously")
-	flag.BoolVar(async, "async-mode", false, "send ping asynchronously")
-	blink := flag.Bool("b", false, "blink arrow in async mode")
-	flag.BoolVar(blink, "blink-arrow", false, "blink arrow in async mode")
-	logdir := flag.String("l", "", "directory for log files")
-	flag.StringVar(logdir, "logging", "", "directory for log files")
-	flag.Parse()
+// parseArgs parses the command line into TUI options. Flags may appear before or
+// after the configfile (the original argparse intermixed them freely), which Go's
+// flag package does not do on its own; we collect positionals while re-parsing the
+// remainder.
+func parseArgs(args []string) (tui.Options, error) {
+	fs := flag.NewFlagSet("deadman", flag.ContinueOnError)
+	scale := fs.Int("s", 10, "scale of ping RTT bar gap, default 10 (ms)")
+	fs.IntVar(scale, "scale", 10, "scale of ping RTT bar gap, default 10 (ms)")
+	async := fs.Bool("a", false, "send ping asynchronously")
+	fs.BoolVar(async, "async-mode", false, "send ping asynchronously")
+	blink := fs.Bool("b", false, "blink arrow in async mode")
+	fs.BoolVar(blink, "blink-arrow", false, "blink arrow in async mode")
+	logdir := fs.String("l", "", "directory for log files")
+	fs.StringVar(logdir, "logging", "", "directory for log files")
 
-	// Go's flag package stops at the first non-flag argument; collect positionals
-	// while re-parsing the remainder so flags may follow the configfile (the
-	// original argparse intermixed options and the positional freely).
 	var positional []string
-	for rest := flag.Args(); len(rest) > 0; rest = flag.Args() {
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			return tui.Options{}, err
+		}
+		rest = fs.Args()
+		if len(rest) == 0 {
+			break
+		}
 		positional = append(positional, rest[0])
-		flag.CommandLine.Parse(rest[1:])
+		rest = rest[1:]
 	}
 	if len(positional) < 1 {
+		return tui.Options{}, errors.New("configfile is required")
+	}
+	return tui.Options{
+		Async:      *async,
+		Blink:      *blink,
+		Scale:      *scale,
+		LogDir:     *logdir,
+		ConfigPath: positional[0],
+	}, nil
+}
+
+func main() {
+	opts, err := parseArgs(os.Args[1:])
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "usage: deadman [options] configfile")
-		flag.PrintDefaults()
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 
-	f, err := os.Open(positional[0])
+	f, err := os.Open(opts.ConfigPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -51,13 +75,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	m, err := tui.New(specs, tui.Options{
-		Async:      *async,
-		Blink:      *blink,
-		Scale:      *scale,
-		LogDir:     *logdir,
-		ConfigPath: positional[0],
-	})
+	m, err := tui.New(specs, opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

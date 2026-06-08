@@ -67,10 +67,16 @@ func (m Model) separatorLine() string {
 func (m Model) targetLine(idx int, t *monitor.Target) string {
 	ar := rear
 	switch {
-	case !m.opts.Async && m.arrowIdx == idx:
-		ar = arrow
-	case m.opts.Async && m.opts.Blink && m.blinkOn:
-		ar = arrow
+	case !m.opts.Async:
+		if m.arrowIdx == idx {
+			ar = arrow
+		}
+	case idx < len(m.inflight) && m.inflight[idx]:
+		// async: arrow on every target currently being probed, so the round's
+		// parallelism is visible. With -b the arrows blink instead of staying lit.
+		if !m.opts.Blink || m.blinkOn {
+			ar = arrow
+		}
 	}
 
 	stats := fmt.Sprintf(" %3d%% %4d %4d %4d  ",

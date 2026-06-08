@@ -51,12 +51,14 @@ func (m Model) pingOne(idx, gen int) tea.Cmd {
 // startAsyncRound fires every target concurrently (the original asyncio.gather).
 func (m Model) startAsyncRound() (tea.Model, tea.Cmd) {
 	m.roundStart = time.Now()
+	m.inflight = make([]bool, len(m.rows))
 	var cmds []tea.Cmd
 	for i, r := range m.rows {
 		if r.Target == nil {
 			continue
 		}
 		if c := m.pingOne(i, m.gen); c != nil {
+			m.inflight[i] = true // shown as a "pinging now" arrow until the result lands
 			cmds = append(cmds, c)
 		}
 	}

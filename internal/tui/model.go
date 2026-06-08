@@ -49,6 +49,7 @@ type Model struct {
 
 	gen        int       // target-set generation; bumped on reload to drop stale msgs
 	pending    int       // async: probes still in flight this round
+	inflight   []bool    // async: per-row, true while that target's probe is running
 	roundStart time.Time // async: when the current round began
 
 	hostInfo string
@@ -199,6 +200,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.opts.Async {
+			if msg.idx >= 0 && msg.idx < len(m.inflight) {
+				m.inflight[msg.idx] = false // clear this target's "pinging" arrow
+			}
 			m.pending--
 			if m.pending <= 0 {
 				m.tick++ // second spinner step per round, matching the original
