@@ -65,10 +65,23 @@ $ cat deadman.conf
 | vrf          | `name ADDR relay=VRFNAME via=vrf`（Linux・root）                          |
 | routeros     | `name ADDR relay=ROS via=routeros_api username=U password=P method=https verify=false` |
 | tcp/hping3   | `name ADDR tcp=dstport:80`（Linux・root）                                 |
+| nexthop 強制 | `name ADDR nexthop=GWIP [source=eth0]`（直接 ICMP・Linux・root・IPv4）    |
 
 任意の `source=...` 属性で、プローブの送信元を指定できます。指定できるのは IP アドレス
 （全モード）か、もしくは直接 ICMP と Linux/macOS 上の ssh/netns/vrf 中継に限り、
 `source=eth0` のようなネットワークインターフェース名です。
+
+任意の `nexthop=GWIP` 属性で、直接 ICMP プローブを指定したゲートウェイ（next-hop）経由で
+強制送出できます（特定経路の到達性を監視するのに有用）。AF_PACKET で L2 宛先をゲートウェイの
+MAC に指定して送るため、**Linux + root/CAP_NET_RAW・IPv4 のみ**で動作します。ゲートウェイは
+egress インタフェースの直結サブネット上（on-link）である必要があり、egress は `source=`
+（インタフェース名または IP）で明示できます。relay/via/tcp を併用した場合や IPv6 ターゲットでは
+nexthop は無視され、通常ルーティングで監視されます（その旨を起動時に警告します）。
+
+> **注意（rp_filter）**: 強制した next-hop が通常経路と別インタフェースになる場合、Linux の
+> reverse-path filter が strict（`net.ipv4.conf.*.rp_filter=1`）だと応答が破棄され、到達可能な
+> ホストが `X`（ダウン）と表示されることがあります。その場合は `rp_filter` を 2（loose）または
+> 0（off）にしてください。strict を検出すると deadman は起動時に警告を表示します。
 
 オプション
 ==========
@@ -109,6 +122,9 @@ Unix では deadman に SIGHUP を送ると設定ファイルを再読み込み�
 netns・vrf・hping3 は Linux + root が前提です。RouterOS API モードは HTTP を使うため
 OS 非依存です。必要なコマンドが存在しない環境（たとえば Windows）では、その対象は
 クラッシュせず失敗（`X`）として表示されます。
+
+`nexthop` 強制は AF_PACKET で L2 フレームを送るため Linux + root/CAP_NET_RAW が必須で、
+他 OS のビルドではその対象は失敗（`X`）として表示されます。
 
 ブロック文字による RTT バー（`▁▂▃▄▅▆▇█`）を正しく表示するため、Unicode と色に対応した
 端末を推奨します（Windows では Windows Terminal）。

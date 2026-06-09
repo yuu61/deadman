@@ -57,6 +57,7 @@ type Model struct {
 	roundStart time.Time // async: when the current round began
 
 	hostInfo string
+	warnings []string // startup warnings (e.g. rp_filter, IPv6 nexthop ignored).
 }
 
 // New builds the initial model from parsed specs and options.
@@ -71,6 +72,7 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 		opts:     opts,
 		hostInfo: hostInfo(),
 		visible:  buildVisible(opts.Columns),
+		warnings: nexthopWarnings(specs),
 	}, nil
 }
 
@@ -116,27 +118,35 @@ func buildRows(specs []config.TargetSpec, scale int, existing []Row) ([]Row, err
 	return rows, nil
 }
 
-// loadRows reparses the config file for a SIGHUP/manual reload, returning the new
-// rows and the column-visibility overrides.
-func loadRows(path string, scale int, existing []Row) ([]Row, map[string]bool, bool) {
+// reload is the result of reparsing the config file: the new rows, the
+// column-visibility overrides, and any startup warnings.
+type reload struct {
+	rows     []Row
+	columns  map[string]bool
+	warnings []string
+}
+
+// loadRows reparses the config file for a SIGHUP/manual reload. ok is false when
+// the file cannot be read or parsed (the current state is kept).
+func loadRows(path string, scale int, existing []Row) (reload, bool) {
 	// #nosec G304 -- path is the operator-supplied config file, not remote input.
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, false
+		return reload{}, false
 	}
 	defer func() { _ = f.Close() }()
 
 	cfg, err := config.ParseConfig(f)
 	if err != nil {
-		return nil, nil, false
+		return reload{}, false
 	}
 
 	rows, err := buildRows(cfg.Targets, scale, existing)
 	if err != nil {
-		return nil, nil, false
+		return reload{}, false
 	}
 
-	return rows, cfg.Columns, true
+	return reload{rows: rows, columns: cfg.Columns, warnings: nexthopWarnings(cfg.Targets)}, true
 }
 
 func hostInfo() string {
@@ -214,9 +224,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleReload reparses the config and starts a fresh generation, so stale
 // timers/results from the previous target set are ignored.
 func (m Model) handleReload() (tea.Model, tea.Cmd) {
-	if rows, cols, ok := loadRows(m.opts.ConfigPath, m.opts.Scale, m.rows); ok {
-		m.rows = rows
-		m.visible = buildVisible(cols)
+	if r, ok := loadRows(m.opts.ConfigPath, m.opts.Scale, m.rows); ok {
+		m.rows = r.rows
+		m.visible = buildVisible(r.columns)
+		m.warnings = r.warnings
 		m = m.recalcWidths()
 	}
 

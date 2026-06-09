@@ -74,6 +74,28 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestParseConfigNexthop(t *testing.T) {
+	// nexthop is a relay key, so it lands in the relay map (like via/relay).
+	cfg, err := ParseConfig(strings.NewReader("gw 8.8.8.8 nexthop=192.0.2.1 source=eth0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := cfg.Targets
+	if len(specs) != 1 {
+		t.Fatalf("got %d specs, want 1: %+v", len(specs), specs)
+	}
+
+	if specs[0].Relay["nexthop"] != "192.0.2.1" {
+		t.Errorf("nexthop = %q, want %q", specs[0].Relay["nexthop"], "192.0.2.1")
+	}
+
+	// source still lands on its own field, not the relay map.
+	if specs[0].Source != "eth0" {
+		t.Errorf("source = %q, want %q", specs[0].Source, "eth0")
+	}
+}
+
 func TestParseConfigCommentTrailer(t *testing.T) {
 	// A ";#" trailer is stripped.
 	cfg, err := ParseConfig(strings.NewReader("host 1.2.3.4 ;# trailing comment\n"))
