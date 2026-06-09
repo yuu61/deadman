@@ -29,10 +29,90 @@ package ping
 
 import (
 	"context"
+	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
+
+// TestNDPLookupMatchesKernel validates the netlink RTM_GETNEIGH parsing (the
+// riskiest, kernel-facing part of the IPv6 path: NdMsg field offsets, the NUD
+// state mask, and the hand-rolled rtattr walk) against the kernel's own neighbor
+// table. It needs no root — an RTM_GETNEIGH dump is unprivileged — so it runs
+// without the netns setup; it skips when there is no usable IPv6 neighbor to
+// check against.
+func TestNDPLookupMatchesKernel(t *testing.T) {
+	if _, err := exec.LookPath("ip"); err != nil {
+		t.Skip("iproute2 'ip' not found")
+	}
+
+	out, err := exec.Command("ip", "-6", "neigh", "show").CombinedOutput()
+	if err != nil {
+		t.Fatalf("ip -6 neigh show: %v\n%s", err, out)
+	}
+
+	ip, dev, mac := firstUsableV6Neighbor(string(out))
+	if ip == nil {
+		t.Skip("no usable IPv6 neighbor in the kernel cache to validate against")
+	}
+
+	ifi, err := net.InterfaceByName(dev)
+	if err != nil {
+		t.Fatalf("InterfaceByName(%q): %v", dev, err)
+	}
+
+	got, ok := ndpLookup(ifi.Index, ip)
+	if !ok {
+		t.Fatalf("ndpLookup(%d, %s) found nothing; kernel has lladdr %s", ifi.Index, ip, mac)
+	}
+
+	if got.String() != mac.String() {
+		t.Fatalf("ndpLookup MAC = %s, kernel = %s", got, mac)
+	}
+
+	t.Logf("ndpLookup(%s on %s) = %s — matches the kernel neighbor table", ip, dev, got)
+}
+
+// firstUsableV6Neighbor returns the first IPv6 neighbor from `ip -6 neigh show`
+// output that carries an lladdr and is in a NUD state ndpLookup treats as usable.
+func firstUsableV6Neighbor(out string) (net.IP, string, net.HardwareAddr) {
+	usable := map[string]bool{
+		"REACHABLE": true, "STALE": true, "DELAY": true, "PROBE": true, "PERMANENT": true,
+	}
+
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+
+		ip := net.ParseIP(f[0])
+		if ip == nil || ip.To4() != nil {
+			continue
+		}
+
+		var (
+			dev string
+			mac net.HardwareAddr
+		)
+
+		for i := 1; i+1 < len(f); i++ {
+			switch f[i] {
+			case "dev":
+				dev = f[i+1]
+			case "lladdr":
+				mac, _ = net.ParseMAC(f[i+1])
+			}
+		}
+
+		if dev != "" && mac != nil && usable[f[len(f)-1]] {
+			return ip, dev, mac
+		}
+	}
+
+	return nil, "", nil
+}
 
 const (
 	nhNetns   = "dmnh"
