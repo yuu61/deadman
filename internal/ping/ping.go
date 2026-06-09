@@ -7,7 +7,6 @@ package ping
 
 import (
 	"context"
-	"net"
 )
 
 // ResultCode classifies a probe outcome. The monitor layer maps each code to its
@@ -142,17 +141,11 @@ func Describe(s Spec) string {
 	return labelDirect
 }
 
-// nexthopLabel renders the VIA label for a forced-nexthop target. A literal IPv6
-// target cannot be force-routed (the link transport is IPv4-only), so
-// nexthopPinger.Send falls back to ordinary routing. Report the path actually
-// taken rather than a gateway that is ignored; the startup check warns about this
-// separately. A hostname's family is unknown until resolved, so it keeps the
-// forced label (matching the probe's intent).
+// nexthopLabel renders the VIA label for a forced-nexthop target: the gateway it is
+// forced through. Both IPv4 and IPv6 targets are force-routed, so the label always
+// names the configured gateway. A mismatched or unreachable next-hop fails as X,
+// which the startup check warns about separately.
 func nexthopLabel(s Spec) string {
-	if ip := net.ParseIP(s.Addr); ip != nil && ip.To4() == nil {
-		return labelDirect
-	}
-
 	return "nexthop " + s.Relay["nexthop"]
 }
 

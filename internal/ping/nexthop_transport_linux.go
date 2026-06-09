@@ -22,16 +22,16 @@ import (
 // for SOCK_DGRAM, so we hand it the L3 packet and the destination MAC.
 
 const (
-	// arpResolveTimeout bounds how long resolveGateway waits for the kernel to
-	// populate the neighbor cache after a nudge.
-	arpResolveTimeout = 500 * time.Millisecond
-	// arpPollInterval is the neighbor-cache re-read cadence.
-	arpPollInterval = 50 * time.Millisecond
+	// neighborResolveTimeout bounds how long resolveGateway waits for the kernel to
+	// populate the neighbor cache (ARP or NDP) after a nudge.
+	neighborResolveTimeout = 500 * time.Millisecond
+	// neighborPollInterval is the neighbor-cache re-read cadence.
+	neighborPollInterval = 50 * time.Millisecond
 	// atfCom is the /proc/net/arp flag bit for a complete (resolved) entry.
 	atfCom = 0x2
-	// arpKickPort is the (discard) UDP port we write to so the kernel ARPs the
-	// gateway; the datagram itself is irrelevant.
-	arpKickPort = "9"
+	// neighborKickPort is the (discard) UDP port we write to so the kernel resolves
+	// the gateway; the datagram itself is irrelevant.
+	neighborKickPort = "9"
 )
 
 // nativeBigEndian is true on big-endian hosts, where network order equals host
@@ -85,34 +85,49 @@ func (afpacketTransport) send(
 	return unix.Sendto(fd, l3, 0, &ll)
 }
 
-// resolveGateway reads the gateway's MAC from the kernel neighbor cache, nudging
-// the kernel to resolve it first if the entry is missing. Reading the cache (and
-// letting the kernel's own ARP state machine own resolution) avoids racing it with
-// hand-rolled ARP.
+// resolveGateway reads the gateway's MAC from the kernel neighbor cache, nudging the
+// kernel to resolve it first if the entry is missing. Letting the kernel's own ARP /
+// NDP state machine own resolution avoids racing it. The cache source differs by
+// family: /proc/net/arp for IPv4, a netlink RTM_GETNEIGH dump for IPv6 (which has no
+// such proc file).
 func (afpacketTransport) resolveGateway(
 	iface *net.Interface,
 	nexthop net.IP,
 ) (net.HardwareAddr, error) {
-	target := nexthop.String()
+	lookup := neighborLookup(iface, nexthop)
 
-	if mac, ok := arpLookup(iface.Name, target); ok {
+	if mac, ok := lookup(); ok {
 		return mac, nil
 	}
 
-	// connect() alone does not trigger ARP; an actual write to the on-link gateway
-	// makes the kernel resolve it. Then re-read the cache until it lands.
-	kickARP(iface, nexthop)
+	// connect() alone does not trigger resolution; an actual write to the on-link
+	// gateway makes the kernel resolve it. Then re-read the cache until it lands.
+	kickNeighbor(iface, nexthop)
 
-	deadline := time.Now().Add(arpResolveTimeout)
+	deadline := time.Now().Add(neighborResolveTimeout)
 	for time.Now().Before(deadline) {
-		time.Sleep(arpPollInterval)
+		time.Sleep(neighborPollInterval)
 
-		if mac, ok := arpLookup(iface.Name, target); ok {
+		if mac, ok := lookup(); ok {
 			return mac, nil
 		}
 	}
 
-	return nil, fmt.Errorf("nexthop: cannot resolve MAC for %s on %s", target, iface.Name)
+	return nil, fmt.Errorf("nexthop: cannot resolve MAC for %s on %s", nexthop, iface.Name)
+}
+
+// neighborLookup returns a closure reading the current neighbor-cache entry for
+// nexthop on iface: ARP (/proc/net/arp) for IPv4, NDP (netlink) for IPv6.
+func neighborLookup(iface *net.Interface, nexthop net.IP) func() (net.HardwareAddr, bool) {
+	if nexthop.To4() != nil {
+		name, target := iface.Name, nexthop.String()
+
+		return func() (net.HardwareAddr, bool) { return arpLookup(name, target) }
+	}
+
+	ifindex := iface.Index
+
+	return func() (net.HardwareAddr, bool) { return ndpLookup(ifindex, nexthop) }
 }
 
 // arpLookup returns the complete neighbor-cache entry for ip on ifname, if any.
@@ -153,14 +168,21 @@ func arpLookup(ifname, ip string) (net.HardwareAddr, bool) {
 	return nil, false
 }
 
-// kickARP nudges the kernel to resolve gw by writing a datagram toward it. The
-// socket is bound to iface (SO_BINDTODEVICE) so the neighbor entry lands on the
-// intended egress device — otherwise normal/policy routing could ARP gw on a
-// different interface and the later /proc/net/arp lookup by iface.Name would miss.
-// Errors are ignored: the only purpose is the side effect of triggering resolution.
-func kickARP(iface *net.Interface, gw net.IP) {
+// kickNeighbor nudges the kernel to resolve gw by writing a datagram toward it, so
+// the neighbor entry (ARP for IPv4, NDP for IPv6) lands in the cache. The socket is
+// bound to iface (SO_BINDTODEVICE) so the entry lands on the intended egress device —
+// otherwise normal/policy routing could resolve gw on a different interface and the
+// later cache lookup by interface would miss. A link-local gateway also needs the
+// zone on the address, or the dial cannot pick the link. Errors are ignored: the
+// only purpose is the side effect of triggering resolution.
+func kickNeighbor(iface *net.Interface, gw net.IP) {
+	host := gw.String()
+	if gw.IsLinkLocalUnicast() {
+		host += "%" + iface.Name
+	}
+
 	d := net.Dialer{
-		Timeout: arpPollInterval,
+		Timeout: neighborPollInterval,
 		Control: func(_, _ string, c syscall.RawConn) error {
 			var serr error
 
@@ -180,11 +202,104 @@ func kickARP(iface *net.Interface, gw net.IP) {
 		},
 	}
 
-	c, err := d.DialContext(context.Background(), "udp", net.JoinHostPort(gw.String(), arpKickPort))
+	c, err := d.DialContext(context.Background(), "udp", net.JoinHostPort(host, neighborKickPort))
 	if err != nil {
 		return
 	}
 	defer func() { _ = c.Close() }()
 
 	_, _ = c.Write([]byte{0})
+}
+
+// ndpLookup reads the gateway's MAC from the IPv6 neighbor (NDP) cache. Unlike IPv4
+// there is no /proc file for it, so we ask the kernel with a netlink RTM_GETNEIGH
+// dump and parse the RTM_NEWNEIGH replies. An entry counts only when it is on
+// ifindex, matches ip, carries a link-layer address, and is in a state that has
+// resolved one (REACHABLE/STALE/DELAY/PROBE/PERMANENT — not INCOMPLETE/FAILED).
+func ndpLookup(ifindex int, ip net.IP) (net.HardwareAddr, bool) {
+	const nudUsable uint16 = unix.NUD_REACHABLE | unix.NUD_STALE | unix.NUD_DELAY |
+		unix.NUD_PROBE | unix.NUD_PERMANENT
+
+	raw, err := syscall.NetlinkRIB(unix.RTM_GETNEIGH, unix.AF_INET6)
+	if err != nil {
+		return nil, false
+	}
+
+	msgs, err := syscall.ParseNetlinkMessage(raw)
+	if err != nil {
+		return nil, false
+	}
+
+	for i := range msgs {
+		m := &msgs[i]
+		if m.Header.Type != uint16(unix.RTM_NEWNEIGH) || len(m.Data) < unix.SizeofNdMsg {
+			continue
+		}
+
+		// struct ndmsg: family u8, pad u8, pad u16, ifindex i32, state u16, ...
+		rawIfindex := binary.NativeEndian.Uint32(m.Data[4:8])
+		ndmIfindex := int32(rawIfindex) //nolint:gosec // ifindex fits int32
+		ndmState := binary.NativeEndian.Uint16(m.Data[8:10])
+
+		if int(ndmIfindex) != ifindex || ndmState&nudUsable == 0 {
+			continue
+		}
+
+		if mac, ok := neighMAC(m.Data[unix.SizeofNdMsg:], ip); ok {
+			return mac, true
+		}
+	}
+
+	return nil, false
+}
+
+// neighMAC walks the rtattrs of one neighbor message and returns its link-layer
+// address when NDA_DST matches ip. syscall.ParseNetlinkRouteAttr does not handle
+// neighbor messages, so the attributes are walked by hand: each is a uint16 length,
+// a uint16 type, the payload, then padding to a 4-byte boundary.
+func neighMAC(attrs []byte, ip net.IP) (net.HardwareAddr, bool) {
+	const rtaHdrLen = 4
+
+	var (
+		dst net.IP
+		mac net.HardwareAddr
+	)
+
+	for len(attrs) >= rtaHdrLen {
+		alen := int(binary.NativeEndian.Uint16(attrs[0:2]))
+		atype := binary.NativeEndian.Uint16(attrs[2:4])
+
+		if alen < rtaHdrLen || alen > len(attrs) {
+			break
+		}
+
+		switch atype {
+		case uint16(unix.NDA_DST):
+			dst = net.IP(append([]byte(nil), attrs[rtaHdrLen:alen]...))
+		case uint16(unix.NDA_LLADDR):
+			mac = net.HardwareAddr(append([]byte(nil), attrs[rtaHdrLen:alen]...))
+		default:
+			// other neighbor attributes (probes, cache info, …) are not needed.
+		}
+
+		adv := rtaAlign(alen)
+		if adv > len(attrs) {
+			break
+		}
+
+		attrs = attrs[adv:]
+	}
+
+	if dst.Equal(ip) && len(mac) > 0 {
+		return mac, true
+	}
+
+	return nil, false
+}
+
+// rtaAlign rounds n up to the netlink rtattr alignment boundary (4 bytes).
+func rtaAlign(n int) int {
+	const align = 4
+
+	return (n + align - 1) &^ (align - 1)
 }

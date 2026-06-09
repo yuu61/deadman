@@ -121,19 +121,34 @@ func TestAddrsHaveIP(t *testing.T) {
 }
 
 func TestSelectEgressErrors(t *testing.T) {
-	// An IPv6 next-hop is rejected (this version forces IPv4 only).
-	_, _, err := selectEgress(net.ParseIP("fe80::1"), "")
+	v4dst := net.ParseIP("198.51.100.2")
+	v6dst := net.ParseIP("2001:db8::2")
+
+	// A link-local IPv6 gateway is ambiguous without an interface name.
+	_, _, err := selectEgress(net.ParseIP("fe80::1"), "", v6dst)
 	if err == nil {
-		t.Error("selectEgress with an IPv6 gateway should error")
+		t.Error("link-local IPv6 gateway without source=IFNAME should error")
 	}
 
-	// A non-existent interface name is rejected.
-	_, _, err = selectEgress(net.ParseIP("192.0.2.1"), "deadman-no-such-iface0")
+	// A link-local IPv6 gateway with a source IP (not an interface name) is rejected.
+	_, _, err = selectEgress(net.ParseIP("fe80::1"), "2001:db8::9", v6dst)
 	if err == nil {
-		t.Error("selectEgress with an unknown interface should error")
+		t.Error("link-local IPv6 gateway with a source IP (not IFNAME) should error")
+	}
+
+	// A non-existent interface name is rejected for both families.
+	_, _, err = selectEgress(net.ParseIP("192.0.2.1"), "deadman-no-such-iface0", v4dst)
+	if err == nil {
+		t.Error("IPv4 selectEgress with an unknown interface should error")
+	}
+
+	_, _, err = selectEgress(net.ParseIP("2001:db8::1"), "deadman-no-such-iface0", v6dst)
+	if err == nil {
+		t.Error("IPv6 selectEgress with an unknown interface should error")
 	}
 }
 
+//nolint:dupl // the IPv4 and IPv6 reply-match tests are deliberate parallel mirrors.
 func TestMatchEchoReply(t *testing.T) {
 	const (
 		id   = 0xabcd

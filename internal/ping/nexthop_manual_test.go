@@ -35,12 +35,15 @@ import (
 )
 
 const (
-	nhNetns  = "dmnh"
-	nhVeth   = "dmh0"
-	nhVethP  = "dmh0p"
-	nhHostIP = "10.123.45.1"
-	nhPeerIP = "10.123.45.2"
-	nhPrefix = "/24"
+	nhNetns   = "dmnh"
+	nhVeth    = "dmh0"
+	nhVethP   = "dmh0p"
+	nhHostIP  = "10.123.45.1"
+	nhPeerIP  = "10.123.45.2"
+	nhPrefix  = "/24"
+	nhHostIP6 = "2001:db8:dead::1"
+	nhPeerIP6 = "2001:db8:dead::2"
+	nhPrefix6 = "/64"
 )
 
 func TestNexthopForcedPipeline(t *testing.T) {
@@ -71,6 +74,41 @@ func TestNexthopForcedPipeline(t *testing.T) {
 	t.Logf("forced probe to %s via %s: rtt=%.3fms ttl=%d", nhPeerIP, nhPeerIP, res.RTT, res.TTL)
 }
 
+// TestNexthopForcedPipelineV6 is the IPv6 counterpart: it forces an ICMPv6 echo to
+// the peer's global address, exercising the netlink NDP resolution, the AF_PACKET
+// IPv6 send, and the raw ICMPv6 reply read. The gateway here is the peer's own
+// global address (on-link on the veth), reached out the egress interface.
+func TestNexthopForcedPipelineV6(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root")
+	}
+
+	if _, err := exec.LookPath("ip"); err != nil {
+		t.Skip("iproute2 'ip' not found")
+	}
+
+	setupNexthopTopology(t)
+
+	p, err := newNexthopPinger(Spec{
+		Addr:   nhPeerIP6,
+		Source: nhVeth, // egress interface; gateway is on-link.
+		Relay:  map[string]string{"nexthop": nhPeerIP6},
+	})
+	if err != nil {
+		t.Fatalf("newNexthopPinger: %v", err)
+	}
+
+	res := p.Send(context.Background())
+	if !res.Success {
+		t.Fatalf("forced IPv6 probe failed: %+v", res)
+	}
+
+	t.Logf(
+		"forced IPv6 probe to %s via %s: rtt=%.3fms hoplimit=%d",
+		nhPeerIP6, nhPeerIP6, res.RTT, res.TTL,
+	)
+}
+
 // setupNexthopTopology creates a veth pair with the peer end in a child netns and
 // registers cleanup. The host end stays in the test's (host) netns, so no setns
 // dance is needed.
@@ -95,6 +133,12 @@ func setupNexthopTopology(t *testing.T) {
 	run(t, "ip", "netns", "exec", nhNetns, "ip", "addr", "add", nhPeerIP+nhPrefix, "dev", nhVethP)
 	run(t, "ip", "netns", "exec", nhNetns, "ip", "link", "set", nhVethP, "up")
 	run(t, "ip", "netns", "exec", nhNetns, "ip", "link", "set", "lo", "up")
+
+	// Add the IPv6 addresses with nodad so the global address is usable immediately
+	// (duplicate-address detection would otherwise keep it tentative for ~1s).
+	run(t, "ip", "-6", "addr", "add", nhHostIP6+nhPrefix6, "dev", nhVeth, "nodad")
+	run(t, "ip", "netns", "exec", nhNetns,
+		"ip", "-6", "addr", "add", nhPeerIP6+nhPrefix6, "dev", nhVethP, "nodad")
 }
 
 func run(t *testing.T, name string, args ...string) {
