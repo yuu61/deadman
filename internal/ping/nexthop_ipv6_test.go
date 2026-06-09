@@ -199,6 +199,22 @@ func TestSelectSrcV6(t *testing.T) {
 		t.Errorf("ULA target: src=%v ok=%v, want fd00::5", src, ok)
 	}
 
+	// No cross-scope fallback: a wrong-scope source has no return path, so a GUA target
+	// with only a ULA source (and vice versa) fails rather than picking a doomed source.
+	ulaOnly := []net.Addr{
+		&net.IPNet{IP: net.ParseIP("fd00::5"), Mask: net.CIDRMask(64, 128)},
+	}
+	if _, ok := selectSrcV6(ulaOnly, net.ParseIP("2001:db8::1")); ok {
+		t.Error("GUA target from a ULA-only interface should fail (no cross-scope fallback)")
+	}
+
+	guaOnly := []net.Addr{
+		&net.IPNet{IP: net.ParseIP("2001:db8::5"), Mask: net.CIDRMask(64, 128)},
+	}
+	if _, ok := selectSrcV6(guaOnly, net.ParseIP("fd12:3456::1")); ok {
+		t.Error("ULA target from a GUA-only interface should fail (no cross-scope fallback)")
+	}
+
 	// IPv4 addresses are ignored.
 	v4Only := []net.Addr{
 		&net.IPNet{IP: net.ParseIP("192.168.1.5"), Mask: net.CIDRMask(24, 32)},

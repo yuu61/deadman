@@ -264,6 +264,12 @@ func ndpLookup(ifindex int, ip net.IP) (net.HardwareAddr, ndpState) {
 		nudUsable    uint16 = nudReachable | unix.NUD_STALE | unix.NUD_DELAY | unix.NUD_PROBE
 	)
 
+	// Dump the whole IPv6 neighbor table and filter by ifindex below, rather than
+	// hand-building an ifindex-scoped RTM_GETNEIGH request. This path is cold —
+	// resolution runs only on the first probe and on recovery; steady state reuses the
+	// cached MAC — so a full dump on a large neighbor table is not worth the extra
+	// hand-rolled netlink (which would also need to degrade to client-side filtering
+	// on kernels that ignore the request filter anyway).
 	raw, err := syscall.NetlinkRIB(unix.RTM_GETNEIGH, unix.AF_INET6)
 	if err != nil {
 		return nil, ndpMissing

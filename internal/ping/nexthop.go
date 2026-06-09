@@ -19,9 +19,10 @@ import (
 // (see linkTransport); the reply returns by ordinary routing and is read back on a
 // raw ICMP socket (see echoFamily).
 //
-// The address-family work sits behind one forward-looking seam, echoFamily: build
-// the ICMP echo, open the raw listener, match the reply. IPv4 is implemented today
-// (echoIPv4); IPv6/NDP can slot in as an echoIPv6 without touching the rest.
+// The address-family work sits behind one seam, echoFamily: build the ICMP echo,
+// open the raw listener, match the reply. Both families are implemented — IPv4 over
+// ICMP/ARP (echoIPv4) and IPv6 over ICMPv6/NDP (echoIPv6) — and slot in behind it
+// without touching the transport or the orchestration core.
 //
 // The OS-specific half — putting an L3 packet on the wire toward a MAC and resolving
 // that MAC from the kernel neighbor cache — is linkTransport (Linux AF_PACKET).
@@ -35,7 +36,7 @@ import (
 
 var (
 	errNoTransport = errors.New("nexthop: next-hop forcing is only supported on Linux")
-	errBadGateway  = errors.New("nexthop: invalid IPv4 gateway address")
+	errBadGateway  = errors.New("nexthop: invalid gateway address")
 )
 
 // linkTransport is the OS-specific half of next-hop forcing. The Linux AF_PACKET
@@ -52,9 +53,8 @@ type linkTransport interface {
 }
 
 // echoFamily is the address-family-specific half: building the echo request,
-// opening a raw ICMP listener, and matching the reply. IPv4 is implemented
-// (echoIPv4); an echoIPv6 (NDP/ICMPv6) can be added without touching the core or
-// the transport.
+// opening a raw ICMP listener, and matching the reply. Both families are
+// implemented: echoIPv4 (ICMP/ARP) and echoIPv6 (ICMPv6/NDP).
 type echoFamily interface {
 	ethertype() uint16
 	build(src, dst net.IP, id, seq int, token []byte) ([]byte, error)
@@ -167,7 +167,7 @@ func (p *nexthopPinger) Send(ctx context.Context) Result {
 	return p.sendForced(ctx, familyFor(dst), dst)
 }
 
-// sendForced runs the resolve→listen→build→send→wait sequence for an IPv4 target.
+// sendForced runs the resolve→listen→build→send→wait sequence for one target (either family).
 func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.IP) Result {
 	r, err := p.resolve(dst) //nolint:contextcheck // local-only selection; no ctx to thread.
 	if err != nil {
@@ -284,9 +284,8 @@ const probeTokenLen = 8
 // from another deadman watching the same destination. It is not security-sensitive.
 func newProbeToken() []byte {
 	b := make([]byte, probeTokenLen)
-	_, _ = rand.Read(
-		b,
-	) // crypto/rand.Read does not fail on supported platforms; a zero token still works.
+	// crypto/rand.Read does not fail on supported platforms; a zero token still works.
+	_, _ = rand.Read(b)
 
 	return b
 }
@@ -507,30 +506,24 @@ func kernelPreferredSrc(target net.IP) net.IP {
 // selectSrcV6 picks the IPv6 address among addrs whose scope matches target, because
 // the reply returns by ordinary routing and a mismatched-scope source has no return
 // path: a link-local source for a link-local target, a ULA source for a ULA target,
-// and a global-unicast source for a global target (ULA and GUA are distinct — a GUA
-// host cannot route back to a ULA source, and vice versa). When no same-scope source
-// exists it falls back to any global source as a best effort (source= can override).
+// and a non-ULA global source for a global target (ULA and GUA are distinct — a GUA
+// host cannot route back to a ULA source, and vice versa). There is deliberately no
+// cross-scope fallback: any wrong-scope source is guaranteed unreachable, so reporting
+// "no usable source" (a fast X) is more honest than sending a doomed probe. An explicit
+// source= overrides this, and pickSrcV6 consults the kernel's own choice first.
 func selectSrcV6(addrs []net.Addr, target net.IP) (net.IP, bool) {
-	var fallback net.IP
-
 	for _, a := range addrs {
 		ipnet, ok := a.(*net.IPNet)
 		if !ok || ipnet.IP.To4() != nil {
 			continue
 		}
 
-		ip := ipnet.IP
-		if srcScopeMatches(ip, target) {
-			return ip, true
-		}
-
-		// Best-effort fallback for a global target with no same-scope source.
-		if fallback == nil && ip.IsGlobalUnicast() && !target.IsLinkLocalUnicast() {
-			fallback = ip
+		if srcScopeMatches(ipnet.IP, target) {
+			return ipnet.IP, true
 		}
 	}
 
-	return fallback, fallback != nil
+	return nil, false
 }
 
 // srcScopeMatches reports whether source ip is in the same routing scope as target
