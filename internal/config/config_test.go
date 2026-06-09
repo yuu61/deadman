@@ -169,6 +169,50 @@ func TestParseConfigQuotedName(t *testing.T) {
 	}
 }
 
+func TestParseConfigUnicodeWhitespaceSeparator(t *testing.T) {
+	// Fields may be separated by any Unicode whitespace, not just ASCII space/tab.
+	// The ideographic space (U+3000) is routinely inserted by Japanese IMEs, so a
+	// line split with it must parse into distinct name and address fields rather
+	// than collapsing into one name with an empty address.
+	cfg, err := ParseConfig(strings.NewReader("host　1.2.3.4　nexthop=10.0.0.1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := cfg.Targets[0]
+	if s.Name != "host" || s.Addr != "1.2.3.4" {
+		t.Fatalf("name/addr = %q/%q, want %q/%q", s.Name, s.Addr, "host", "1.2.3.4")
+	}
+
+	if s.Relay["nexthop"] != "10.0.0.1" {
+		t.Errorf("nexthop = %q, want 10.0.0.1", s.Relay["nexthop"])
+	}
+}
+
+func TestParseConfigEmptyQuotedToken(t *testing.T) {
+	// Documents the chosen behavior for empty double-quote pairs. Quoting is a new
+	// feature with no prior strings.Fields contract to preserve (the old parser saw
+	// `""` as two literal quote characters), so this is a deliberate design choice,
+	// not a regression. A standalone "" keeps its positional slot as an empty field
+	// rather than vanishing — skipping it would shift `"" 1.2.3.4` to name=1.2.3.4
+	// (address misread as name), which is strictly more surprising.
+	cfg, err := ParseConfig(strings.NewReader("\"\" 1.2.3.4 key=\"\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := cfg.Targets[0]
+	if s.Name != "" || s.Addr != "1.2.3.4" {
+		t.Fatalf("name/addr = %q/%q, want %q/%q", s.Name, s.Addr, "", "1.2.3.4")
+	}
+
+	// key="" is an explicit empty value: the key must be present in the relay map,
+	// not absent. Comma-ok distinguishes present-but-empty from missing.
+	if v, ok := s.Relay["key"]; !ok || v != "" {
+		t.Errorf(`Relay["key"] = %q, present=%v; want present empty value`, v, ok)
+	}
+}
+
 func TestParseConfigUnterminatedQuote(t *testing.T) {
 	// A missing closing quote absorbs the rest of the line into one field; the
 	// spec is flagged so the TUI can warn instead of silently mis-binding it.

@@ -12,6 +12,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // TargetSpec is one parsed line of the config file.
@@ -124,7 +125,7 @@ func tokenize(line string) ([]string, bool) {
 			started = true
 		case inQuote:
 			cur.WriteRune(r)
-		case r == ' ' || r == '\t':
+		case unicode.IsSpace(r):
 			if started {
 				tokens = append(tokens, cur.String())
 				cur.Reset()
