@@ -85,20 +85,27 @@ func classifyOne(c *nexthopClasses, s config.TargetSpec) {
 	}
 
 	gwIP := net.ParseIP(s.Relay["nexthop"])
-	target := net.ParseIP(s.Addr)
+	target := net.ParseIP(s.Addr) // nil for a name (family unknown until resolved).
 
-	switch {
-	case target == nil:
-		// A name may resolve to either family; force it and, for the IPv4-only
-		// rp_filter warning, treat it as possibly IPv4.
-		c.forced = append(c.forced, s.Name)
-		c.forcedV4 = true
-	case gwIP != nil && (target.To4() == nil) != (gwIP.To4() == nil):
+	if gwIP != nil && target != nil && (target.To4() == nil) != (gwIP.To4() == nil) {
 		c.familyMismatch = append(c.familyMismatch, s.Name)
-	default:
-		c.forced = append(c.forced, s.Name)
-		if target.To4() != nil {
-			c.forcedV4 = true
-		}
+
+		return
 	}
+
+	c.forced = append(c.forced, s.Name)
+	if forcedIsV4(target, gwIP) {
+		c.forcedV4 = true
+	}
+}
+
+// forcedIsV4 reports whether a forced target's probe is IPv4, i.e. rp_filter-
+// relevant. A literal target uses its own family; a name is resolved to the
+// gateway's family at runtime, so it is IPv4 exactly when the gateway is.
+func forcedIsV4(target, gwIP net.IP) bool {
+	if target == nil {
+		return gwIP != nil && gwIP.To4() != nil
+	}
+
+	return target.To4() != nil
 }

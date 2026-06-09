@@ -64,3 +64,30 @@ func TestClassifyNexthop(t *testing.T) {
 		t.Error("forcedV4 = false, want true (IPv4 and name targets are present)")
 	}
 }
+
+func TestClassifyNexthopForcedV4Scope(t *testing.T) {
+	// A name is resolved to the gateway's family at runtime, so a name behind an IPv6
+	// gateway is an IPv6 probe and must NOT trip the IPv4-only rp_filter warning.
+	c := classifyNexthop([]config.TargetSpec{{
+		Name:  "name-v6gw",
+		Addr:  "example.com",
+		Relay: map[string]string{"nexthop": "2001:db8::ffff"},
+	}})
+
+	if want := []string{"name-v6gw"}; !slices.Equal(c.forced, want) {
+		t.Errorf("forced = %v, want %v", c.forced, want)
+	}
+
+	if c.forcedV4 {
+		t.Error("forcedV4 = true for a name behind an IPv6 gateway; want false")
+	}
+
+	// A name behind an IPv4 gateway stays rp_filter-relevant.
+	if c := classifyNexthop([]config.TargetSpec{{
+		Name:  "name-v4gw",
+		Addr:  "example.com",
+		Relay: map[string]string{"nexthop": "192.0.2.1"},
+	}}); !c.forcedV4 {
+		t.Error("forcedV4 = false for a name behind an IPv4 gateway; want true")
+	}
+}

@@ -53,10 +53,12 @@ func TestEchoIPv6Build(t *testing.T) {
 
 	icmpv6 := pkt[ipv6HeaderLen:]
 
-	// The ICMPv6 checksum was computed (pseudo-header folded in by Marshal), so it is
-	// not left zero.
-	if icmpv6[2] == 0 && icmpv6[3] == 0 {
-		t.Error("ICMPv6 checksum was not computed")
+	// The ICMPv6 checksum must be correct, not merely present: the Internet checksum
+	// over the IPv6 pseudo-header followed by the ICMPv6 message (checksum field
+	// included) folds to zero. AF_PACKET sends get no kernel-computed checksum, so
+	// build() must produce it itself via icmp.Message.Marshal's pseudo-header path.
+	if got := ipv6PseudoChecksum(src, dst, icmpv6); got != 0 {
+		t.Errorf("ICMPv6 checksum invalid: residual %#04x", got)
 	}
 
 	// The payload parses back to our echo request.
@@ -180,6 +182,23 @@ func TestSelectSrcV6(t *testing.T) {
 		t.Error("global target from a link-local-only interface should fail")
 	}
 
+	// On an interface carrying both ULA and GUA, the source must match the target's
+	// scope regardless of enumeration order: a ULA reply has no route to a GUA source
+	// and vice versa.
+	ulaThenGUA := []net.Addr{
+		&net.IPNet{IP: net.ParseIP("fd00::5"), Mask: net.CIDRMask(64, 128)},
+		&net.IPNet{IP: net.ParseIP("2001:db8::5"), Mask: net.CIDRMask(64, 128)},
+	}
+	if src, ok := selectSrcV6(ulaThenGUA, net.ParseIP("2001:db8:1::1")); !ok ||
+		!src.Equal(net.ParseIP("2001:db8::5")) {
+		t.Errorf("GUA target (ULA enumerated first): src=%v ok=%v, want 2001:db8::5", src, ok)
+	}
+
+	if src, ok := selectSrcV6(ulaThenGUA, net.ParseIP("fd12:3456::1")); !ok ||
+		!src.Equal(net.ParseIP("fd00::5")) {
+		t.Errorf("ULA target: src=%v ok=%v, want fd00::5", src, ok)
+	}
+
 	// IPv4 addresses are ignored.
 	v4Only := []net.Addr{
 		&net.IPNet{IP: net.ParseIP("192.168.1.5"), Mask: net.CIDRMask(24, 32)},
@@ -209,6 +228,24 @@ func TestResolveToFamily(t *testing.T) {
 	if ip := resolveToFamily(ctx, "2001:db8::1", v4gw); ip != nil {
 		t.Errorf("v6 literal behind a v4 gateway = %v, want nil", ip)
 	}
+}
+
+// ipv6PseudoChecksum returns the Internet checksum over the IPv6 pseudo-header
+// (src, dst, upper-layer length, next header = ICMPv6) followed by the ICMPv6
+// message. A correct ICMPv6 checksum makes the whole sum fold to zero.
+func ipv6PseudoChecksum(src, dst net.IP, icmpv6 []byte) uint16 {
+	const pseudoLen = 40
+
+	mlen := uint16(len(icmpv6)) //nolint:gosec // a test echo message fits a uint16.
+
+	buf := make([]byte, pseudoLen+len(icmpv6))
+	copy(buf[0:16], src.To16())
+	copy(buf[16:32], dst.To16())
+	binary.BigEndian.PutUint32(buf[32:36], uint32(mlen))
+	buf[39] = ianaProtocolICMPv6
+	copy(buf[pseudoLen:], icmpv6)
+
+	return ipChecksum(buf)
 }
 
 func TestFamilyFor(t *testing.T) {

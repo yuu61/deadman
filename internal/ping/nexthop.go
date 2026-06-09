@@ -431,12 +431,14 @@ func pickSrcV6(ifi *net.Interface, target net.IP) (net.IP, bool) {
 	return selectSrcV6(addrs, target)
 }
 
-// selectSrcV6 picks the IPv6 address among addrs whose scope matches target: a
-// link-local source for a link-local target, otherwise a global (or ULA) source. A
-// global target cannot be answered from a link-local source — the reply returns by
-// ordinary routing — so the scopes must line up.
+// selectSrcV6 picks the IPv6 address among addrs whose scope matches target, because
+// the reply returns by ordinary routing and a mismatched-scope source has no return
+// path: a link-local source for a link-local target, a ULA source for a ULA target,
+// and a global-unicast source for a global target (ULA and GUA are distinct — a GUA
+// host cannot route back to a ULA source, and vice versa). When no same-scope source
+// exists it falls back to any global source as a best effort (source= can override).
 func selectSrcV6(addrs []net.Addr, target net.IP) (net.IP, bool) {
-	wantLinkLocal := target.IsLinkLocalUnicast()
+	var fallback net.IP
 
 	for _, a := range addrs {
 		ipnet, ok := a.(*net.IPNet)
@@ -444,16 +446,31 @@ func selectSrcV6(addrs []net.Addr, target net.IP) (net.IP, bool) {
 			continue
 		}
 
-		if wantLinkLocal && ipnet.IP.IsLinkLocalUnicast() {
-			return ipnet.IP, true
+		ip := ipnet.IP
+		if srcScopeMatches(ip, target) {
+			return ip, true
 		}
 
-		if !wantLinkLocal && ipnet.IP.IsGlobalUnicast() {
-			return ipnet.IP, true
+		// Best-effort fallback for a global target with no same-scope source.
+		if fallback == nil && ip.IsGlobalUnicast() && !target.IsLinkLocalUnicast() {
+			fallback = ip
 		}
 	}
 
-	return nil, false
+	return fallback, fallback != nil
+}
+
+// srcScopeMatches reports whether source ip is in the same routing scope as target
+// (link-local, ULA, or global unicast), so the target's reply to ip can return.
+func srcScopeMatches(ip, target net.IP) bool {
+	switch {
+	case target.IsLinkLocalUnicast():
+		return ip.IsLinkLocalUnicast()
+	case target.IsPrivate(): // a ULA target needs a ULA source.
+		return ip.IsGlobalUnicast() && ip.IsPrivate()
+	default: // a global-unicast target needs a non-ULA global source.
+		return ip.IsGlobalUnicast() && !ip.IsPrivate()
+	}
 }
 
 // egressByName resolves the egress from an explicit interface name.

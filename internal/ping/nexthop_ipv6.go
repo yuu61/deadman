@@ -63,11 +63,20 @@ func (echoIPv6) build(src, dst net.IP, id, seq int, token []byte) ([]byte, error
 	return pkt, nil
 }
 
-func (echoIPv6) listen(_ net.IP) (replyWaiter, error) {
-	// Listen on the wildcard rather than the forced source: that source may be a
-	// link-local address, whose bind would need a zone. The userspace match (peer +
-	// id + seq + token) already isolates our reply from the raw socket's fan-out.
-	conn, err := icmp.ListenPacket("ip6:ipv6-icmp", "::")
+func (echoIPv6) listen(src net.IP) (replyWaiter, error) {
+	// Bind the source when it is routable (global or ULA): the reply returns to it,
+	// and binding makes a vanished source (e.g. a SLAAC/DHCPv6 address rotated out
+	// from under a long-running monitor) fail here, so the pinger re-selects next
+	// round — the same self-heal the IPv4 path gets from binding its source. A
+	// link-local source falls back to the wildcard: its bind would need a zone, and
+	// link-local addresses do not rotate. The userspace match (peer + id + seq +
+	// token) isolates our reply from the raw socket's fan-out either way.
+	addr := "::"
+	if src != nil && !src.IsLinkLocalUnicast() {
+		addr = src.String()
+	}
+
+	conn, err := icmp.ListenPacket("ip6:ipv6-icmp", addr)
 	if err != nil {
 		return nil, err
 	}
