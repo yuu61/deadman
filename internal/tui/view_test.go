@@ -68,6 +68,96 @@ func TestViewRendersTargetsAndSeparator(t *testing.T) {
 	}
 }
 
+func TestViaColumnAndToggle(t *testing.T) {
+	specs := []config.TargetSpec{
+		{Name: "cf", Addr: "1.1.1.1", Relay: map[string]string{"nexthop": "10.98.38.9"}},
+	}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	// VIA column shown by default, labeling the probing method + its differentiator.
+	for _, want := range []string{"VIA", "nexthop 10.98.38.9", "(v)ia"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("default view missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// 'v' hides the VIA column.
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	for _, gone := range []string{"VIA", "nexthop 10.98.38.9"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("after toggle: %q should be hidden\n---\n%s", gone, out)
+		}
+	}
+
+	// 'v' again restores it.
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	if !strings.Contains(out, "nexthop 10.98.38.9") {
+		t.Errorf("after second toggle: VIA should be back\n---\n%s", out)
+	}
+}
+
+func TestColumnsConfigHidesViaAtStart(t *testing.T) {
+	specs := []config.TargetSpec{
+		{Name: "cf", Addr: "1.1.1.1", Relay: map[string]string{"nexthop": "10.98.38.9"}},
+	}
+
+	m, err := New(specs, Options{Scale: 10, Columns: map[string]bool{"VIA": false}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if strings.Contains(out, "VIA") || strings.Contains(out, "nexthop 10.98.38.9") {
+		t.Errorf("columns VIA=off should hide the VIA column at startup\n---\n%s", out)
+	}
+}
+
+func TestParseWarningShown(t *testing.T) {
+	// A name with spaces leaves stray tokens; the startup warning surfaces them.
+	specs := []config.TargetSpec{{
+		Name:    "Cloudflare",
+		Addr:    "via",
+		Relay:   map[string]string{"nexthop": "10.98.38.9"},
+		Dropped: []string{"MGMT", "1.1.1.1"},
+	}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	for _, want := range []string{"ignored stray tokens", "MGMT 1.1.1.1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("view missing parse warning %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestUnterminatedQuoteWarningShown(t *testing.T) {
+	specs := []config.TargetSpec{{
+		Name:              "host",
+		Addr:              "1.2.3.4",
+		Relay:             map[string]string{"user": "admin relay=jump"},
+		UnterminatedQuote: true,
+	}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !strings.Contains(out, "unterminated quote") {
+		t.Errorf("view missing unterminated-quote warning\n---\n%s", out)
+	}
+}
+
 func TestMinMaxToggleHidesColumns(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "host1", Addr: "1.2.3.4", Relay: map[string]string{}}}
 

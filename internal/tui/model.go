@@ -43,7 +43,7 @@ type Model struct {
 	width, height int
 
 	// column layout, recomputed on resize.
-	hostW, addrW, resW int
+	hostW, addrW, viaW, resW int
 
 	visible map[string]bool // per-column visibility (config defaults + 'm' toggle).
 
@@ -72,7 +72,7 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 		opts:     opts,
 		hostInfo: hostInfo(),
 		visible:  buildVisible(opts.Columns),
-		warnings: nexthopWarnings(specs),
+		warnings: startupWarnings(specs),
 	}, nil
 }
 
@@ -146,7 +146,7 @@ func loadRows(path string, scale int, existing []Row) (reload, bool) {
 		return reload{}, false
 	}
 
-	return reload{rows: rows, columns: cfg.Columns, warnings: nexthopWarnings(cfg.Targets)}, true
+	return reload{rows: rows, columns: cfg.Columns, warnings: startupWarnings(cfg.Targets)}, true
 }
 
 func hostInfo() string {
@@ -213,6 +213,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		show := !m.visible[colMin] || !m.visible[colMax]
 		m.visible[colMin] = show
 		m.visible[colMax] = show
+		m = m.recalcWidths()
+
+		return m, nil
+	case "v":
+		// Toggle the VIA (probing method) column; its width feeds the result-bar
+		// column, so recompute the layout.
+		m.visible[colVia] = !m.visible[colVia]
 		m = m.recalcWidths()
 
 		return m, nil
@@ -343,9 +350,37 @@ func (m Model) recalcWidths() Model {
 
 	m.addrW = alen
 
-	// arrow + host + 1 + addr + 1 + statsHeader + 2 + result.
+	m.viaW = m.viaWidth()
+
+	// arrow + host + 1 + addr + 1 [+ via + 1] + statsHeader + 2 + result.
 	used := len(arrow) + m.hostW + 1 + m.addrW + 1 + len(m.statsHeader()) + 2
+	if m.columnVisible(colVia) {
+		used += m.viaW + 1
+	}
+
 	m.resW = max(m.width-used, minResultWidth)
 
 	return m
+}
+
+// viaWidth is the display width of the VIA column: the widest target label,
+// floored by the "VIA" header and capped at maxViaLength.
+func (m Model) viaWidth() int {
+	w := len("VIA")
+
+	for _, r := range m.rows {
+		if r.Target == nil {
+			continue
+		}
+
+		if l := displayWidth(r.Target.Via); l > w {
+			w = l
+		}
+	}
+
+	if w > maxViaLength {
+		w = maxViaLength
+	}
+
+	return w
 }

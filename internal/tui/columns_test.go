@@ -33,7 +33,7 @@ func TestStatColumnWidths(t *testing.T) {
 // buildVisible seeds every column shown, applies known overrides, and ignores
 // unknown keys.
 func TestBuildVisible(t *testing.T) {
-	v := buildVisible(map[string]bool{"MIN": false, "BOGUS": false})
+	v := buildVisible(map[string]bool{"MIN": false, "BOGUS": false, "VIA": false})
 
 	if !v["LOSS"] || !v["MAX"] {
 		t.Errorf("unspecified columns should stay shown: %+v", v)
@@ -41,6 +41,11 @@ func TestBuildVisible(t *testing.T) {
 
 	if v["MIN"] {
 		t.Errorf("MIN override not applied: %+v", v)
+	}
+
+	// The structural VIA column is seeded too, so its override applies.
+	if v["VIA"] {
+		t.Errorf("VIA override not applied: %+v", v)
 	}
 
 	if _, ok := v["BOGUS"]; ok {

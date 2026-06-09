@@ -35,6 +35,12 @@ const (
 	colJit  = "JIT"
 	colSnt  = "SNT"
 	colFail = "FAIL"
+
+	// colVia is the structural VIA column (the probing method). Unlike the
+	// statColumns it is a variable-width string column rendered in view.go, but it
+	// shares the same visibility map so the "columns" directive and the 'v' key can
+	// hide it.
+	colVia = "VIA"
 )
 
 // statColumns is the ordered registry of statistics columns. The header row, each
@@ -57,12 +63,16 @@ var statColumns = []statColumn{
 }
 
 // buildVisible returns a per-column visibility map seeded to all-shown, then
-// applies the config overrides (keys not in the registry are ignored).
+// applies the config overrides (keys not in the registry are ignored). The
+// structural VIA column is seeded alongside the statColumns so it is hideable via
+// the "columns" directive and the 'v' key.
 func buildVisible(overrides map[string]bool) map[string]bool {
-	v := make(map[string]bool, len(statColumns))
+	v := make(map[string]bool, len(statColumns)+1)
 	for _, c := range statColumns {
 		v[c.Key] = true
 	}
+
+	v[colVia] = true
 
 	for k, show := range overrides {
 		if _, ok := v[k]; ok {

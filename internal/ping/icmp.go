@@ -37,6 +37,7 @@ var useICMPPrivileged = sync.OnceValue(func() bool {
 	if err != nil {
 		return false
 	}
+
 	_ = conn.Close()
 
 	return true

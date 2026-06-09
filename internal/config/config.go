@@ -1,9 +1,10 @@
 // Package config parses deadman configuration files into target specs.
 //
-// The grammar: tabs become spaces, runs of whitespace are collapsed, full-line
-// "#" comments and ";#" trailers are stripped, blank lines are skipped, and the
-// remaining "NAME ADDRESS key=value..." tokens are split on single spaces. A name
-// matching ^-+$ denotes a visual separator.
+// The grammar: tabs become spaces, full-line "#" comments and ";#" trailers are
+// stripped, blank lines are skipped, and the remaining "NAME ADDRESS
+// key=value..." line is split into fields on whitespace. A field may be wrapped in
+// double quotes to include spaces — most usefully the name ("My Host" 1.2.3.4) —
+// and the quotes are removed. A name matching ^-+$ denotes a visual separator.
 package config
 
 import (
@@ -11,6 +12,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // TargetSpec is one parsed line of the config file.
@@ -21,6 +23,15 @@ type TargetSpec struct {
 	TCP         string
 	Relay       map[string]string
 	IsSeparator bool
+	// Dropped holds post-address tokens that were silently ignored: bare words
+	// (no "=") and unknown key=value attributes. A name with spaces (e.g.
+	// "Cloudflare via MGMT 1.1.1.1 ...") shifts real tokens here, so the TUI can
+	// warn instead of failing silently.
+	Dropped []string
+	// UnterminatedQuote is true when the line had an opening double quote with no
+	// closing one, so the rest of the line was absorbed into a single field. The
+	// TUI warns rather than silently mis-binding the attribute.
+	UnterminatedQuote bool
 }
 
 // Config is the parsed configuration: the target list plus optional column
@@ -36,8 +47,10 @@ type Config struct {
 const columnDirective = "columns"
 
 var (
-	reComment     = regexp.MustCompile(`^#.*`)
-	reSemiComment = regexp.MustCompile(`;\s*#`)
+	reComment = regexp.MustCompile(`^#.*`)
+	// reSemiComment matches a ";#" trailer and everything after it, so the comment
+	// text is removed rather than left as stray tokens.
+	reSemiComment = regexp.MustCompile(`;\s*#.*`)
 	reSeparator   = regexp.MustCompile(`^-+$`)
 )
 
@@ -61,7 +74,7 @@ func ParseConfig(r io.Reader) (Config, error) {
 		line = reComment.ReplaceAllString(line, "")
 		line = reSemiComment.ReplaceAllString(line, "")
 
-		fields := strings.Fields(line)
+		fields, terminated := tokenize(line)
 		if len(fields) == 0 {
 			continue
 		}
@@ -74,10 +87,63 @@ func ParseConfig(r io.Reader) (Config, error) {
 			continue
 		}
 
-		cfg.Targets = append(cfg.Targets, parseTarget(fields))
+		spec := parseTarget(fields)
+		spec.UnterminatedQuote = !terminated
+		cfg.Targets = append(cfg.Targets, spec)
 	}
 
 	return cfg, sc.Err()
+}
+
+// tokenize splits a config line into whitespace-separated fields, honoring
+// double-quoted spans so a field (typically the name) may contain spaces:
+//
+//	"Cloudflare via MGMT" 1.1.1.1 nexthop=10.98.38.9
+//
+// The surrounding quotes are removed and whitespace inside them is preserved;
+// quoting works mid-token too (key="/a b" yields key=/a b). It replaces
+// strings.Fields and behaves identically for unquoted input. Comment stripping
+// runs before tokenize, so quotes do not protect a '#'/';#' comment marker. Only
+// the double quote is special; a single quote is a literal character.
+//
+// terminated is false when an opening quote had no closing one: the rest of the
+// line is then absorbed into the final field, and the caller surfaces a warning
+// rather than mis-binding it silently.
+func tokenize(line string) ([]string, bool) {
+	var (
+		tokens  []string
+		cur     strings.Builder
+		inQuote bool
+		started bool // current token has begun (covers an empty quoted "").
+	)
+
+	for _, r := range line {
+		switch {
+		case r == '"':
+			inQuote = !inQuote
+
+			started = true
+		case inQuote:
+			cur.WriteRune(r)
+		case unicode.IsSpace(r):
+			if started {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+
+				started = false
+			}
+		default:
+			cur.WriteRune(r)
+
+			started = true
+		}
+	}
+
+	if started {
+		tokens = append(tokens, cur.String())
+	}
+
+	return tokens, !inQuote
 }
 
 // parseTarget builds a TargetSpec from the whitespace-split fields of one
@@ -102,11 +168,14 @@ func parseTarget(fields []string) TargetSpec {
 }
 
 // applyAttr parses one "key=value" token and stores it on spec. Relay keys land
-// in the relay map; source and tcp have their own fields; unknown keys are
-// ignored.
+// in the relay map; source and tcp have their own fields. Tokens that cannot be
+// routed — bare words with no "=" and unknown keys — are recorded in spec.Dropped
+// so the caller can warn rather than dropping them silently.
 func applyAttr(spec *TargetSpec, kv string) {
 	key, value, ok := strings.Cut(kv, "=")
 	if !ok {
+		spec.Dropped = append(spec.Dropped, kv) // bare word (e.g. a name with spaces).
+
 		return
 	}
 
@@ -118,7 +187,7 @@ func applyAttr(spec *TargetSpec, kv string) {
 	case key == "tcp":
 		spec.TCP = value
 	default:
-		// unknown attribute key: ignored.
+		spec.Dropped = append(spec.Dropped, kv) // unknown attribute key.
 	}
 }
 

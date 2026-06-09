@@ -16,6 +16,7 @@ const (
 
 	maxHostnameLength = 20
 	maxAddressLength  = 40
+	maxViaLength      = 24
 
 	// minResultWidth is the floor for the result-bar column when the terminal is
 	// too narrow to give it the leftover space.
