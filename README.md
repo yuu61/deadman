@@ -95,9 +95,13 @@ Unix では deadman に SIGHUP を送ると設定ファイルを再読み込み�
 直接 ICMP はネイティブソケットを使用します（`ping` バイナリは不要）。
 
 - **Windows**: 管理者権限への昇格なしで動作します。
-- **Linux**: 非特権 ICMP には
-  `sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"` の設定、もしくは
-  `setcap cap_net_raw+ep ./deadman` を付与して実行するか、root での実行が必要です。
+- **Linux**: deadman は可能であれば raw ソケット（特権 ICMP）を自動的に使うため、
+  **root もしくは `setcap cap_net_raw+ep ./deadman` を付与した実行ではそのまま動作します**。
+  非 root かつ capability も無い場合は、非特権 ICMP（`SOCK_DGRAM`）を許可するために
+  `sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"` を設定してください。
+  なお `net.ipv4.ping_group_range` は呼び出し元の gid が範囲に含まれることを要求し、
+  既定では root（gid 0）を含みません。非特権 LXC コンテナのように当該 sysctl を
+  変更できない環境では、root か setcap（いずれも raw ソケット経路）を使ってください。
 - **macOS**: そのまま動作します。
 
 中継モードは外部コマンドを呼び出すため、それらが存在する環境でのみ動作します。

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"runtime"
+	"sync"
 	"time"
 
 	probing "github.com/prometheus-community/pro-bing"
@@ -13,6 +14,33 @@ const icmpTimeout = 1 * time.Second
 
 // usPerMs converts microseconds to milliseconds.
 const usPerMs = 1000.0
+
+// useICMPPrivileged reports, once per process, whether native ICMP should use the
+// privileged raw-socket path.
+//
+// Windows always requires the raw path (no admin elevation needed). On Unix we
+// probe whether a raw ICMP socket can actually be opened — i.e. the process is
+// root or carries CAP_NET_RAW (e.g. via `setcap cap_net_raw+ep`). When it can, we
+// prefer the raw path, because the unprivileged datagram path (SOCK_DGRAM ICMP)
+// is additionally gated by net.ipv4.ping_group_range: that range excludes root by
+// default and, in locked-down environments such as an unprivileged LXC container,
+// cannot even be widened — so a root deadman that only tried the datagram path
+// would fail every probe. When the raw probe fails we fall back to the
+// unprivileged path, which is what macOS and an unprivileged Linux user with a
+// configured ping_group_range expect.
+var useICMPPrivileged = sync.OnceValue(func() bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+
+	conn, err := net.ListenPacket("ip4:icmp", "0.0.0.0")
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+
+	return true
+})
 
 // icmpPinger sends a native ICMP echo using pro-bing. Native ICMP is portable
 // (Windows/Linux/macOS) and avoids shelling out to `ping -c 1` and parsing
@@ -25,11 +53,9 @@ type icmpPinger struct {
 
 func newICMPPinger(s Spec) (Pinger, error) {
 	return &icmpPinger{
-		addr:   s.Addr,
-		source: s.Source,
-		// Windows requires privileged mode (no admin elevation needed); on
-		// Linux/macOS the unprivileged UDP path is used by default.
-		privileged: runtime.GOOS == "windows",
+		addr:       s.Addr,
+		source:     s.Source,
+		privileged: useICMPPrivileged(),
 	}, nil
 }
 
