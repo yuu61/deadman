@@ -56,13 +56,12 @@ type Target struct {
 	Snt      int     // number sent.
 	TTL      int     // last TTL (captured, not displayed).
 
-	history []string
-	scale   int
-	prevRTT float64 // previous successful RTT, for the jitter delta.
+	history []ping.Result // raw probe results (newest first); rendered to glyphs at view time.
+	prevRTT float64       // previous successful RTT, for the jitter delta.
 }
 
 // NewTarget builds a Target and its Pinger from a Spec.
-func NewTarget(name string, spec ping.Spec, scale int) (*Target, error) {
+func NewTarget(name string, spec ping.Spec) (*Target, error) {
 	p, err := ping.New(spec)
 	if err != nil {
 		return nil, err
@@ -77,7 +76,6 @@ func NewTarget(name string, spec ping.Spec, scale int) (*Target, error) {
 		Via:    ping.Describe(spec),
 		Pinger: p,
 		State:  Unknown,
-		scale:  scale,
 	}, nil
 }
 
@@ -98,14 +96,16 @@ func (t *Target) Consume(res ping.Result) {
 
 	t.LossRate = float64(t.Loss) / float64(t.Snt) * percentMultiplier
 
-	t.history = append([]string{glyph(res, t.scale)}, t.history...)
+	t.history = append([]ping.Result{res}, t.history...)
 	if len(t.history) > historyCap {
 		t.history = t.history[:historyCap]
 	}
 }
 
-// Glyphs returns the most recent n result glyphs (newest first).
-func (t *Target) Glyphs(n int) []string {
+// Results returns the most recent n probe results (newest first). The TUI renders
+// each to a glyph at view time via Glyph, so the result bar re-buckets live when
+// the RTT scale changes.
+func (t *Target) Results(n int) []ping.Result {
 	if n > len(t.history) {
 		n = len(t.history)
 	}
@@ -201,9 +201,10 @@ func (t *Target) foldSuccessRTT(rtt float64) {
 // RTT < scale*(i+1), and the full block "█" for anything above the last bucket.
 var rttBars = []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇"}
 
-// glyph maps a result to its result-bar character. Failures map to X/t/s; a
-// success maps to a block element scaled by the RTT scale (ms per step).
-func glyph(res ping.Result, scale int) string {
+// Glyph maps a result to its result-bar character. Failures map to X/t/s; a
+// success maps to a block element scaled by the RTT scale (ms per step). The TUI
+// calls this at render time, so the bar re-buckets when the scale changes.
+func Glyph(res ping.Result, scale int) string {
 	switch res.Code {
 	case ping.SSHTimeout:
 		return "t"

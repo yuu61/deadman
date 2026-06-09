@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -354,5 +356,173 @@ func TestGenerationGatingIgnoresStaleResults(t *testing.T) {
 	)
 	if m.rows[0].Target.Snt != 1 {
 		t.Errorf("current-generation result not applied: Snt = %d, want 1", m.rows[0].Target.Snt)
+	}
+}
+
+func TestPrecisionCycle(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(
+		t,
+		m,
+		tea.WindowSizeMsg{Width: 120, Height: 40},
+		pingResultMsg{
+			idx:    0,
+			target: m.rows[0].Target,
+			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
+		},
+	)
+	// Default: integer ms.
+	if !strings.Contains(out, "(p)recision[ms]") {
+		t.Errorf("default footer should show (p)recision[ms]\n---\n%s", out)
+	}
+
+	// 'p' -> ms.1: RTT 5 renders with one decimal.
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if !strings.Contains(out, "(p)recision[ms.1]") || !strings.Contains(out, "5.0") {
+		t.Errorf("after p: want (p)recision[ms.1] and 5.0\n---\n%s", out)
+	}
+
+	// 'p' -> us: RTT 5 renders as microseconds.
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if !strings.Contains(out, "(p)recision[us]") || !strings.Contains(out, "5000") {
+		t.Errorf("after p,p: want (p)recision[us] and 5000\n---\n%s", out)
+	}
+
+	// 'p' wraps back to ms.
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if !strings.Contains(out, "(p)recision[ms]") {
+		t.Errorf("after p,p,p: should wrap to (p)recision[ms]\n---\n%s", out)
+	}
+}
+
+func TestScaleStepKeys(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !strings.Contains(out, "RTT Scale 10ms") {
+		t.Errorf("initial footer should show scale 10\n---\n%s", out)
+	}
+
+	// down steps to a finer scale (10 -> 5).
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if !strings.Contains(out, "RTT Scale 5ms") {
+		t.Errorf("after down: want scale 5\n---\n%s", out)
+	}
+
+	// up steps coarser (5 -> 10 -> 20).
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyUp}, tea.KeyMsg{Type: tea.KeyUp})
+	if !strings.Contains(out, "RTT Scale 20ms") {
+		t.Errorf("after up,up: want scale 20\n---\n%s", out)
+	}
+
+	// down past the bottom rung clamps at 1ms.
+	_, out = drive(t, m,
+		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
+		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
+		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown})
+	if !strings.Contains(out, "RTT Scale 1ms") {
+		t.Errorf("down past the bottom should clamp at 1ms\n---\n%s", out)
+	}
+}
+
+func TestScaleRebucketsExistingBar(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One probe at RTT 15 renders ▂ at scale 10.
+	m, out := drive(
+		t,
+		m,
+		tea.WindowSizeMsg{Width: 120, Height: 40},
+		pingResultMsg{
+			idx:    0,
+			target: m.rows[0].Target,
+			res:    ping.Result{Success: true, Code: ping.Success, RTT: 15},
+		},
+	)
+	if !strings.Contains(out, "▂") {
+		t.Errorf("at scale 10, RTT 15 should render ▂\n---\n%s", out)
+	}
+
+	// 'down' to scale 5 re-buckets the SAME stored result to ▄ (no new probe).
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if !strings.Contains(out, "▄") || strings.Contains(out, "▂") {
+		t.Errorf("after down to scale 5, RTT 15 should re-bucket to ▄ not ▂\n---\n%s", out)
+	}
+}
+
+func TestPrecisionFromConfigAtStartup(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	// A config "precision ms.1" reaches the model via Options.Precision and must take
+	// effect at the first paint, before any key press.
+	m, err := New(specs, Options{Scale: 10, Precision: "ms.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(
+		t,
+		m,
+		tea.WindowSizeMsg{Width: 120, Height: 40},
+		pingResultMsg{
+			idx:    0,
+			target: m.rows[0].Target,
+			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
+		},
+	)
+	if !strings.Contains(out, "(p)recision[ms.1]") || !strings.Contains(out, "5.0") {
+		t.Errorf("config precision ms.1 should render one decimal at startup\n---\n%s", out)
+	}
+}
+
+func TestReloadPreservesScaleAndPrecision(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deadman.conf")
+	// The file hides MIN and carries no scale/precision directive.
+	err := os.WriteFile(path, []byte("columns MIN=off\nh 1.2.3.4\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10, ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Live: step the scale to 5 and cycle precision to ms.1.
+	m, _ = drive(t, m,
+		tea.WindowSizeMsg{Width: 120, Height: 40},
+		tea.KeyMsg{Type: tea.KeyDown},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}},
+	)
+
+	// Reload reparses the file: columns reset to it (MIN hidden), but the live
+	// scale/precision are preserved (the documented, intentional asymmetry).
+	_, out := drive(t, m, reloadMsg{})
+
+	if !strings.Contains(out, "RTT Scale 5ms") || !strings.Contains(out, "(p)recision[ms.1]") {
+		t.Errorf("reload should preserve the live scale/precision\n---\n%s", out)
+	}
+
+	if strings.Contains(out, "MIN") {
+		t.Errorf("reload should reset columns to the file (MIN hidden)\n---\n%s", out)
 	}
 }

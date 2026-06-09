@@ -51,7 +51,6 @@ func runRoundAndMeasureSpread(t *testing.T, async bool) time.Duration {
 		tg, err := monitor.NewTarget(
 			"t",
 			ping.Spec{Addr: "1.2.3.4", Relay: map[string]string{}},
-			10,
 		)
 		if err != nil {
 			t.Fatal(err)

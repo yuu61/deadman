@@ -26,15 +26,15 @@ func TestGlyph(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := glyph(c.res, scale); got != c.want {
-				t.Errorf("glyph(%+v) = %q, want %q", c.res, got, c.want)
+			if got := Glyph(c.res, scale); got != c.want {
+				t.Errorf("Glyph(%+v) = %q, want %q", c.res, got, c.want)
 			}
 		})
 	}
 }
 
 func TestConsume(t *testing.T) {
-	tg := &Target{scale: 10}
+	tg := &Target{}
 	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 10, TTL: 50})
 	tg.Consume(ping.Result{Code: ping.Failed})
 	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 30, TTL: 51})
@@ -68,24 +68,24 @@ func TestConsume(t *testing.T) {
 	if math.Abs(tg.Jit-1.25) > 1e-9 {
 		t.Errorf("Jit = %v, want 1.25", tg.Jit)
 	}
-	// History is newest-first: last result was RTT 30 (scale 10 -> ▄).
-	if got := tg.Glyphs(1); len(got) != 1 || got[0] != "▄" {
-		t.Errorf("Glyphs(1) = %v, want [▄]", got)
+	// History is newest-first: the last result was RTT 30, which renders ▄ at scale 10.
+	if got := tg.Results(1); len(got) != 1 || Glyph(got[0], 10) != "▄" {
+		t.Errorf("Results(1) rendered at scale 10 = %v, want [▄]", got)
 	}
 
-	if len(tg.Glyphs(10)) != 3 {
-		t.Errorf("history length = %d, want 3", len(tg.Glyphs(10)))
+	if len(tg.Results(10)) != 3 {
+		t.Errorf("history length = %d, want 3", len(tg.Results(10)))
 	}
 }
 
 func TestRefresh(t *testing.T) {
-	tg := &Target{scale: 10}
+	tg := &Target{}
 	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 5})
 	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 25})
 	tg.Refresh()
 
-	if tg.Snt != 0 || tg.Loss != 0 || tg.State != Unknown || len(tg.Glyphs(10)) != 0 {
-		t.Errorf("after Refresh: %+v history=%v", tg, tg.Glyphs(10))
+	if tg.Snt != 0 || tg.Loss != 0 || tg.State != Unknown || len(tg.Results(10)) != 0 {
+		t.Errorf("after Refresh: %+v history=%v", tg, tg.Results(10))
 	}
 	// The new running stats must reset too, or a refreshed target keeps stale
 	// min/max/jitter (the fields above do not cover them).
@@ -118,5 +118,24 @@ func TestKeyStableAndMatches(t *testing.T) {
 	}
 	if a.Key() == c.Key() {
 		t.Error("Key collision for differing community")
+	}
+}
+
+// TestResultsRescale shows the result bar re-buckets when the scale changes: the
+// same stored result renders to a different glyph at a different scale. This is what
+// lets the up/down keys re-scale bars already on screen.
+func TestResultsRescale(t *testing.T) {
+	tg := &Target{}
+	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 15})
+
+	res := tg.Results(1)[0]
+	// RTT 15: at scale 10 it lands in the 2nd bucket (10..20 -> ▂); at scale 5 it is
+	// in the 4th (15 == 5*3, < 5*4 -> ▄).
+	if got := Glyph(res, 10); got != "▂" {
+		t.Errorf("Glyph(RTT 15, scale 10) = %q, want ▂", got)
+	}
+
+	if got := Glyph(res, 5); got != "▄" {
+		t.Errorf("Glyph(RTT 15, scale 5) = %q, want ▄", got)
 	}
 }
