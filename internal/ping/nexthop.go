@@ -19,26 +19,29 @@ import (
 // (see linkTransport); the reply returns by ordinary routing and is read back on a
 // raw ICMP socket (see echoFamily).
 //
-// The work splits along two orthogonal seams so future address families and
-// platforms slot in without restructuring:
-//   - linkTransport — OS-specific: put an L3 packet on the wire toward a MAC, and
-//     resolve that MAC from the OS neighbor cache (Linux AF_PACKET in v1).
-//   - echoFamily — address-family-specific: build the ICMP echo, open the raw
-//     listener, match the reply (IPv4 in v1; IPv6/NDP is a future echoFamily).
+// The address-family work sits behind one forward-looking seam, echoFamily: build
+// the ICMP echo, open the raw listener, match the reply. IPv4 is implemented today
+// (echoIPv4); IPv6/NDP can slot in as an echoIPv6 without touching the rest.
+//
+// The OS-specific half — putting an L3 packet on the wire toward a MAC and resolving
+// that MAC from the kernel neighbor cache — is linkTransport (Linux AF_PACKET).
+// Next-hop forcing is a Linux-only feature, like the other Linux-bound via modes
+// (netns/vrf via `ip`, tcp via hping3): the AF_PACKET injection it needs has no
+// portable equivalent, so the transport is build-tagged and non-Linux gets a stub
+// that degrades the probe to a failure glyph. It is not a portability roadmap.
 //
 // Everything else (dispatch, egress selection, id/seq, timeout, caching, the
-// resolve→build→send→recv orchestration) is platform- and family-agnostic and
-// lives here.
+// resolve→build→send→recv orchestration) is family-agnostic and lives here.
 
 var (
-	errNoTransport = errors.New("nexthop: link-layer transport unsupported on this platform")
+	errNoTransport = errors.New("nexthop: next-hop forcing is only supported on Linux")
 	errBadGateway  = errors.New("nexthop: invalid IPv4 gateway address")
 )
 
-// linkTransport is the OS-specific half of next-hop forcing. Implementations live
-// in nexthop_transport_<os>.go behind build tags; newLinkTransport returns nil on
-// platforms without an implementation, and the v4 path then degrades to a failure
-// glyph. Receiving replies is cross-platform, so it is deliberately not here.
+// linkTransport is the OS-specific half of next-hop forcing. The Linux AF_PACKET
+// implementation lives in nexthop_transport_linux.go; nexthop_transport_other.go is
+// a stub whose newLinkTransport returns nil on non-Linux, so the probe degrades to a
+// failure glyph there. Receiving replies is cross-platform, so it is not here.
 type linkTransport interface {
 	// resolveGateway returns the link-layer address of nexthop as reached out
 	// iface, consulting (and if needed populating) the OS neighbor cache.
