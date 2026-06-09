@@ -108,7 +108,35 @@ type nexthopPinger struct {
 	mu        sync.Mutex
 	egress    *net.Interface
 	srcIP     net.IP
+	srcScope  v6Scope // target scope srcIP was selected for; re-select when it changes.
 	cachedMAC net.HardwareAddr
+}
+
+// v6Scope is the routing scope of an IPv6 address. The forced source must share the
+// target's scope (see selectSrcV6), so when a name target's resolved scope changes
+// (e.g. its AAAA moves from global to ULA) the cached source must be re-selected.
+type v6Scope int
+
+const (
+	scopeNone      v6Scope = iota // IPv4, or not yet selected.
+	scopeLinkLocal                // fe80::/10.
+	scopeULA                      // fc00::/7.
+	scopeGlobal                   // global unicast.
+)
+
+// dstScope classifies dst's routing scope. IPv4 is scopeNone, which never triggers
+// the IPv6 source re-selection.
+func dstScope(dst net.IP) v6Scope {
+	switch {
+	case dst.To4() != nil:
+		return scopeNone
+	case dst.IsLinkLocalUnicast():
+		return scopeLinkLocal
+	case dst.IsPrivate():
+		return scopeULA
+	default:
+		return scopeGlobal
+	}
 }
 
 func newNexthopPinger(s Spec) (Pinger, error) {
@@ -198,13 +226,24 @@ func (p *nexthopPinger) resolve(dst net.IP) (resolved, error) {
 		return resolved{}, errBadGateway
 	}
 
+	scope := dstScope(dst)
+
+	// A name target's resolved scope can change between rounds (its AAAA moving from
+	// global to ULA/link-local); the source picked for the old scope no longer routes,
+	// so drop the cached selection and re-pick. Keyed on the scope the source was
+	// selected for, not on the current source, so a best-effort mismatch does not
+	// thrash net.Interfaces() every round.
+	if p.egress != nil && scope != scopeNone && scope != p.srcScope {
+		p.egress, p.srcIP, p.cachedMAC = nil, nil, nil
+	}
+
 	if p.egress == nil {
 		ifi, src, err := selectEgress(p.nexthopIP, p.source, dst)
 		if err != nil {
 			return resolved{}, err
 		}
 
-		p.egress, p.srcIP = ifi, src
+		p.egress, p.srcIP, p.srcScope = ifi, src, scope
 	}
 
 	if p.cachedMAC == nil {

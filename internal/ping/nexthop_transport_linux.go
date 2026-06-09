@@ -94,21 +94,32 @@ func (afpacketTransport) resolveGateway(
 	iface *net.Interface,
 	nexthop net.IP,
 ) (net.HardwareAddr, error) {
-	lookup := neighborLookup(iface, nexthop)
+	if nexthop.To4() != nil {
+		return resolveGatewayARP(iface, nexthop)
+	}
 
-	if mac, ok := lookup(); ok {
+	return resolveGatewayNDP(iface, nexthop)
+}
+
+// resolveGatewayARP resolves an IPv4 gateway MAC via /proc/net/arp, nudging the
+// kernel to ARP it if the entry is missing. /proc/net/arp does not expose the NUD
+// state, so a complete entry is taken at face value (matching the original behavior).
+func resolveGatewayARP(iface *net.Interface, nexthop net.IP) (net.HardwareAddr, error) {
+	name, target := iface.Name, nexthop.String()
+
+	if mac, ok := arpLookup(name, target); ok {
 		return mac, nil
 	}
 
-	// connect() alone does not trigger resolution; an actual write to the on-link
-	// gateway makes the kernel resolve it. Then re-read the cache until it lands.
+	// connect() alone does not trigger ARP; an actual write to the on-link gateway
+	// makes the kernel resolve it. Then re-read the cache until it lands.
 	kickNeighbor(iface, nexthop)
 
 	deadline := time.Now().Add(neighborResolveTimeout)
 	for time.Now().Before(deadline) {
 		time.Sleep(neighborPollInterval)
 
-		if mac, ok := lookup(); ok {
+		if mac, ok := arpLookup(name, target); ok {
 			return mac, nil
 		}
 	}
@@ -116,18 +127,39 @@ func (afpacketTransport) resolveGateway(
 	return nil, fmt.Errorf("nexthop: cannot resolve MAC for %s on %s", nexthop, iface.Name)
 }
 
-// neighborLookup returns a closure reading the current neighbor-cache entry for
-// nexthop on iface: ARP (/proc/net/arp) for IPv4, NDP (netlink) for IPv6.
-func neighborLookup(iface *net.Interface, nexthop net.IP) func() (net.HardwareAddr, bool) {
-	if nexthop.To4() != nil {
-		name, target := iface.Name, nexthop.String()
-
-		return func() (net.HardwareAddr, bool) { return arpLookup(name, target) }
+// resolveGatewayNDP resolves an IPv6 gateway MAC via the NDP cache. It prefers a
+// REACHABLE entry: a merely STALE one can hold an outdated MAC (a gateway MAC change
+// with no gratuitous NA, e.g. an HA failover), and because an AF_PACKET send bypasses
+// the kernel neighbor subsystem nothing else would ever revalidate it. When the entry
+// is not REACHABLE it kicks the kernel (a real datagram to the gateway) to drive NUD,
+// then polls for the refreshed entry, falling back to the stale MAC if revalidation
+// does not complete in time. Recovery from a changed MAC is eventual, not immediate:
+// the entry must first age to STALE and then traverse DELAY/PROBE, which spans several
+// failed rounds (tens of seconds) — during which the stale MAC is reused and the host
+// correctly reads X — before the new MAC is learned.
+func resolveGatewayNDP(iface *net.Interface, nexthop net.IP) (net.HardwareAddr, error) {
+	if mac, st := ndpLookup(iface.Index, nexthop); st == ndpReachable {
+		return mac, nil
 	}
 
-	ifindex := iface.Index
+	kickNeighbor(iface, nexthop)
 
-	return func() (net.HardwareAddr, bool) { return ndpLookup(ifindex, nexthop) }
+	deadline := time.Now().Add(neighborResolveTimeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(neighborPollInterval)
+
+		if mac, st := ndpLookup(iface.Index, nexthop); st == ndpReachable {
+			return mac, nil
+		}
+	}
+
+	// Revalidation did not reach REACHABLE in time: reuse any usable (stale) entry —
+	// its MAC is usually still correct — rather than failing a maybe-reachable host.
+	if mac, st := ndpLookup(iface.Index, nexthop); st != ndpMissing {
+		return mac, nil
+	}
+
+	return nil, fmt.Errorf("nexthop: cannot resolve MAC for %s on %s", nexthop, iface.Name)
 }
 
 // arpLookup returns the complete neighbor-cache entry for ip on ifname, if any.
@@ -216,18 +248,30 @@ func kickNeighbor(iface *net.Interface, gw net.IP) {
 // dump and parse the RTM_NEWNEIGH replies. An entry counts only when it is on
 // ifindex, matches ip, carries a link-layer address, and is in a state that has
 // resolved one (REACHABLE/STALE/DELAY/PROBE/PERMANENT — not INCOMPLETE/FAILED).
-func ndpLookup(ifindex int, ip net.IP) (net.HardwareAddr, bool) {
-	const nudUsable uint16 = unix.NUD_REACHABLE | unix.NUD_STALE | unix.NUD_DELAY |
-		unix.NUD_PROBE | unix.NUD_PERMANENT
+// ndpState classifies the gateway's NDP cache entry.
+type ndpState int
+
+const (
+	ndpMissing   ndpState = iota // no usable entry.
+	ndpStale                     // usable but unconfirmed (STALE/DELAY/PROBE); MAC may be outdated.
+	ndpReachable                 // REACHABLE or PERMANENT.
+)
+
+// ndpLookup returns the gateway's MAC and the state of its NDP cache entry.
+func ndpLookup(ifindex int, ip net.IP) (net.HardwareAddr, ndpState) {
+	const (
+		nudReachable uint16 = unix.NUD_REACHABLE | unix.NUD_PERMANENT
+		nudUsable    uint16 = nudReachable | unix.NUD_STALE | unix.NUD_DELAY | unix.NUD_PROBE
+	)
 
 	raw, err := syscall.NetlinkRIB(unix.RTM_GETNEIGH, unix.AF_INET6)
 	if err != nil {
-		return nil, false
+		return nil, ndpMissing
 	}
 
 	msgs, err := syscall.ParseNetlinkMessage(raw)
 	if err != nil {
-		return nil, false
+		return nil, ndpMissing
 	}
 
 	for i := range msgs {
@@ -246,11 +290,15 @@ func ndpLookup(ifindex int, ip net.IP) (net.HardwareAddr, bool) {
 		}
 
 		if mac, ok := neighMAC(m.Data[unix.SizeofNdMsg:], ip); ok {
-			return mac, true
+			if ndmState&nudReachable != 0 {
+				return mac, ndpReachable
+			}
+
+			return mac, ndpStale
 		}
 	}
 
-	return nil, false
+	return nil, ndpMissing
 }
 
 // neighMAC walks the rtattrs of one neighbor message and returns its link-layer

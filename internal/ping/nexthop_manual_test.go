@@ -62,8 +62,8 @@ func TestNDPLookupMatchesKernel(t *testing.T) {
 		t.Fatalf("InterfaceByName(%q): %v", dev, err)
 	}
 
-	got, ok := ndpLookup(ifi.Index, ip)
-	if !ok {
+	got, st := ndpLookup(ifi.Index, ip)
+	if st == ndpMissing {
 		t.Fatalf("ndpLookup(%d, %s) found nothing; kernel has lladdr %s", ifi.Index, ip, mac)
 	}
 
@@ -71,7 +71,28 @@ func TestNDPLookupMatchesKernel(t *testing.T) {
 		t.Fatalf("ndpLookup MAC = %s, kernel = %s", got, mac)
 	}
 
-	t.Logf("ndpLookup(%s on %s) = %s — matches the kernel neighbor table", ip, dev, got)
+	// A REACHABLE/PERMANENT kernel entry must be reported ndpReachable, not ndpStale.
+	if state := lastField(string(out), ip.String()); state == "REACHABLE" || state == "PERMANENT" {
+		if st != ndpReachable {
+			t.Errorf("ndpLookup state = %d for a %s neighbor; want ndpReachable", st, state)
+		}
+	}
+
+	t.Logf("ndpLookup(%s on %s) = %s state=%d — matches the kernel neighbor table",
+		ip, dev, got, st)
+}
+
+// lastField returns the final whitespace-separated token (the NUD state) of the
+// `ip -6 neigh show` line whose first field is addr, or "" if not found.
+func lastField(out, addr string) string {
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[0] == addr {
+			return f[len(f)-1]
+		}
+	}
+
+	return ""
 }
 
 // firstUsableV6Neighbor returns the first IPv6 neighbor from `ip -6 neigh show`
