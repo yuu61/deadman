@@ -41,6 +41,7 @@ type Target struct {
 	Source string
 	TCP    string
 	Relay  map[string]string
+	Via    string // human label for the probing method (ping.Describe), shown in the VIA column.
 	Pinger ping.Pinger
 
 	State    State
@@ -73,6 +74,7 @@ func NewTarget(name string, spec ping.Spec, scale int) (*Target, error) {
 		Source: spec.Source,
 		TCP:    spec.TCP,
 		Relay:  spec.Relay,
+		Via:    ping.Describe(spec),
 		Pinger: p,
 		State:  Unknown,
 		scale:  scale,

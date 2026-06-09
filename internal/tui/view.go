@@ -21,7 +21,7 @@ func (m Model) View() string {
 	b.WriteString(m.titleLine()) // line 1: host info (+spinner) and version.
 	b.WriteByte('\n')
 	b.WriteString(rear) // line 2.
-	fmt.Fprintf(&b, "RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max", m.opts.Scale)
+	fmt.Fprintf(&b, "RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia", m.opts.Scale)
 	b.WriteByte('\n')
 
 	for _, w := range m.warnings {
@@ -66,13 +66,12 @@ func (m Model) titleLine() string {
 }
 
 func (m Model) headerLine() string {
-	h := rear + padRight(
-		"HOSTNAME",
-		m.hostW,
-	) + " " + padRight(
-		"ADDRESS",
-		m.addrW,
-	) + " " + m.statsHeader() + "  RESULT"
+	h := rear + padRight("HOSTNAME", m.hostW) + " " + padRight("ADDRESS", m.addrW) + " "
+	if m.columnVisible(colVia) {
+		h += padRight("VIA", m.viaW) + " "
+	}
+
+	h += m.statsHeader() + "  RESULT"
 
 	return styleBold.Render(h)
 }
@@ -108,7 +107,12 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 
 	stats := m.statsLine(t)
 
-	text := ar + padRight(t.Name, m.hostW) + " " + padRight(t.Addr, m.addrW) + " " + stats
+	text := ar + padRight(t.Name, m.hostW) + " " + padRight(t.Addr, m.addrW) + " "
+	if m.columnVisible(colVia) {
+		text += padRight(t.Via, m.viaW) + " "
+	}
+
+	text += stats
 	if t.State != monitor.Up {
 		text = styleBold.Render(text)
 	}

@@ -96,8 +96,39 @@ func TestParseConfigNexthop(t *testing.T) {
 	}
 }
 
+func TestParseConfigDroppedTokens(t *testing.T) {
+	// A name with spaces shifts real tokens past the address slot: this parses to
+	// name="Cloudflare", address="via", with "MGMT" and "1.1.1.1" unroutable and
+	// recorded in Dropped so the TUI can warn.
+	cfg, err := ParseConfig(strings.NewReader("Cloudflare via MGMT 1.1.1.1 nexthop=10.98.38.9\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := cfg.Targets[0]
+	if s.Name != "Cloudflare" || s.Addr != "via" {
+		t.Fatalf("name/addr = %q/%q, want Cloudflare/via", s.Name, s.Addr)
+	}
+
+	if got := strings.Join(s.Dropped, " "); got != "MGMT 1.1.1.1" {
+		t.Errorf("Dropped = %q, want %q", got, "MGMT 1.1.1.1")
+	}
+
+	// The recognised attribute still lands in the relay map.
+	if s.Relay["nexthop"] != "10.98.38.9" {
+		t.Errorf("nexthop = %q, want 10.98.38.9", s.Relay["nexthop"])
+	}
+
+	// A well-formed line drops nothing.
+	clean, _ := ParseConfig(strings.NewReader("host 1.2.3.4 nexthop=10.0.0.1\n"))
+	if len(clean.Targets[0].Dropped) != 0 {
+		t.Errorf("clean line Dropped = %v, want empty", clean.Targets[0].Dropped)
+	}
+}
+
 func TestParseConfigCommentTrailer(t *testing.T) {
-	// A ";#" trailer is stripped.
+	// A ";#" trailer and everything after it is stripped — not left as stray
+	// tokens (which would otherwise trip the dropped-token warning).
 	cfg, err := ParseConfig(strings.NewReader("host 1.2.3.4 ;# trailing comment\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +137,83 @@ func TestParseConfigCommentTrailer(t *testing.T) {
 	specs := cfg.Targets
 	if len(specs) != 1 || specs[0].Name != "host" || specs[0].Addr != "1.2.3.4" {
 		t.Fatalf("got %+v", specs)
+	}
+
+	if len(specs[0].Dropped) != 0 {
+		t.Errorf("comment text leaked into Dropped: %v", specs[0].Dropped)
+	}
+}
+
+func TestParseConfigQuotedName(t *testing.T) {
+	// Double quotes let a name contain spaces; the quotes are removed and the
+	// address/attributes after the closing quote parse normally.
+	cfg, err := ParseConfig(strings.NewReader(
+		"\"Cloudflare via MGMT\" 1.1.1.1 nexthop=10.98.38.9\n",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := cfg.Targets[0]
+	if s.Name != "Cloudflare via MGMT" || s.Addr != "1.1.1.1" {
+		t.Fatalf("name/addr = %q/%q", s.Name, s.Addr)
+	}
+
+	if s.Relay["nexthop"] != "10.98.38.9" {
+		t.Errorf("nexthop = %q, want 10.98.38.9", s.Relay["nexthop"])
+	}
+
+	// A quoted name must not leave stray tokens.
+	if len(s.Dropped) != 0 {
+		t.Errorf("quoted name produced Dropped tokens: %v", s.Dropped)
+	}
+}
+
+func TestParseConfigUnterminatedQuote(t *testing.T) {
+	// A missing closing quote absorbs the rest of the line into one field; the
+	// spec is flagged so the TUI can warn instead of silently mis-binding it.
+	cfg, err := ParseConfig(strings.NewReader("host 1.2.3.4 user=\"admin relay=jump\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := cfg.Targets[0]
+	if !s.UnterminatedQuote {
+		t.Errorf("expected UnterminatedQuote=true: %+v", s)
+	}
+
+	if s.Relay["user"] != "admin relay=jump" {
+		t.Errorf("user = %q, want %q", s.Relay["user"], "admin relay=jump")
+	}
+
+	// A well-formed line is not flagged.
+	ok, _ := ParseConfig(strings.NewReader("host 1.2.3.4 user=\"admin\"\n"))
+	if ok.Targets[0].UnterminatedQuote {
+		t.Errorf("well-formed line wrongly flagged: %+v", ok.Targets[0])
+	}
+}
+
+func TestParseConfigQuotesInAttrAndLiteralSingleQuote(t *testing.T) {
+	// Quoting works mid-token for an attribute value with spaces; a single quote
+	// is an ordinary character.
+	cfg, err := ParseConfig(strings.NewReader(
+		"host 1.2.3.4 key=\"/path with space\" user=a'b\n",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := cfg.Targets[0]
+	if s.Relay["key"] != "/path with space" {
+		t.Errorf("key = %q, want %q", s.Relay["key"], "/path with space")
+	}
+
+	if s.Relay["user"] != "a'b" {
+		t.Errorf("user = %q, want %q (single quote is literal)", s.Relay["user"], "a'b")
+	}
+
+	if len(s.Dropped) != 0 {
+		t.Errorf("unexpected Dropped: %v", s.Dropped)
 	}
 }
 
