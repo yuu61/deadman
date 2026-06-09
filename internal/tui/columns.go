@@ -9,25 +9,26 @@ import (
 
 // precisionMode is one display precision for the time-stat columns
 // (RTT/AVG/MIN/MAX/JIT): a footer/config label, the display width every such column
-// renders to in this mode (header and cell alike), and the cell formatter.
-// precisionModes is the single source of both the 'p'-key cycle order and the
-// accepted config "precision" directive values, so adding a mode (two decimals, ns,
-// …) is one entry here. Cells and headers must stay ASCII: recalcWidths measures
-// byte length, so a multibyte glyph would desync the column math — hence "us", not
-// "µs".
+// renders to in this mode (header and cell alike), and the cell formatter. Every mode
+// reports in milliseconds; the label's ".N" suffix is the number of decimal places,
+// trading column width for sub-millisecond resolution (ms.3 resolves microseconds).
+// precisionModes is the single source of both the 'p'-key cycle order and the accepted
+// config "precision" directive values, so adding a mode (ms.4, …) is one entry here.
+// Cells and headers stay ASCII so the column-width math holds.
 type precisionMode struct {
 	Label  string
 	Width  int
 	Format func(v float64) string
 }
 
-// Stat-cell widths per precision mode (the header label and each cell render to this
-// many columns), plus the ms→µs factor used by the "us" mode.
+// Stat-cell widths per precision mode: the header label and each cell render to this
+// many columns. Each added decimal place is one more column (a leading space, the
+// integer part, the dot, and N decimals).
 const (
-	msWidth        = 5    // integer ms, e.g. " 1234".
-	msDecimalWidth = 6    // one decimal, e.g. " 123.4".
-	usWidth        = 7    // microseconds, e.g. " 123456".
-	microsPerMilli = 1000 // µs per ms.
+	msWidth  = 5 // integer ms, e.g. " 1234".
+	ms1Width = 6 // one decimal, e.g. " 123.4".
+	ms2Width = 7 // two decimals, e.g. " 123.45".
+	ms3Width = 8 // three decimals (µs resolution), e.g. " 123.456".
 )
 
 var precisionModes = []precisionMode{
@@ -38,13 +39,18 @@ var precisionModes = []precisionMode{
 	},
 	{
 		Label:  "ms.1",
-		Width:  msDecimalWidth,
+		Width:  ms1Width,
 		Format: func(v float64) string { return fmt.Sprintf(" %5.1f", v) },
 	},
 	{
-		Label:  "us",
-		Width:  usWidth,
-		Format: func(v float64) string { return fmt.Sprintf(" %6d", int(v*microsPerMilli)) },
+		Label:  "ms.2",
+		Width:  ms2Width,
+		Format: func(v float64) string { return fmt.Sprintf(" %6.2f", v) },
+	},
+	{
+		Label:  "ms.3",
+		Width:  ms3Width,
+		Format: func(v float64) string { return fmt.Sprintf(" %7.3f", v) },
 	},
 }
 

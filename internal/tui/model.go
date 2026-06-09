@@ -247,8 +247,8 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 		// Finer RTT-bar scale.
 		m.scale = scaleDown(m.scale)
 	case "p":
-		// Cycle the stat precision (ms -> ms.1 -> us); the column width changes, so
-		// recompute the result-bar layout.
+		// Cycle the stat precision (ms -> ms.1 -> ms.2 -> ms.3); the column width
+		// changes, so recompute the result-bar layout.
 		m.precIdx = (m.precIdx + 1) % len(precisionModes)
 
 		return m.recalcWidths()

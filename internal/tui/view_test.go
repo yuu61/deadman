@@ -377,7 +377,9 @@ func TestPrecisionCycle(t *testing.T) {
 			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
 		},
 	)
-	// Default: integer ms.
+	// Default: integer ms. (The footer label is the unambiguous discriminator; the
+	// rendered numbers nest as substrings — " 5.0" ⊂ " 5.00" ⊂ " 5.000" — so each
+	// step's number is only checked against that step's freshly rendered output.)
 	if !strings.Contains(out, "(p)recision[ms]") {
 		t.Errorf("default footer should show (p)recision[ms]\n---\n%s", out)
 	}
@@ -388,16 +390,22 @@ func TestPrecisionCycle(t *testing.T) {
 		t.Errorf("after p: want (p)recision[ms.1] and 5.0\n---\n%s", out)
 	}
 
-	// 'p' -> us: RTT 5 renders as microseconds.
+	// 'p' -> ms.2: two decimals.
 	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	if !strings.Contains(out, "(p)recision[us]") || !strings.Contains(out, "5000") {
-		t.Errorf("after p,p: want (p)recision[us] and 5000\n---\n%s", out)
+	if !strings.Contains(out, "(p)recision[ms.2]") || !strings.Contains(out, "5.00") {
+		t.Errorf("after p,p: want (p)recision[ms.2] and 5.00\n---\n%s", out)
+	}
+
+	// 'p' -> ms.3: three decimals (µs resolution, still in ms units).
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if !strings.Contains(out, "(p)recision[ms.3]") || !strings.Contains(out, "5.000") {
+		t.Errorf("after p,p,p: want (p)recision[ms.3] and 5.000\n---\n%s", out)
 	}
 
 	// 'p' wraps back to ms.
 	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	if !strings.Contains(out, "(p)recision[ms]") {
-		t.Errorf("after p,p,p: should wrap to (p)recision[ms]\n---\n%s", out)
+		t.Errorf("after p×4: should wrap to (p)recision[ms]\n---\n%s", out)
 	}
 }
 
