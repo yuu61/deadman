@@ -19,26 +19,30 @@ import (
 // (see linkTransport); the reply returns by ordinary routing and is read back on a
 // raw ICMP socket (see echoFamily).
 //
-// The work splits along two orthogonal seams so future address families and
-// platforms slot in without restructuring:
-//   - linkTransport — OS-specific: put an L3 packet on the wire toward a MAC, and
-//     resolve that MAC from the OS neighbor cache (Linux AF_PACKET in v1).
-//   - echoFamily — address-family-specific: build the ICMP echo, open the raw
-//     listener, match the reply (IPv4 in v1; IPv6/NDP is a future echoFamily).
+// The address-family work sits behind one seam, echoFamily: build the ICMP echo,
+// open the raw listener, match the reply. Both families are implemented — IPv4 over
+// ICMP/ARP (echoIPv4) and IPv6 over ICMPv6/NDP (echoIPv6) — and slot in behind it
+// without touching the transport or the orchestration core.
+//
+// The OS-specific half — putting an L3 packet on the wire toward a MAC and resolving
+// that MAC from the kernel neighbor cache — is linkTransport (Linux AF_PACKET).
+// Next-hop forcing is a Linux-only feature, like the other Linux-bound via modes
+// (netns/vrf via `ip`, tcp via hping3): the AF_PACKET injection it needs has no
+// portable equivalent, so the transport is build-tagged and non-Linux gets a stub
+// that degrades the probe to a failure glyph. It is not a portability roadmap.
 //
 // Everything else (dispatch, egress selection, id/seq, timeout, caching, the
-// resolve→build→send→recv orchestration) is platform- and family-agnostic and
-// lives here.
+// resolve→build→send→recv orchestration) is family-agnostic and lives here.
 
 var (
-	errNoTransport = errors.New("nexthop: link-layer transport unsupported on this platform")
-	errBadGateway  = errors.New("nexthop: invalid IPv4 gateway address")
+	errNoTransport = errors.New("nexthop: next-hop forcing is only supported on Linux")
+	errBadGateway  = errors.New("nexthop: invalid gateway address")
 )
 
-// linkTransport is the OS-specific half of next-hop forcing. Implementations live
-// in nexthop_transport_<os>.go behind build tags; newLinkTransport returns nil on
-// platforms without an implementation, and the v4 path then degrades to a failure
-// glyph. Receiving replies is cross-platform, so it is deliberately not here.
+// linkTransport is the OS-specific half of next-hop forcing. The Linux AF_PACKET
+// implementation lives in nexthop_transport_linux.go; nexthop_transport_other.go is
+// a stub whose newLinkTransport returns nil on non-Linux, so the probe degrades to a
+// failure glyph there. Receiving replies is cross-platform, so it is not here.
 type linkTransport interface {
 	// resolveGateway returns the link-layer address of nexthop as reached out
 	// iface, consulting (and if needed populating) the OS neighbor cache.
@@ -49,9 +53,8 @@ type linkTransport interface {
 }
 
 // echoFamily is the address-family-specific half: building the echo request,
-// opening a raw ICMP listener, and matching the reply. IPv4 is implemented
-// (echoIPv4); an echoIPv6 (NDP/ICMPv6) can be added without touching the core or
-// the transport.
+// opening a raw ICMP listener, and matching the reply. Both families are
+// implemented: echoIPv4 (ICMP/ARP) and echoIPv6 (ICMPv6/NDP).
 type echoFamily interface {
 	ethertype() uint16
 	build(src, dst net.IP, id, seq int, token []byte) ([]byte, error)
@@ -73,16 +76,15 @@ type resolved struct {
 	mac   net.HardwareAddr
 }
 
-// familyFor returns the forcing implementation for dst's address family, or nil
-// when forcing is not implemented for it (IPv6 today), in which case the caller
-// falls back to ordinary routing. Adding IPv6 forcing means returning an echoIPv6
-// here.
+// familyFor returns the forcing implementation for dst's address family. dst was
+// already resolved to the next-hop's family (see resolveToFamily), so it is always
+// IPv4 or IPv6 and this never returns nil.
 func familyFor(dst net.IP) echoFamily {
 	if dst.To4() != nil {
 		return echoIPv4{}
 	}
 
-	return nil
+	return echoIPv6{}
 }
 
 // probeCounter hands out per-probe ICMP IDs. Under the raw-socket fan-out every
@@ -106,7 +108,35 @@ type nexthopPinger struct {
 	mu        sync.Mutex
 	egress    *net.Interface
 	srcIP     net.IP
+	srcScope  v6Scope // target scope srcIP was selected for; re-select when it changes.
 	cachedMAC net.HardwareAddr
+}
+
+// v6Scope is the routing scope of an IPv6 address. The forced source must share the
+// target's scope (see selectSrcV6), so when a name target's resolved scope changes
+// (e.g. its AAAA moves from global to ULA) the cached source must be re-selected.
+type v6Scope int
+
+const (
+	scopeNone      v6Scope = iota // IPv4, or not yet selected.
+	scopeLinkLocal                // fe80::/10.
+	scopeULA                      // fc00::/7.
+	scopeGlobal                   // global unicast.
+)
+
+// dstScope classifies dst's routing scope. IPv4 is scopeNone, which never triggers
+// the IPv6 source re-selection.
+func dstScope(dst net.IP) v6Scope {
+	switch {
+	case dst.To4() != nil:
+		return scopeNone
+	case dst.IsLinkLocalUnicast():
+		return scopeLinkLocal
+	case dst.IsPrivate():
+		return scopeULA
+	default:
+		return scopeGlobal
+	}
 }
 
 func newNexthopPinger(s Spec) (Pinger, error) {
@@ -125,37 +155,21 @@ func (p *nexthopPinger) Send(ctx context.Context) Result {
 	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
 	defer cancel()
 
-	dst := resolveIPv4Preferred(ctx, p.addr)
+	// Forcing is same-family only: IPv4 uses ARP, IPv6 uses NDP, and their egress and
+	// source selection diverge. Resolve the target to the next-hop's family; a target
+	// with no address in that family (e.g. an IPv6-only name behind an IPv4 gateway)
+	// cannot be force-routed and fails as X.
+	dst := resolveToFamily(ctx, p.addr, p.nexthopIP)
 	if dst == nil {
 		return Result{Code: Failed, TTL: -1}
 	}
 
-	fam := familyFor(dst)
-	if fam == nil {
-		// IPv6 (or any family without a forcing implementation): monitor via
-		// ordinary routing. The startup check warns that nexthop is ignored here.
-		return sendFallback(ctx, dst, p.source)
-	}
-
-	return p.sendForced(ctx, fam, dst)
+	return p.sendForced(ctx, familyFor(dst), dst)
 }
 
-// sendFallback probes dst via ordinary routing, for address families without a
-// forcing implementation (IPv6 today). dst is already resolved, so the pinger is
-// built from its literal address: passing the original hostname would make
-// pro-bing run a second DNS lookup that ignores ctx and could outlast the timeout.
-func sendFallback(ctx context.Context, dst net.IP, source string) Result {
-	fb, err := newICMPPinger(Spec{Addr: dst.String(), Source: source})
-	if err != nil {
-		return Result{Code: Failed, TTL: -1}
-	}
-
-	return fb.Send(ctx)
-}
-
-// sendForced runs the resolve→listen→build→send→wait sequence for an IPv4 target.
+// sendForced runs the resolve→listen→build→send→wait sequence for one target (either family).
 func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.IP) Result {
-	r, err := p.resolve()
+	r, err := p.resolve(dst) //nolint:contextcheck // local-only selection; no ctx to thread.
 	if err != nil {
 		return Result{Code: Failed, TTL: -1}
 	}
@@ -197,9 +211,10 @@ func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.
 	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
 }
 
-// resolve returns where to send and as what, caching the result across rounds. The
-// lock serializes the (rare) overlapping probes of one target.
-func (p *nexthopPinger) resolve() (resolved, error) {
+// resolve returns where to send and as what, caching the result across rounds. dst
+// is the probe target, used by IPv6 egress selection to choose a scope-matched
+// source. The lock serializes the (rare) overlapping probes of one target.
+func (p *nexthopPinger) resolve(dst net.IP) (resolved, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -211,13 +226,24 @@ func (p *nexthopPinger) resolve() (resolved, error) {
 		return resolved{}, errBadGateway
 	}
 
+	scope := dstScope(dst)
+
+	// A name target's resolved scope can change between rounds (its AAAA moving from
+	// global to ULA/link-local); the source picked for the old scope no longer routes,
+	// so drop the cached selection and re-pick. Keyed on the scope the source was
+	// selected for, not on the current source, so a best-effort mismatch does not
+	// thrash net.Interfaces() every round.
+	if p.egress != nil && scope != scopeNone && scope != p.srcScope {
+		p.egress, p.srcIP, p.cachedMAC = nil, nil, nil
+	}
+
 	if p.egress == nil {
-		ifi, src, err := selectEgress(p.nexthopIP, p.source)
+		ifi, src, err := selectEgress(p.nexthopIP, p.source, dst)
 		if err != nil {
 			return resolved{}, err
 		}
 
-		p.egress, p.srcIP = ifi, src
+		p.egress, p.srcIP, p.srcScope = ifi, src, scope
 	}
 
 	if p.cachedMAC == nil {
@@ -258,9 +284,8 @@ const probeTokenLen = 8
 // from another deadman watching the same destination. It is not security-sensitive.
 func newProbeToken() []byte {
 	b := make([]byte, probeTokenLen)
-	_, _ = rand.Read(
-		b,
-	) // crypto/rand.Read does not fail on supported platforms; a zero token still works.
+	// crypto/rand.Read does not fail on supported platforms; a zero token still works.
+	_, _ = rand.Read(b)
 
 	return b
 }
@@ -275,42 +300,243 @@ func probeDeadline(ctx context.Context) time.Time {
 	return deadline
 }
 
-// resolveIPv4Preferred parses or resolves addr, preferring an IPv4 result so a
-// dual-stack name still takes the forcing path.
-func resolveIPv4Preferred(ctx context.Context, addr string) net.IP {
+// resolveToFamily parses or resolves addr to an address in the next-hop gateway's
+// family, or nil when addr has no such address. Forcing pins the family because
+// ARP/IPv4 and NDP/IPv6 cannot be mixed: a name that resolves only to the other
+// family is reported unreachable rather than probed via a path the next-hop cannot
+// serve.
+func resolveToFamily(ctx context.Context, addr string, gateway net.IP) net.IP {
+	v6 := gateway.To4() == nil
+
 	if ip := net.ParseIP(addr); ip != nil {
-		return ip
+		if (ip.To4() == nil) == v6 {
+			return ip
+		}
+
+		return nil
 	}
 
 	ips, err := net.DefaultResolver.LookupIPAddr(ctx, addr)
-	if err != nil || len(ips) == 0 {
+	if err != nil {
 		return nil
 	}
 
 	for _, ip := range ips {
-		if ip.IP.To4() != nil {
+		if (ip.IP.To4() == nil) == v6 {
 			return ip.IP
 		}
 	}
 
-	return ips[0].IP
+	return nil
 }
 
 // selectEgress picks the egress interface and source IP for reaching nexthop. The
-// gateway must be on-link (directly connected); off-link gateways and a source not
-// assigned to the egress interface are rejected so they fail at construction-of-
-// state rather than silently dropping replies. source may be empty (auto-select),
-// an interface name, or a source IP.
-func selectEgress(nexthop net.IP, source string) (*net.Interface, net.IP, error) {
-	if nexthop.To4() == nil {
-		return nil, nil, fmt.Errorf("nexthop: %s is not an IPv4 address", nexthop)
+// gateway must be on-link (directly connected). The IPv4 and IPv6 paths diverge
+// enough (subnet match vs link scope, source selection) to warrant per-family
+// helpers; dst is the probe target, consulted only by the IPv6 source choice.
+func selectEgress(nexthop net.IP, source string, dst net.IP) (*net.Interface, net.IP, error) {
+	if nexthop.To4() != nil {
+		return selectEgressV4(nexthop, source)
 	}
 
+	return selectEgressV6(nexthop, source, dst)
+}
+
+// selectEgressV4 resolves the egress for an IPv4 next-hop. source may be empty
+// (auto-select), an interface name, or a source IP; an off-link gateway or a source
+// not on the egress interface is rejected so it fails at setup rather than silently
+// dropping replies.
+func selectEgressV4(nexthop net.IP, source string) (*net.Interface, net.IP, error) {
 	if source != "" && net.ParseIP(source) == nil {
 		return egressByName(source, nexthop)
 	}
 
 	return egressBySubnet(net.ParseIP(source), nexthop)
+}
+
+// selectEgressV6 resolves the egress for an IPv6 next-hop. The gateway only fixes the
+// egress interface (the L2 hop); the source address must be one the target can reply
+// to, so it is chosen by the target's scope, not the gateway's subnet — a global
+// target needs a global source even behind a link-local gateway.
+//
+// A link-local gateway is on-link on every interface, so it is ambiguous without one:
+// source must name the interface (source=IFNAME), and then cannot also pin a source
+// IP — the address is auto-selected by scope. A global gateway is located by its
+// on-link prefix, like IPv4.
+func selectEgressV6(nexthop net.IP, source string, dst net.IP) (*net.Interface, net.IP, error) {
+	if nexthop.IsLinkLocalUnicast() {
+		if source == "" || net.ParseIP(source) != nil {
+			return nil, nil, fmt.Errorf(
+				"nexthop: link-local gateway %s requires source=IFNAME to fix the egress interface",
+				nexthop,
+			)
+		}
+
+		return egressV6Named(source, dst)
+	}
+
+	if source != "" && net.ParseIP(source) == nil {
+		return egressV6Named(source, dst)
+	}
+
+	return egressV6BySubnet(net.ParseIP(source), dst, nexthop)
+}
+
+// egressV6Named resolves the egress from an explicit interface name and picks a
+// scope-matched source on it.
+func egressV6Named(name string, dst net.IP) (*net.Interface, net.IP, error) {
+	ifi, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("nexthop: interface %q: %w", name, err)
+	}
+
+	src, ok := pickSrcV6(ifi, dst)
+	if !ok {
+		return nil, nil, fmt.Errorf("nexthop: %s has no IPv6 source matching target %s", name, dst)
+	}
+
+	return ifi, src, nil
+}
+
+// egressV6BySubnet finds the interface whose connected IPv6 prefix contains nexthop
+// and picks a scope-matched source on it. wantSrc, when set, pins the source IP
+// (which must be assigned to that interface) instead of auto-selecting by scope.
+func egressV6BySubnet(wantSrc, dst, nexthop net.IP) (*net.Interface, net.IP, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for i := range ifaces {
+		if src, ok := egressV6Candidate(&ifaces[i], wantSrc, dst, nexthop); ok {
+			return &ifaces[i], src, nil
+		}
+	}
+
+	if wantSrc != nil {
+		return nil, nil, fmt.Errorf(
+			"nexthop: no interface has source %s with gateway %s on-link",
+			wantSrc,
+			nexthop,
+		)
+	}
+
+	return nil, nil, fmt.Errorf("nexthop: gateway %s is not on-link on any interface", nexthop)
+}
+
+// egressV6Candidate reports whether ifi can reach nexthop on-link via IPv6 and, if
+// so, the source to use: wantSrc when pinned (and assigned to ifi), else a
+// scope-matched address for dst.
+func egressV6Candidate(ifi *net.Interface, wantSrc, dst, nexthop net.IP) (net.IP, bool) {
+	if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 ||
+		!ifaceOnLinkV6(ifi, nexthop) {
+		return nil, false
+	}
+
+	if wantSrc != nil {
+		addrs, _ := ifi.Addrs()
+
+		return wantSrc, addrsHaveIP(addrs, wantSrc)
+	}
+
+	return pickSrcV6(ifi, dst)
+}
+
+// ifaceOnLinkV6 reports whether ifi has a connected IPv6 prefix that contains nexthop.
+func ifaceOnLinkV6(ifi *net.Interface, nexthop net.IP) bool {
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return false
+	}
+
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP.To4() == nil && ipnet.Contains(nexthop) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// pickSrcV6 returns the IPv6 source to use on ifi for reaching target. It prefers the
+// address the kernel itself would choose (its RFC 6724 selection — which respects
+// preferred-vs-deprecated and temporary addresses, unlike a manual scan), but only
+// when that address is on ifi; a forced cross-interface target can make the kernel
+// pick another interface, so it then falls back to a scope-matched address on ifi.
+func pickSrcV6(ifi *net.Interface, target net.IP) (net.IP, bool) {
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return nil, false
+	}
+
+	if src := kernelPreferredSrc(target); src != nil && addrsHaveIP(addrs, src) {
+		return src, true
+	}
+
+	return selectSrcV6(addrs, target)
+}
+
+// kernelPreferredSrc returns the source address the kernel would use to reach target,
+// or nil when it cannot be determined. It reads the kernel's choice the way ping6
+// does — connect a UDP socket to the target and read back the local address — which
+// sends no packet but triggers the kernel's source-address selection. Link-local
+// targets are skipped (their connect would need a zone; selectSrcV6 handles them).
+func kernelPreferredSrc(target net.IP) net.IP {
+	if target.IsLinkLocalUnicast() {
+		return nil
+	}
+
+	var d net.Dialer
+
+	c, err := d.DialContext(context.Background(), "udp6", net.JoinHostPort(target.String(), "9"))
+	if err != nil {
+		return nil
+	}
+
+	defer func() { _ = c.Close() }()
+
+	ua, ok := c.LocalAddr().(*net.UDPAddr)
+	if !ok || ua.IP.IsUnspecified() {
+		return nil
+	}
+
+	return ua.IP
+}
+
+// selectSrcV6 picks the IPv6 address among addrs whose scope matches target, because
+// the reply returns by ordinary routing and a mismatched-scope source has no return
+// path: a link-local source for a link-local target, a ULA source for a ULA target,
+// and a non-ULA global source for a global target (ULA and GUA are distinct — a GUA
+// host cannot route back to a ULA source, and vice versa). There is deliberately no
+// cross-scope fallback: any wrong-scope source is guaranteed unreachable, so reporting
+// "no usable source" (a fast X) is more honest than sending a doomed probe. An explicit
+// source= overrides this, and pickSrcV6 consults the kernel's own choice first.
+func selectSrcV6(addrs []net.Addr, target net.IP) (net.IP, bool) {
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP.To4() != nil {
+			continue
+		}
+
+		if srcScopeMatches(ipnet.IP, target) {
+			return ipnet.IP, true
+		}
+	}
+
+	return nil, false
+}
+
+// srcScopeMatches reports whether source ip is in the same routing scope as target
+// (link-local, ULA, or global unicast), so the target's reply to ip can return.
+func srcScopeMatches(ip, target net.IP) bool {
+	switch {
+	case target.IsLinkLocalUnicast():
+		return ip.IsLinkLocalUnicast()
+	case target.IsPrivate(): // a ULA target needs a ULA source.
+		return ip.IsGlobalUnicast() && ip.IsPrivate()
+	default: // a global-unicast target needs a non-ULA global source.
+		return ip.IsGlobalUnicast() && !ip.IsPrivate()
+	}
 }
 
 // egressByName resolves the egress from an explicit interface name.

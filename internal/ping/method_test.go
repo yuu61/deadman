@@ -24,16 +24,15 @@ func TestSelectMethodAndDescribe(t *testing.T) {
 			describe: "nexthop 10.0.0.1",
 		},
 		{
-			// A literal IPv6 target cannot be force-routed: the method is still
-			// MethodNexthop (it dispatches the nexthop pinger), but the probe falls
-			// back to ordinary routing, so the label must read "direct", not nexthop.
-			name: "nexthop_ipv6_falls_back",
+			// An IPv6 target is force-routed like IPv4 (via NDP), here through a
+			// link-local gateway, so the label names the gateway.
+			name: "nexthop_ipv6",
 			spec: Spec{
 				Addr:  "2001:db8::1",
 				Relay: map[string]string{"nexthop": "fe80::1"},
 			},
 			method:   MethodNexthop,
-			describe: "direct",
+			describe: "nexthop fe80::1",
 		},
 		{
 			name:     "ssh",

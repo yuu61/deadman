@@ -26,8 +26,13 @@ func TestClassifyNexthop(t *testing.T) {
 		{
 			Name:  "v6",
 			Addr:  "2001:db8::1",
+			Relay: map[string]string{"nexthop": "2001:db8::ffff"},
+		}, // forced (IPv6 gateway matches IPv6 target).
+		{
+			Name:  "mismatch",
+			Addr:  "2001:db8::1",
 			Relay: map[string]string{"nexthop": "192.0.2.1"},
-		}, // ipv6Ignored.
+		}, // familyMismatch (IPv6 target, IPv4 gateway).
 		{
 			Name:  "ssh",
 			Addr:  "8.8.8.8",
@@ -47,11 +52,42 @@ func TestClassifyNexthop(t *testing.T) {
 		t.Errorf("modeIgnored = %v, want %v", c.modeIgnored, want)
 	}
 
-	if want := []string{"v6"}; !slices.Equal(c.ipv6Ignored, want) {
-		t.Errorf("ipv6Ignored = %v, want %v", c.ipv6Ignored, want)
+	if want := []string{"mismatch"}; !slices.Equal(c.familyMismatch, want) {
+		t.Errorf("familyMismatch = %v, want %v", c.familyMismatch, want)
 	}
 
-	if want := []string{"v4", "byname"}; !slices.Equal(c.forced, want) {
+	if want := []string{"v4", "byname", "v6"}; !slices.Equal(c.forced, want) {
 		t.Errorf("forced = %v, want %v", c.forced, want)
+	}
+
+	if !c.forcedV4 {
+		t.Error("forcedV4 = false, want true (IPv4 and name targets are present)")
+	}
+}
+
+func TestClassifyNexthopForcedV4Scope(t *testing.T) {
+	// A name is resolved to the gateway's family at runtime, so a name behind an IPv6
+	// gateway is an IPv6 probe and must NOT trip the IPv4-only rp_filter warning.
+	c := classifyNexthop([]config.TargetSpec{{
+		Name:  "name-v6gw",
+		Addr:  "example.com",
+		Relay: map[string]string{"nexthop": "2001:db8::ffff"},
+	}})
+
+	if want := []string{"name-v6gw"}; !slices.Equal(c.forced, want) {
+		t.Errorf("forced = %v, want %v", c.forced, want)
+	}
+
+	if c.forcedV4 {
+		t.Error("forcedV4 = true for a name behind an IPv6 gateway; want false")
+	}
+
+	// A name behind an IPv4 gateway stays rp_filter-relevant.
+	if c := classifyNexthop([]config.TargetSpec{{
+		Name:  "name-v4gw",
+		Addr:  "example.com",
+		Relay: map[string]string{"nexthop": "192.0.2.1"},
+	}}); !c.forcedV4 {
+		t.Error("forcedV4 = false for a name behind an IPv4 gateway; want true")
 	}
 }

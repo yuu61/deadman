@@ -7,6 +7,7 @@ package tui
 func rpFilterStrict() bool { return false }
 
 // nexthopForcingSupported reports whether this platform can force a probe out a
-// chosen next-hop. Only Linux (AF_PACKET) does today; elsewhere nexthop targets
-// degrade to a failure glyph, which nexthopWarnings flags at startup.
+// chosen next-hop. Only Linux (AF_PACKET) can; next-hop forcing is a Linux-only
+// feature, so elsewhere nexthop targets degrade to a failure glyph, which
+// nexthopWarnings flags at startup.
 func nexthopForcingSupported() bool { return false }
