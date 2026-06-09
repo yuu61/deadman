@@ -1,6 +1,7 @@
 package ping
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"net"
@@ -41,11 +42,11 @@ func (echoIPv4) ethertype() uint16 { return etherTypeIPv4 }
 // The IPv4 header checksum must be computed here: netipv4.Header.Marshal writes the
 // Checksum field verbatim (it does not compute it), and AF_PACKET sends do not let
 // the kernel fill it in. The ICMP checksum is computed by icmp.Message.Marshal.
-func (echoIPv4) build(src, dst net.IP, id, seq int) ([]byte, error) {
+func (echoIPv4) build(src, dst net.IP, id, seq int, token []byte) ([]byte, error) {
 	msg := icmp.Message{
 		Type: netipv4.ICMPTypeEcho,
 		Code: 0,
-		Body: &icmp.Echo{ID: id, Seq: seq, Data: []byte("deadman")},
+		Body: &icmp.Echo{ID: id, Seq: seq, Data: token},
 	}
 
 	payload, err := msg.Marshal(nil)
@@ -106,7 +107,12 @@ type ipv4Waiter struct {
 
 func (w *ipv4Waiter) close() error { return w.conn.Close() }
 
-func (w *ipv4Waiter) wait(peer net.IP, id, seq int, deadline time.Time) (int, bool, error) {
+func (w *ipv4Waiter) wait(
+	peer net.IP,
+	id, seq int,
+	token []byte,
+	deadline time.Time,
+) (int, bool, error) {
 	buf := make([]byte, recvBufSize)
 
 	for {
@@ -124,20 +130,23 @@ func (w *ipv4Waiter) wait(peer net.IP, id, seq int, deadline time.Time) (int, bo
 			return -1, false, err
 		}
 
-		if ttl, ok := matchEchoReply(buf[:n], cm, src, peer, id, seq); ok {
+		if ttl, ok := matchEchoReply(buf[:n], cm, src, peer, id, seq, token); ok {
 			return ttl, true, nil
 		}
 	}
 }
 
-// matchEchoReply reports whether a received datagram is the echo reply for id/seq
-// from peer, and its TTL.
+// matchEchoReply reports whether a received datagram is the echo reply for our
+// probe (id, seq, and the echoed token from peer), and its TTL. The token guards
+// against accepting another process's reply: a raw ICMP socket also delivers ICMP
+// addressed to other listeners, whose id/seq can collide with ours.
 func matchEchoReply(
 	b []byte,
 	cm *netipv4.ControlMessage,
 	src net.Addr,
 	peer net.IP,
 	id, seq int,
+	token []byte,
 ) (int, bool) {
 	if !addrIP(src).Equal(peer) {
 		return -1, false
@@ -149,7 +158,7 @@ func matchEchoReply(
 	}
 
 	echo, ok := msg.Body.(*icmp.Echo)
-	if !ok || echo.ID != id || echo.Seq != seq {
+	if !ok || echo.ID != id || echo.Seq != seq || !bytes.Equal(echo.Data, token) {
 		return -1, false
 	}
 

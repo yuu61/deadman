@@ -1,6 +1,7 @@
 package ping
 
 import (
+	"bytes"
 	"net"
 	"testing"
 
@@ -33,8 +34,9 @@ func TestIPChecksum(t *testing.T) {
 func TestEchoIPv4Build(t *testing.T) {
 	src := net.ParseIP("192.0.2.1")
 	dst := net.ParseIP("198.51.100.2")
+	token := []byte{0xde, 0xad, 0xbe, 0xef}
 
-	pkt, err := echoIPv4{}.build(src, dst, 0x1234, 7)
+	pkt, err := echoIPv4{}.build(src, dst, 0x1234, 7, token)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -81,6 +83,10 @@ func TestEchoIPv4Build(t *testing.T) {
 
 	if echo.ID != 0x1234 || echo.Seq != 7 {
 		t.Errorf("echo id/seq = %d/%d, want 4660/7", echo.ID, echo.Seq)
+	}
+
+	if !bytes.Equal(echo.Data, token) {
+		t.Errorf("echo data = %x, want %x", echo.Data, token)
 	}
 }
 
@@ -136,9 +142,11 @@ func TestMatchEchoReply(t *testing.T) {
 		peer = "203.0.113.9"
 	)
 
+	token := []byte{0x01, 0x02, 0x03, 0x04}
+
 	reply, err := (&icmp.Message{
 		Type: netipv4.ICMPTypeEchoReply,
-		Body: &icmp.Echo{ID: id, Seq: seq, Data: []byte("deadman")},
+		Body: &icmp.Echo{ID: id, Seq: seq, Data: token},
 	}).Marshal(nil)
 	if err != nil {
 		t.Fatalf("marshal reply: %v", err)
@@ -148,12 +156,12 @@ func TestMatchEchoReply(t *testing.T) {
 	cm := &netipv4.ControlMessage{TTL: ttl}
 
 	// The matching reply is accepted, with its TTL.
-	gotTTL, ok := matchEchoReply(reply, cm, src, net.ParseIP(peer), id, seq)
+	gotTTL, ok := matchEchoReply(reply, cm, src, net.ParseIP(peer), id, seq, token)
 	if !ok || gotTTL != ttl {
 		t.Fatalf("matchEchoReply = %d, %v; want %d, true", gotTTL, ok, ttl)
 	}
 
-	// A reply from a different host, or with a different id/seq, is rejected.
+	// A reply from a different host, or with a different id/seq/token, is rejected.
 	if _, ok := matchEchoReply(
 		reply,
 		cm,
@@ -161,28 +169,42 @@ func TestMatchEchoReply(t *testing.T) {
 		net.ParseIP(peer),
 		id,
 		seq,
+		token,
 	); ok {
 		t.Error("matched a reply from the wrong source")
 	}
 
-	if _, ok := matchEchoReply(reply, cm, src, net.ParseIP(peer), id+1, seq); ok {
+	if _, ok := matchEchoReply(reply, cm, src, net.ParseIP(peer), id+1, seq, token); ok {
 		t.Error("matched a reply with the wrong id")
 	}
 
-	if _, ok := matchEchoReply(reply, cm, src, net.ParseIP(peer), id, seq+1); ok {
+	if _, ok := matchEchoReply(reply, cm, src, net.ParseIP(peer), id, seq+1, token); ok {
 		t.Error("matched a reply with the wrong seq")
+	}
+
+	// A reply with the right id/seq but another process's token is rejected.
+	if _, ok := matchEchoReply(
+		reply,
+		cm,
+		src,
+		net.ParseIP(peer),
+		id,
+		seq,
+		[]byte{0x09, 0x09, 0x09, 0x09},
+	); ok {
+		t.Error("matched a reply with the wrong token")
 	}
 
 	// An echo *request* (wrong ICMP type) is not a reply.
 	request, err := (&icmp.Message{
 		Type: netipv4.ICMPTypeEcho,
-		Body: &icmp.Echo{ID: id, Seq: seq},
+		Body: &icmp.Echo{ID: id, Seq: seq, Data: token},
 	}).Marshal(nil)
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}
 
-	if _, ok := matchEchoReply(request, cm, src, net.ParseIP(peer), id, seq); ok {
+	if _, ok := matchEchoReply(request, cm, src, net.ParseIP(peer), id, seq, token); ok {
 		t.Error("matched an echo request as a reply")
 	}
 }

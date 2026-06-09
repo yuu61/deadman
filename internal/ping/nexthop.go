@@ -2,6 +2,7 @@ package ping
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
@@ -53,15 +54,15 @@ type linkTransport interface {
 // the transport.
 type echoFamily interface {
 	ethertype() uint16
-	build(src, dst net.IP, id, seq int) ([]byte, error)
+	build(src, dst net.IP, id, seq int, token []byte) ([]byte, error)
 	listen(src net.IP) (replyWaiter, error)
 }
 
 // replyWaiter blocks for the echo reply to one probe. close releases the listener.
 type replyWaiter interface {
-	// wait reports the reply's TTL once an echo reply matching id/seq from peer
-	// arrives, or ok=false once deadline passes with no match.
-	wait(peer net.IP, id, seq int, deadline time.Time) (ttl int, ok bool, err error)
+	// wait reports the reply's TTL once an echo reply matching id/seq/token from
+	// peer arrives, or ok=false once deadline passes with no match.
+	wait(peer net.IP, id, seq int, token []byte, deadline time.Time) (ttl int, ok bool, err error)
 	close() error
 }
 
@@ -101,7 +102,6 @@ type nexthopPinger struct {
 	nexthopIP net.IP
 	source    string
 	transport linkTransport // nil on unsupported platforms.
-	fallback  Pinger        // ordinary pro-bing ICMP, used for IPv6 targets.
 
 	mu        sync.Mutex
 	egress    *net.Interface
@@ -110,17 +110,11 @@ type nexthopPinger struct {
 }
 
 func newNexthopPinger(s Spec) (Pinger, error) {
-	fb, err := newICMPPinger(s)
-	if err != nil {
-		return nil, err
-	}
-
 	return &nexthopPinger{
 		addr:      s.Addr,
 		nexthopIP: net.ParseIP(s.Relay["nexthop"]),
 		source:    s.Source,
 		transport: newLinkTransport(),
-		fallback:  fb,
 	}, nil
 }
 
@@ -140,10 +134,23 @@ func (p *nexthopPinger) Send(ctx context.Context) Result {
 	if fam == nil {
 		// IPv6 (or any family without a forcing implementation): monitor via
 		// ordinary routing. The startup check warns that nexthop is ignored here.
-		return p.fallback.Send(ctx)
+		return sendFallback(ctx, dst, p.source)
 	}
 
 	return p.sendForced(ctx, fam, dst)
+}
+
+// sendFallback probes dst via ordinary routing, for address families without a
+// forcing implementation (IPv6 today). dst is already resolved, so the pinger is
+// built from its literal address: passing the original hostname would make
+// pro-bing run a second DNS lookup that ignores ctx and could outlast the timeout.
+func sendFallback(ctx context.Context, dst net.IP, source string) Result {
+	fb, err := newICMPPinger(Spec{Addr: dst.String(), Source: source})
+	if err != nil {
+		return Result{Code: Failed, TTL: -1}
+	}
+
+	return fb.Send(ctx)
 }
 
 // sendForced runs the resolve→listen→build→send→wait sequence for an IPv4 target.
@@ -155,13 +162,15 @@ func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.
 
 	waiter, err := fam.listen(r.src)
 	if err != nil {
+		p.reset() // the source IP may be gone (interface recreated); re-select next round.
+
 		return Result{Code: Failed, TTL: -1}
 	}
 	defer func() { _ = waiter.close() }()
 
-	id, seq := nextProbeID(), 1
+	id, seq, token := nextProbeID(), 1, newProbeToken()
 
-	pkt, err := fam.build(r.src, dst, id, seq)
+	pkt, err := fam.build(r.src, dst, id, seq, token)
 	if err != nil {
 		return Result{Code: Failed, TTL: -1}
 	}
@@ -171,13 +180,15 @@ func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.
 
 	err = p.transport.send(r.iface, r.mac, fam.ethertype(), pkt)
 	if err != nil {
-		p.invalidateMAC() // the gateway MAC may be stale; re-resolve next round.
+		p.reset() // the ifindex/MAC may be stale (interface or gateway changed); re-select.
 
 		return Result{Code: Failed, TTL: -1}
 	}
 
-	ttl, ok, err := waiter.wait(dst, id, seq, deadline)
+	ttl, ok, err := waiter.wait(dst, id, seq, token, deadline)
 	if err != nil || !ok {
+		p.invalidateMAC() // no reply: the gateway MAC may have changed; re-read the neighbor table next round.
+
 		return Result{Code: Failed, TTL: -1}
 	}
 
@@ -225,6 +236,33 @@ func (p *nexthopPinger) invalidateMAC() {
 	p.mu.Lock()
 	p.cachedMAC = nil
 	p.mu.Unlock()
+}
+
+// reset drops the whole cached resolution (egress, source, MAC) so the next probe
+// re-selects from scratch. Used when a send/listen fails, which can mean the egress
+// interface was recreated with a new ifindex or lost its address.
+func (p *nexthopPinger) reset() {
+	p.mu.Lock()
+	p.egress = nil
+	p.srcIP = nil
+	p.cachedMAC = nil
+	p.mu.Unlock()
+}
+
+// probeTokenLen is the size of the random per-probe token echoed in the ICMP data.
+const probeTokenLen = 8
+
+// newProbeToken returns a random token placed in the echo payload and verified in
+// the reply. Because a raw ICMP socket also receives other processes' replies
+// (whose ids/seqs collide with ours), the token is what distinguishes our probe
+// from another deadman watching the same destination. It is not security-sensitive.
+func newProbeToken() []byte {
+	b := make([]byte, probeTokenLen)
+	_, _ = rand.Read(
+		b,
+	) // crypto/rand.Read does not fail on supported platforms; a zero token still works.
+
+	return b
 }
 
 // probeDeadline is the earlier of the per-probe timeout and any caller deadline.
