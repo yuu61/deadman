@@ -95,6 +95,51 @@ func lastField(out, addr string) string {
 	return ""
 }
 
+// TestKernelPreferredSrcMatchesRouteGet validates that kernelPreferredSrc (the
+// ping6-style connect/getsockname source selection) agrees with the kernel's own
+// `ip -6 route get`. It is root-free (a UDP connect is unprivileged) and skips on a
+// host without global IPv6 connectivity.
+func TestKernelPreferredSrcMatchesRouteGet(t *testing.T) {
+	if _, err := exec.LookPath("ip"); err != nil {
+		t.Skip("iproute2 'ip' not found")
+	}
+
+	const dst = "2001:4860:4860::8888" // a public global IPv6, used only as a route key.
+
+	out, err := exec.Command("ip", "-6", "route", "get", dst).CombinedOutput()
+	if err != nil {
+		t.Skipf("no IPv6 route to %s: %v", dst, err)
+	}
+
+	want := routeGetSrc(string(out))
+	if want == nil {
+		t.Skip("`ip -6 route get` reported no source (no global IPv6 on this host)")
+	}
+
+	got := kernelPreferredSrc(net.ParseIP(dst))
+	if got == nil {
+		t.Fatalf("kernelPreferredSrc(%s) = nil; `ip route get` src = %s", dst, want)
+	}
+
+	if !got.Equal(want) {
+		t.Fatalf("kernelPreferredSrc = %s, `ip -6 route get` src = %s", got, want)
+	}
+
+	t.Logf("kernelPreferredSrc(%s) = %s — matches `ip -6 route get`", dst, got)
+}
+
+// routeGetSrc extracts the "src <addr>" field from `ip -6 route get` output.
+func routeGetSrc(out string) net.IP {
+	f := strings.Fields(out)
+	for i := 0; i+1 < len(f); i++ {
+		if f[i] == "src" {
+			return net.ParseIP(f[i+1])
+		}
+	}
+
+	return nil
+}
+
 // firstUsableV6Neighbor returns the first IPv6 neighbor from `ip -6 neigh show`
 // output that carries an lladdr and is in a NUD state ndpLookup treats as usable.
 func firstUsableV6Neighbor(out string) (net.IP, string, net.HardwareAddr) {

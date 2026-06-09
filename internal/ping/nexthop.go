@@ -169,7 +169,7 @@ func (p *nexthopPinger) Send(ctx context.Context) Result {
 
 // sendForced runs the resolve→listen→build→send→wait sequence for an IPv4 target.
 func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.IP) Result {
-	r, err := p.resolve(dst)
+	r, err := p.resolve(dst) //nolint:contextcheck // local-only selection; no ctx to thread.
 	if err != nil {
 		return Result{Code: Failed, TTL: -1}
 	}
@@ -459,15 +459,49 @@ func ifaceOnLinkV6(ifi *net.Interface, nexthop net.IP) bool {
 	return false
 }
 
-// pickSrcV6 returns an IPv6 source on ifi whose scope matches target (see
-// selectSrcV6).
+// pickSrcV6 returns the IPv6 source to use on ifi for reaching target. It prefers the
+// address the kernel itself would choose (its RFC 6724 selection — which respects
+// preferred-vs-deprecated and temporary addresses, unlike a manual scan), but only
+// when that address is on ifi; a forced cross-interface target can make the kernel
+// pick another interface, so it then falls back to a scope-matched address on ifi.
 func pickSrcV6(ifi *net.Interface, target net.IP) (net.IP, bool) {
 	addrs, err := ifi.Addrs()
 	if err != nil {
 		return nil, false
 	}
 
+	if src := kernelPreferredSrc(target); src != nil && addrsHaveIP(addrs, src) {
+		return src, true
+	}
+
 	return selectSrcV6(addrs, target)
+}
+
+// kernelPreferredSrc returns the source address the kernel would use to reach target,
+// or nil when it cannot be determined. It reads the kernel's choice the way ping6
+// does — connect a UDP socket to the target and read back the local address — which
+// sends no packet but triggers the kernel's source-address selection. Link-local
+// targets are skipped (their connect would need a zone; selectSrcV6 handles them).
+func kernelPreferredSrc(target net.IP) net.IP {
+	if target.IsLinkLocalUnicast() {
+		return nil
+	}
+
+	var d net.Dialer
+
+	c, err := d.DialContext(context.Background(), "udp6", net.JoinHostPort(target.String(), "9"))
+	if err != nil {
+		return nil
+	}
+
+	defer func() { _ = c.Close() }()
+
+	ua, ok := c.LocalAddr().(*net.UDPAddr)
+	if !ok || ua.IP.IsUnspecified() {
+		return nil
+	}
+
+	return ua.IP
 }
 
 // selectSrcV6 picks the IPv6 address among addrs whose scope matches target, because
