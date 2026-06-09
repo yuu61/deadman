@@ -108,7 +108,7 @@ func ParseConfig(r io.Reader) (Config, error) {
 // terminated is false when an opening quote had no closing one: the rest of the
 // line is then absorbed into the final field, and the caller surfaces a warning
 // rather than mis-binding it silently.
-func tokenize(line string) (fields []string, terminated bool) {
+func tokenize(line string) ([]string, bool) {
 	var (
 		tokens  []string
 		cur     strings.Builder

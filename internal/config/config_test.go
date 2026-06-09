@@ -114,7 +114,7 @@ func TestParseConfigDroppedTokens(t *testing.T) {
 		t.Errorf("Dropped = %q, want %q", got, "MGMT 1.1.1.1")
 	}
 
-	// The recognised attribute still lands in the relay map.
+	// The recognized attribute still lands in the relay map.
 	if s.Relay["nexthop"] != "10.98.38.9" {
 		t.Errorf("nexthop = %q, want 10.98.38.9", s.Relay["nexthop"])
 	}

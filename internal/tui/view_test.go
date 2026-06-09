@@ -79,7 +79,7 @@ func TestViaColumnAndToggle(t *testing.T) {
 	}
 
 	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	// VIA column shown by default, labelling the probing method + its differentiator.
+	// VIA column shown by default, labeling the probing method + its differentiator.
 	for _, want := range []string{"VIA", "nexthop 10.98.38.9", "(v)ia"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("default view missing %q\n---\n%s", want, out)

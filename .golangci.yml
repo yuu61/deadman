@@ -100,6 +100,10 @@ linters:
       scope: all
     misspell:
       locale: US
+      # RouterOS (MikroTik) を指す固有名詞。misspell が "routers" の誤字と
+      # 誤検知するため除外する。via 属性値 routeros_api はユーザー向けの契約。
+      ignore-rules:
+        - routeros
     nolintlint:
       # //nolint には理由コメントと対象リンター名を必須にする
       require-explanation: true

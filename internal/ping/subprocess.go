@@ -116,9 +116,9 @@ func (p *subprocessPinger) buildArgs(ctx context.Context) []string {
 
 	switch p.mode {
 	case modeNetns:
-		cmd = []string{"ip", "netns", "exec", p.relay["relay"]}
+		cmd = []string{"ip", viaNetns, "exec", p.relay["relay"]}
 	case modeVRF:
-		cmd = []string{"ip", "vrf", "exec", p.relay["relay"]}
+		cmd = []string{"ip", viaVRF, "exec", p.relay["relay"]}
 	case modeSSH:
 		cmd = p.sshArgs()
 	default:

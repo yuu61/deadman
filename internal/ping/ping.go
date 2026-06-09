@@ -66,6 +66,20 @@ const (
 	MethodNexthop                // nexthop= : direct ICMP forced via a gateway.
 )
 
+// Relay "via" attribute values that select a probing mode in selectMethod. For
+// netns/vrf the value doubles as the `ip` subcommand subprocess.go runs.
+const (
+	viaSNMP     = "snmp"
+	viaNetns    = "netns"
+	viaVRF      = "vrf"
+	viaRouters  = "routers_api"
+	viaRouterOS = "routeros_api"
+)
+
+// labelDirect is the VIA-column label for the native direct-ICMP path. It is also
+// the fallback label when a forced nexthop cannot be honored.
+const labelDirect = "direct"
+
 // selectMethod resolves the probing method from a Spec. New switches on it to
 // build the Pinger and Describe to label it, so the two never drift. The
 // precedence is: tcp > via=snmp/netns/vrf/routers_api > relay (ssh) > nexthop >
@@ -77,13 +91,13 @@ func selectMethod(s Spec) Method {
 	}
 
 	switch s.Relay["via"] {
-	case "snmp":
+	case viaSNMP:
 		return MethodSNMP
-	case "netns":
+	case viaNetns:
 		return MethodNetns
-	case "vrf":
+	case viaVRF:
 		return MethodVRF
-	case "routers_api", "routeros_api":
+	case viaRouters, viaRouterOS:
 		// Both spellings are accepted: the code historically matched "routers_api"
 		// while the README documented "routeros_api", so a README-following config
 		// silently fell through to the SSH relay. Accepting both is additive and
@@ -110,29 +124,36 @@ func Describe(s Spec) string {
 	case MethodTCP:
 		return "tcp " + s.TCP
 	case MethodSNMP:
-		return "snmp " + s.Relay["relay"]
+		return viaSNMP + " " + s.Relay["relay"]
 	case MethodNetns:
-		return "netns " + s.Relay["relay"]
+		return viaNetns + " " + s.Relay["relay"]
 	case MethodVRF:
-		return "vrf " + s.Relay["relay"]
+		return viaVRF + " " + s.Relay["relay"]
 	case MethodRouterOS:
 		return "routeros " + s.Relay["relay"]
 	case MethodSSH:
 		return "ssh " + s.Relay["relay"]
 	case MethodNexthop:
-		// A literal IPv6 target cannot be force-routed (the link transport is
-		// IPv4-only), so nexthopPinger.Send falls back to ordinary routing. Report
-		// the path actually taken rather than a gateway that is ignored; the startup
-		// check warns about this separately. A hostname's family is unknown until
-		// resolved, so it keeps the forced label (matching the probe's intent).
-		if ip := net.ParseIP(s.Addr); ip != nil && ip.To4() == nil {
-			return "direct"
-		}
-
-		return "nexthop " + s.Relay["nexthop"]
-	default:
-		return "direct"
+		return nexthopLabel(s)
+	case MethodDirect:
+		return labelDirect
 	}
+
+	return labelDirect
+}
+
+// nexthopLabel renders the VIA label for a forced-nexthop target. A literal IPv6
+// target cannot be force-routed (the link transport is IPv4-only), so
+// nexthopPinger.Send falls back to ordinary routing. Report the path actually
+// taken rather than a gateway that is ignored; the startup check warns about this
+// separately. A hostname's family is unknown until resolved, so it keeps the
+// forced label (matching the probe's intent).
+func nexthopLabel(s Spec) string {
+	if ip := net.ParseIP(s.Addr); ip != nil && ip.To4() == nil {
+		return labelDirect
+	}
+
+	return "nexthop " + s.Relay["nexthop"]
 }
 
 // New builds the Pinger for a Spec, selecting the mode from the relay attributes.
@@ -156,7 +177,11 @@ func New(s Spec) (Pinger, error) {
 		return newSubprocessPinger(s, modeSSH)
 	case MethodNexthop:
 		return newNexthopPinger(s)
-	default:
+	case MethodDirect:
 		return newICMPPinger(s)
 	}
+
+	// selectMethod only yields the methods handled above; direct ICMP is the
+	// catch-all for any future method added without its own New branch.
+	return newICMPPinger(s)
 }
