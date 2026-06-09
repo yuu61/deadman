@@ -444,6 +444,37 @@ func TestScaleStepKeys(t *testing.T) {
 	}
 }
 
+// scaleUp/scaleDown move through the preset ladder, but the live scale may be a
+// free-form CLI/config value off the ladder. The key invariant: Up (coarser) must
+// never decrease the scale and Down (finer) must never increase it, even above the
+// top rung or below the bottom one.
+func TestScaleLadderBounds(t *testing.T) {
+	cases := []struct {
+		name           string
+		cur            int
+		wantUp, wantDn int
+	}{
+		{"within ladder", 10, 20, 5},
+		{"off-ladder below top", 7, 10, 5},
+		{"at top rung", 100, 100, 50},
+		{"above top rung stays put on up", 1000, 1000, 100}, // the Bug-1 regression guard.
+		{"at bottom rung", 1, 2, 1},
+		{"off-ladder near bottom", 3, 5, 2},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := scaleUp(c.cur); got != c.wantUp {
+				t.Errorf("scaleUp(%d) = %d, want %d", c.cur, got, c.wantUp)
+			}
+
+			if got := scaleDown(c.cur); got != c.wantDn {
+				t.Errorf("scaleDown(%d) = %d, want %d", c.cur, got, c.wantDn)
+			}
+		})
+	}
+}
+
 func TestScaleRebucketsExistingBar(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 

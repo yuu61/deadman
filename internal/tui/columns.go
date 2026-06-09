@@ -22,13 +22,15 @@ type precisionMode struct {
 }
 
 // Stat-cell widths per precision mode: the header label and each cell render to this
-// many columns. Each added decimal place is one more column (a leading space, the
-// integer part, the dot, and N decimals).
+// many columns. Every mode reserves four integer digits (matching the integer ms
+// mode's %4d, good to 9999 ms — WAN/LTE RTTs reach 1000 ms+ routinely), and each added
+// decimal place is one more column (the dot plus N decimals); the leading space is
+// shared. So a value only overflows at >= 10000 ms, the same ceiling in every mode.
 const (
 	msWidth  = 5 // integer ms, e.g. " 1234".
-	ms1Width = 6 // one decimal, e.g. " 123.4".
-	ms2Width = 7 // two decimals, e.g. " 123.45".
-	ms3Width = 8 // three decimals (µs resolution), e.g. " 123.456".
+	ms1Width = 7 // one decimal, e.g. " 1234.5".
+	ms2Width = 8 // two decimals, e.g. " 1234.56".
+	ms3Width = 9 // three decimals (µs resolution), e.g. " 1234.567".
 )
 
 var precisionModes = []precisionMode{
@@ -40,17 +42,17 @@ var precisionModes = []precisionMode{
 	{
 		Label:  "ms.1",
 		Width:  ms1Width,
-		Format: func(v float64) string { return fmt.Sprintf(" %5.1f", v) },
+		Format: func(v float64) string { return fmt.Sprintf(" %6.1f", v) },
 	},
 	{
 		Label:  "ms.2",
 		Width:  ms2Width,
-		Format: func(v float64) string { return fmt.Sprintf(" %6.2f", v) },
+		Format: func(v float64) string { return fmt.Sprintf(" %7.2f", v) },
 	},
 	{
 		Label:  "ms.3",
 		Width:  ms3Width,
-		Format: func(v float64) string { return fmt.Sprintf(" %7.3f", v) },
+		Format: func(v float64) string { return fmt.Sprintf(" %8.3f", v) },
 	},
 }
 

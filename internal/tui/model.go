@@ -262,9 +262,11 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 // scaleSteps is the ladder the up/down keys move the RTT-bar scale through (ms).
 var scaleSteps = []int{1, 2, 5, 10, 20, 50, 100}
 
-// scaleUp returns the next coarser (larger-ms) rung above cur, clamped at the top.
-// An off-ladder cur (e.g. from -s 7) snaps up to the nearest rung, so the live scale
-// stays a free-form int while the keys move through sensible presets.
+// scaleUp returns the next coarser (larger-ms) rung above cur. An off-ladder cur
+// (e.g. from -s 7) snaps up to the nearest rung, so the live scale stays a free-form
+// int while the keys move through sensible presets. At or above the top rung cur is
+// preserved: Up means coarser, so it must never decrease the scale (a free-form
+// -s 1000 stays 1000 rather than snapping down to the ladder top).
 func scaleUp(cur int) int {
 	for _, s := range scaleSteps {
 		if s > cur {
@@ -272,7 +274,7 @@ func scaleUp(cur int) int {
 		}
 	}
 
-	return scaleSteps[len(scaleSteps)-1]
+	return cur
 }
 
 // scaleDown returns the next finer (smaller-ms) rung below cur, clamped at the bottom.

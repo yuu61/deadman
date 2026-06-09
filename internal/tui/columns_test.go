@@ -11,8 +11,13 @@ import (
 // columns take the mode's width; the fixed columns (LOSS/SNT/FAIL) stay 5 wide in
 // every mode.
 func TestStatColumnWidths(t *testing.T) {
-	sample := &monitor.Target{
-		LossRate: 5, RTT: 12, Avg: 14, Min: 9, Max: 35, Jit: 2, Snt: 100, Loss: 3,
+	// Two samples: ordinary sub-100ms values, and high-latency values up to 9999ms
+	// (common on WAN/LTE). Every mode reserves four integer digits, so both must fit
+	// without overflowing the declared width. Keep all values <= 9999: a five-digit
+	// value would (correctly) overflow even the fixed widths.
+	samples := []*monitor.Target{
+		{LossRate: 5, RTT: 12, Avg: 14, Min: 9, Max: 35, Jit: 2, Snt: 100, Loss: 3},
+		{LossRate: 1, RTT: 1234, Avg: 987, Min: 123, Max: 9876, Jit: 45, Snt: 10, Loss: 0},
 	}
 
 	for _, mode := range precisionModes {
@@ -27,9 +32,11 @@ func TestStatColumnWidths(t *testing.T) {
 					mode.Label, c.Key, c.header(mode), w, want)
 			}
 
-			if cell := c.cell(sample, mode); displayWidth(cell) != want {
-				t.Errorf("mode %s column %s cell %q width = %d, want %d",
-					mode.Label, c.Key, cell, displayWidth(cell), want)
+			for _, sample := range samples {
+				if cell := c.cell(sample, mode); displayWidth(cell) != want {
+					t.Errorf("mode %s column %s cell %q width = %d, want %d",
+						mode.Label, c.Key, cell, displayWidth(cell), want)
+				}
 			}
 		}
 	}
