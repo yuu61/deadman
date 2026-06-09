@@ -23,8 +23,14 @@ func (m Model) View() string {
 	b.WriteString(rear) // line 2.
 	fmt.Fprintf(&b, "RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max", m.opts.Scale)
 	b.WriteByte('\n')
-	b.WriteByte('\n')             // line 3: blank.
-	b.WriteString(m.headerLine()) // line 4: column headers.
+
+	for _, w := range m.warnings {
+		b.WriteString(styleDown.Render("! " + w))
+		b.WriteByte('\n')
+	}
+
+	b.WriteByte('\n')             // blank line before the column headers.
+	b.WriteString(m.headerLine()) // column headers.
 	b.WriteByte('\n')
 
 	for i, r := range m.rows {

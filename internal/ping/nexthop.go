@@ -1,0 +1,371 @@
+package ping
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// The next-hop pinger forces a direct ICMP probe out through a chosen gateway
+// (next-hop) instead of letting the kernel pick the route. Neither pro-bing nor a
+// plain IP raw socket can override the next-hop (the kernel routes by destination
+// IP), and mutating the routing table races with concurrent probes. The only
+// clean, stateless way is to send the frame at L2 addressed to the gateway's MAC
+// (see linkTransport); the reply returns by ordinary routing and is read back on a
+// raw ICMP socket (see echoFamily).
+//
+// The work splits along two orthogonal seams so future address families and
+// platforms slot in without restructuring:
+//   - linkTransport — OS-specific: put an L3 packet on the wire toward a MAC, and
+//     resolve that MAC from the OS neighbor cache (Linux AF_PACKET in v1).
+//   - echoFamily — address-family-specific: build the ICMP echo, open the raw
+//     listener, match the reply (IPv4 in v1; IPv6/NDP is a future echoFamily).
+//
+// Everything else (dispatch, egress selection, id/seq, timeout, caching, the
+// resolve→build→send→recv orchestration) is platform- and family-agnostic and
+// lives here.
+
+var (
+	errNoTransport = errors.New("nexthop: link-layer transport unsupported on this platform")
+	errBadGateway  = errors.New("nexthop: invalid IPv4 gateway address")
+)
+
+// linkTransport is the OS-specific half of next-hop forcing. Implementations live
+// in nexthop_transport_<os>.go behind build tags; newLinkTransport returns nil on
+// platforms without an implementation, and the v4 path then degrades to a failure
+// glyph. Receiving replies is cross-platform, so it is deliberately not here.
+type linkTransport interface {
+	// resolveGateway returns the link-layer address of nexthop as reached out
+	// iface, consulting (and if needed populating) the OS neighbor cache.
+	resolveGateway(iface *net.Interface, nexthop net.IP) (net.HardwareAddr, error)
+	// send transmits an already-built L3 packet to dstMAC out iface. ethertype
+	// selects the L3 protocol carried in the frame.
+	send(iface *net.Interface, dstMAC net.HardwareAddr, ethertype uint16, l3 []byte) error
+}
+
+// echoFamily is the address-family-specific half: building the echo request,
+// opening a raw ICMP listener, and matching the reply. IPv4 is implemented
+// (echoIPv4); an echoIPv6 (NDP/ICMPv6) can be added without touching the core or
+// the transport.
+type echoFamily interface {
+	ethertype() uint16
+	build(src, dst net.IP, id, seq int) ([]byte, error)
+	listen(src net.IP) (replyWaiter, error)
+}
+
+// replyWaiter blocks for the echo reply to one probe. close releases the listener.
+type replyWaiter interface {
+	// wait reports the reply's TTL once an echo reply matching id/seq from peer
+	// arrives, or ok=false once deadline passes with no match.
+	wait(peer net.IP, id, seq int, deadline time.Time) (ttl int, ok bool, err error)
+	close() error
+}
+
+// resolved is the cached result of locating the gateway: where to send and as what.
+type resolved struct {
+	iface *net.Interface
+	src   net.IP
+	mac   net.HardwareAddr
+}
+
+// familyFor returns the forcing implementation for dst's address family, or nil
+// when forcing is not implemented for it (IPv6 today), in which case the caller
+// falls back to ordinary routing. Adding IPv6 forcing means returning an echoIPv6
+// here.
+func familyFor(dst net.IP) echoFamily {
+	if dst.To4() != nil {
+		return echoIPv4{}
+	}
+
+	return nil
+}
+
+// probeCounter hands out per-probe ICMP IDs. Under the raw-socket fan-out every
+// listener sees every host's ICMP, so each in-flight probe needs a distinct id to
+// disambiguate its own reply (together with the peer address).
+var probeCounter atomic.Uint32
+
+func nextProbeID() int {
+	return int(uint16(probeCounter.Add(1))) //nolint:gosec // intentional wrap to a 16-bit ICMP id.
+}
+
+// nexthopPinger forces a direct ICMP probe to addr via the gateway nexthopIP. It
+// is selected only on the default (direct-ICMP) path; relay/via/tcp take
+// precedence.
+type nexthopPinger struct {
+	addr      string
+	nexthopIP net.IP
+	source    string
+	transport linkTransport // nil on unsupported platforms.
+	fallback  Pinger        // ordinary pro-bing ICMP, used for IPv6 targets.
+
+	mu        sync.Mutex
+	egress    *net.Interface
+	srcIP     net.IP
+	cachedMAC net.HardwareAddr
+}
+
+func newNexthopPinger(s Spec) (Pinger, error) {
+	fb, err := newICMPPinger(s)
+	if err != nil {
+		return nil, err
+	}
+
+	return &nexthopPinger{
+		addr:      s.Addr,
+		nexthopIP: net.ParseIP(s.Relay["nexthop"]),
+		source:    s.Source,
+		transport: newLinkTransport(),
+		fallback:  fb,
+	}, nil
+}
+
+func (p *nexthopPinger) Send(ctx context.Context) Result {
+	dst := resolveIPv4Preferred(ctx, p.addr)
+	if dst == nil {
+		return Result{Code: Failed, TTL: -1}
+	}
+
+	fam := familyFor(dst)
+	if fam == nil {
+		// IPv6 (or any family without a forcing implementation): monitor via
+		// ordinary routing. The startup check warns that nexthop is ignored here.
+		return p.fallback.Send(ctx)
+	}
+
+	return p.sendForced(ctx, fam, dst)
+}
+
+// sendForced runs the resolve→listen→build→send→wait sequence for an IPv4 target.
+func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.IP) Result {
+	r, err := p.resolve()
+	if err != nil {
+		return Result{Code: Failed, TTL: -1}
+	}
+
+	waiter, err := fam.listen(r.src)
+	if err != nil {
+		return Result{Code: Failed, TTL: -1}
+	}
+	defer func() { _ = waiter.close() }()
+
+	id, seq := nextProbeID(), 1
+
+	pkt, err := fam.build(r.src, dst, id, seq)
+	if err != nil {
+		return Result{Code: Failed, TTL: -1}
+	}
+
+	deadline := probeDeadline(ctx)
+	start := time.Now()
+
+	err = p.transport.send(r.iface, r.mac, fam.ethertype(), pkt)
+	if err != nil {
+		p.invalidateMAC() // the gateway MAC may be stale; re-resolve next round.
+
+		return Result{Code: Failed, TTL: -1}
+	}
+
+	ttl, ok, err := waiter.wait(dst, id, seq, deadline)
+	if err != nil || !ok {
+		return Result{Code: Failed, TTL: -1}
+	}
+
+	rtt := float64(time.Since(start).Microseconds()) / usPerMs
+
+	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
+}
+
+// resolve returns where to send and as what, caching the result across rounds. The
+// lock serializes the (rare) overlapping probes of one target.
+func (p *nexthopPinger) resolve() (resolved, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.transport == nil {
+		return resolved{}, errNoTransport
+	}
+
+	if p.nexthopIP == nil {
+		return resolved{}, errBadGateway
+	}
+
+	if p.egress == nil {
+		ifi, src, err := selectEgress(p.nexthopIP, p.source)
+		if err != nil {
+			return resolved{}, err
+		}
+
+		p.egress, p.srcIP = ifi, src
+	}
+
+	if p.cachedMAC == nil {
+		mac, err := p.transport.resolveGateway(p.egress, p.nexthopIP)
+		if err != nil {
+			return resolved{}, err
+		}
+
+		p.cachedMAC = mac
+	}
+
+	return resolved{iface: p.egress, src: p.srcIP, mac: p.cachedMAC}, nil
+}
+
+func (p *nexthopPinger) invalidateMAC() {
+	p.mu.Lock()
+	p.cachedMAC = nil
+	p.mu.Unlock()
+}
+
+// probeDeadline is the earlier of the per-probe timeout and any caller deadline.
+func probeDeadline(ctx context.Context) time.Time {
+	deadline := time.Now().Add(icmpTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		return d
+	}
+
+	return deadline
+}
+
+// resolveIPv4Preferred parses or resolves addr, preferring an IPv4 result so a
+// dual-stack name still takes the forcing path.
+func resolveIPv4Preferred(ctx context.Context, addr string) net.IP {
+	if ip := net.ParseIP(addr); ip != nil {
+		return ip
+	}
+
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, addr)
+	if err != nil || len(ips) == 0 {
+		return nil
+	}
+
+	for _, ip := range ips {
+		if ip.IP.To4() != nil {
+			return ip.IP
+		}
+	}
+
+	return ips[0].IP
+}
+
+// selectEgress picks the egress interface and source IP for reaching nexthop. The
+// gateway must be on-link (directly connected); off-link gateways and a source not
+// assigned to the egress interface are rejected so they fail at construction-of-
+// state rather than silently dropping replies. source may be empty (auto-select),
+// an interface name, or a source IP.
+func selectEgress(nexthop net.IP, source string) (*net.Interface, net.IP, error) {
+	if nexthop.To4() == nil {
+		return nil, nil, fmt.Errorf("nexthop: %s is not an IPv4 address", nexthop)
+	}
+
+	if source != "" && net.ParseIP(source) == nil {
+		return egressByName(source, nexthop)
+	}
+
+	return egressBySubnet(net.ParseIP(source), nexthop)
+}
+
+// egressByName resolves the egress from an explicit interface name.
+func egressByName(name string, nexthop net.IP) (*net.Interface, net.IP, error) {
+	ifi, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("nexthop: interface %q: %w", name, err)
+	}
+
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	src, ok := pickOnLinkSrc(addrs, nexthop)
+	if !ok {
+		return nil, nil, fmt.Errorf("nexthop: gateway %s is not on-link on %s", nexthop, name)
+	}
+
+	return ifi, src, nil
+}
+
+// egressBySubnet finds the interface whose connected subnet contains nexthop,
+// optionally constrained to one carrying wantSrc.
+func egressBySubnet(wantSrc, nexthop net.IP) (*net.Interface, net.IP, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for i := range ifaces {
+		if src, ok := egressCandidate(&ifaces[i], wantSrc, nexthop); ok {
+			return &ifaces[i], src, nil
+		}
+	}
+
+	if wantSrc != nil {
+		return nil, nil, fmt.Errorf(
+			"nexthop: no interface has source %s with gateway %s on-link",
+			wantSrc,
+			nexthop,
+		)
+	}
+
+	return nil, nil, fmt.Errorf("nexthop: gateway %s is not on-link on any interface", nexthop)
+}
+
+// egressCandidate reports whether ifi can reach nexthop on-link and, if so, the
+// source IP to use (honoring wantSrc when set).
+func egressCandidate(ifi *net.Interface, wantSrc, nexthop net.IP) (net.IP, bool) {
+	if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+		return nil, false
+	}
+
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return nil, false
+	}
+
+	src, ok := pickOnLinkSrc(addrs, nexthop)
+	if !ok {
+		return nil, false
+	}
+
+	if wantSrc != nil && !wantSrc.Equal(src) {
+		if !addrsHaveIP(addrs, wantSrc) {
+			return nil, false
+		}
+
+		return wantSrc, true
+	}
+
+	return src, true
+}
+
+// pickOnLinkSrc returns the IPv4 address among addrs whose subnet contains
+// nexthop, i.e. the local address from which nexthop is directly reachable.
+func pickOnLinkSrc(addrs []net.Addr, nexthop net.IP) (net.IP, bool) {
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP.To4() == nil {
+			continue
+		}
+
+		if ipnet.Contains(nexthop) {
+			return ipnet.IP.To4(), true
+		}
+	}
+
+	return nil, false
+}
+
+// addrsHaveIP reports whether ip is assigned among addrs.
+func addrsHaveIP(addrs []net.Addr, ip net.IP) bool {
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP.Equal(ip) {
+			return true
+		}
+	}
+
+	return false
+}

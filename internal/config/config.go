@@ -46,6 +46,7 @@ var relayKeys = map[string]bool{
 	"os": true, "relay": true, "via": true, "community": true,
 	"netns": true, "user": true, "key": true, "method": true,
 	"username": true, "password": true, "verify": true,
+	"nexthop": true,
 }
 
 // ParseConfig reads a deadman config from r and returns the parsed targets plus

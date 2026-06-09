@@ -70,5 +70,11 @@ func New(s Spec) (Pinger, error) {
 		return newSubprocessPinger(s, modeSSH)
 	}
 
+	// nexthop forces a direct ICMP probe out via a gateway. It is consulted only
+	// on the default path, so relay/via/tcp take precedence over it.
+	if s.Relay["nexthop"] != "" {
+		return newNexthopPinger(s)
+	}
+
 	return newICMPPinger(s)
 }
