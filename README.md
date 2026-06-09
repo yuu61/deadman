@@ -1,70 +1,75 @@
-deadman
-=======
+# deadman
 
 deadman は ping を使ってホストの死活を監視する TUI ツールです。
 
 deadman は多機能ではありません。ICMP echo によるホストの死活確認に特化しています。
-カンファレンスやイベントネットワークのような一時的なネットワークの構築用途に適して
-います。元々は Interop Tokyo ShowNet 向けに設計・実装されたツール（旧 "pingman"）です。
+カンファレンスやイベントネットワークのような一時的なネットワークの構築用途に適しています。
+元々は Interop Tokyo ShowNet 向けに設計・実装されたツール（旧 "pingman"）です。
 
-deadman は Go で実装されており、クロスプラットフォーム対応（Windows / Linux / macOS）と
-単一バイナリ配布を特長とします。設定ファイル形式とコマンドラインフラグは、その源流である
-pingman / オリジナル deadman から引き継いでいます。
+deadman は Go で実装されており、クロスプラットフォーム対応（Windows / Linux / macOS）と単一バイナリ配布を特長とします。
+設定ファイル形式とコマンドラインフラグは、その源流である pingman / オリジナル deadman から引き継いでいます。
 
 源流となったオリジナルの実装は <https://github.com/upa/deadman> にあります。
 
-![demo](/img/deadman-demo.gif)
+![demo](img/deadman-demo.gif)
 
-ビルド
-======
+## ビルド
 
 Go 1.26 以上が必要です。
 
- git clone <https://github.com/yuu61/deadman>
- cd deadman
- go build -o deadman ./cmd/deadman      # Windows: go build -o deadman.exe ./cmd/deadman
+```sh
+git clone https://github.com/yuu61/deadman
+cd deadman
+go build -o deadman ./cmd/deadman      # Windows: go build -o deadman.exe ./cmd/deadman
+```
 
 直接実行・インストールも可能です。
 
- go run ./cmd/deadman deadman.conf
- go install github.com/yuu61/deadman/cmd/deadman@latest
+```sh
+go run ./cmd/deadman deadman.conf
+go install github.com/yuu61/deadman/cmd/deadman@latest
+```
 
-使い方
-======
+## 使い方
 
- ./deadman deadman.conf                 # Windows: deadman.exe deadman.conf
+```sh
+./deadman deadman.conf                 # Windows: deadman.exe deadman.conf
+```
 
 監視対象を変更するには、設定ファイルを編集または新規作成します。
 
+```console
 $ cat deadman.conf
- google          173.194.117.176
- googleDNS       8.8.8.8
- ---
+google          173.194.117.176
+googleDNS       8.8.8.8
+---
 
- kame            203.178.141.194
- kame6           2001:200:dff:fff1:216:3eff:feb1:44d7
+kame            203.178.141.194
+kame6           2001:200:dff:fff1:216:3eff:feb1:44d7
+```
 
-設定ファイルの各行が 1 つの監視対象ホストを表します。ダッシュのみの行（`---`）は
-区切り線として描画され、対象をグループ化するのに便利です。
+設定ファイルの各行が 1 つの監視対象ホストを表します。ダッシュのみの行（`---`）は区切り線として描画され、対象をグループ化するのに便利です。
 
-各行は空白区切りで `名前 アドレス [key=value ...]` と解釈されます（最初のトークンが名前、
-2 番目がアドレス）。名前にスペースを含めたい場合は**ダブルクォートで囲みます**。
+各行は空白区切りで `名前 アドレス [key=value ...]` と解釈されます（最初のトークンが名前、2 番目がアドレス）。名前にスペースを含めたい場合は**ダブルクォートで囲みます**。
 
- "Cloudflare via MGMT" 1.1.1.1 nexthop=10.98.38.9
+```text
+"Cloudflare via MGMT" 1.1.1.1 nexthop=10.98.38.9
+```
 
-クォートを付けないと `Cloudflare via MGMT 1.1.1.1 nexthop=...` は名前 `Cloudflare`・
-アドレス `via` と解釈され、`MGMT` と `1.1.1.1` は無視されてしまいます。クォートは名前以外の
-トークンにも使え、スペースを含む属性値（例 `key="/path with space"`）も表現できます。
-特別扱いされるのはダブルクォートだけで、シングルクォート `'` はリテラル文字です。解釈
-できなかった余分なトークンがあると、deadman は起動時に警告を表示します。
+クォートを付けないと `Cloudflare via MGMT 1.1.1.1 nexthop=...` は名前 `Cloudflare`・アドレス `via` と解釈され、`MGMT` と `1.1.1.1` は無視されてしまいます。
+クォートは名前以外のトークンにも使え、スペースを含む属性値（例 `key="/path with space"`）も表現できます。
+特別扱いされるのはダブルクォートだけで、シングルクォート `'` はリテラル文字です。
+解釈できなかった余分なトークンがあると、deadman は起動時に警告を表示します。
 
-中継方法やプロービングのオプションは、アドレスの後ろに `key=value` 形式の属性として
-記述します。たとえば、リモートホスト経由（ssh）で ping を送る場合は次のようにします。
+中継方法やプロービングのオプションは、アドレスの後ろに `key=value` 形式の属性として記述します。
+たとえば、リモートホスト経由（ssh）で ping を送る場合は次のようにします。
 
- google-via-ssh  173.194.117.176 relay=X.X.X.X os=Linux
+```text
+google-via-ssh  173.194.117.176 relay=X.X.X.X os=Linux
+```
 
-これはリモートサーバ X.X.X.X 経由で google のサーバへ ping を送ります。ssh の
-ユーザ名と鍵は `user=USER`、`key=KEYPATH` で指定できます。その他の中継モードは
+これはリモートサーバ X.X.X.X 経由で google のサーバへ ping を送ります。
+ssh のユーザ名と鍵は `user=USER`、`key=KEYPATH` で指定できます。その他の中継モードは
 `deadman.conf` 内にも記載があります。
 
 | モード        | 記述例                                                                   |
@@ -78,62 +83,56 @@ $ cat deadman.conf
 | tcp/hping3   | `name ADDR tcp=dstport:80`（Linux・root）                                 |
 | nexthop 強制 | `name ADDR nexthop=GWIP [source=eth0]`（直接 ICMP・Linux・root・IPv4）    |
 
-任意の `source=...` 属性で、プローブの送信元を指定できます。指定できるのは IP アドレス
-（全モード）か、もしくは直接 ICMP と Linux/macOS 上の ssh/netns/vrf 中継に限り、
-`source=eth0` のようなネットワークインターフェース名です。
+任意の `source=...` 属性で、プローブの送信元を指定できます。
+指定できるのは IP アドレス（全モード）か、もしくは直接 ICMP と Linux/macOS 上の ssh/netns/vrf 中継に限り、`source=eth0` のようなネットワークインターフェース名です。
 
-任意の `nexthop=GWIP` 属性で、直接 ICMP プローブを指定したゲートウェイ（next-hop）経由で
-強制送出できます（特定経路の到達性を監視するのに有用）。AF_PACKET で L2 宛先をゲートウェイの
-MAC に指定して送るため、**Linux + root/CAP_NET_RAW・IPv4 のみ**で動作します。ゲートウェイは
-egress インタフェースの直結サブネット上（on-link）である必要があり、egress は `source=`
-（インタフェース名または IP）で明示できます。relay/via/tcp を併用した場合や IPv6 ターゲットでは
-nexthop は無視され、通常ルーティングで監視されます（その旨を起動時に警告します）。
+任意の `nexthop=GWIP` 属性で、直接 ICMP プローブを指定したゲートウェイ（next-hop）経由で強制送出できます（特定経路の到達性を監視するのに有用）。
+AF_PACKET で L2 宛先をゲートウェイのMAC に指定して送るため、**Linux + root/CAP_NET_RAW・IPv4 のみ**で動作します。
+ゲートウェイはegress インタフェースの直結サブネット上（on-link）である必要があり、egress は `source=`（インタフェース名または IP）で明示できます。
+relay/via/tcp を併用した場合や IPv6 ターゲットではnexthop は無視され、通常ルーティングで監視されます（その旨を起動時に警告します）。
 
-> **注意（rp_filter）**: 強制した next-hop が通常経路と別インタフェースになる場合、Linux の
-> reverse-path filter が strict（`net.ipv4.conf.*.rp_filter=1`）だと応答が破棄され、到達可能な
-> ホストが `X`（ダウン）と表示されることがあります。その場合は `rp_filter` を 2（loose）または
-> 0（off）にしてください。strict を検出すると deadman は起動時に警告を表示します。
+> **注意（rp_filter）**: 強制した next-hop が通常経路と別インタフェースになる場合、Linux のreverse-path filter が strict（`net.ipv4.conf.*.rp_filter=1`）だと応答が破棄され、到達可能なホストが `X`（ダウン）と表示されることがあります。
+> その場合は `rp_filter` を 2（loose）または0（off）にしてください。strict を検出すると deadman は起動時に警告を表示します。
 
-オプション
-==========
+## オプション
 
- -s, --scale N       RTT バーグラフのスケール（ms 単位、既定 10）
- -a, --async-mode    全対象へ並列に ping を送る
- -b, --blink-arrow   async モードで矢印を点滅させる
- -l, --logging DIR   DIR 配下に対象ごとのログファイルを書き出す
+```text
+-s, --scale N       RTT バーグラフのスケール（ms 単位、既定 10）
+-a, --async-mode    全対象へ並列に ping を送る
+-b, --blink-arrow   async モードで矢印を点滅させる
+-l, --logging DIR   DIR 配下に対象ごとのログファイルを書き出す
+```
 
-操作
-====
+## 操作
 
- r           全対象の統計をリセットする（プログラムは動作したまま）
- R           設定ファイルを再読み込みする（Windows。Unix では SIGHUP を使用）
- m           MIN / MAX 列の表示を切り替える
- v           VIA 列（取得方法）の表示を切り替える
- q / Ctrl-C  終了する
+```text
+r           全対象の統計をリセットする（プログラムは動作したまま）
+R           設定ファイルを再読み込みする（Windows。Unix では SIGHUP を使用）
+m           MIN / MAX 列の表示を切り替える
+v           VIA 列（取得方法）の表示を切り替える
+q / Ctrl-C  終了する
+```
 
-列（カラム）の表示
-==================
+## 列（カラム）の表示
 
-統計列の表示は実行中にキーで切り替えられるほか、設定ファイルの `columns` ディレクティブで
-起動時の既定を指定できます。
+統計列の表示は実行中にキーで切り替えられるほか、設定ファイルの `columns` ディレクティブで起動時の既定を指定できます。
 
- columns MIN=off MAX=off VIA=on
+```text
+columns MIN=off MAX=off VIA=on
+```
 
-`KEY=on|off`（`true|false` / `yes|no` / `1|0` も可、大文字小文字を問わない）で各列の表示を
-指定します。明示しなかった列は既定（表示）のままです。指定できるキーは
-`LOSS RTT AVG MIN MAX JIT SNT FAIL VIA` です。
+`KEY=on|off`（`true|false` / `yes|no` / `1|0` も可、大文字小文字を問わない）で各列の表示を指定します。
+明示しなかった列は既定（表示）のままです。指定できるキーは`LOSS RTT AVG MIN MAX JIT SNT FAIL VIA` です。
 
-`VIA` 列は各対象の**取得方法**を表示します（`direct` / `nexthop GWIP` / `ssh HOST` /
-`snmp HOST` / `netns NAME` / `vrf NAME` / `routeros HOST` / `tcp PORT`）。同じアドレスを
-別経路で監視している場合などに、一目で区別できます。表示は設定上の意図ではなく**実際に
-使われる経路**を反映するため、nexthop が無視される IPv6 ターゲットでは `direct` と表示されます。
+`VIA` 列は各対象の**取得方法**を表示します（`direct` / `nexthop GWIP` / `ssh HOST` / `snmp HOST` / `netns NAME` / `vrf NAME` / `routeros HOST` / `tcp PORT`）。
+同じアドレスを別経路で監視している場合などに、一目で区別できます。
+表示は設定上の意図ではなく**実際に使われる経路**を反映するため、nexthop が無視される IPv6 ターゲットでは `direct` と表示されます。
 
-Unix では deadman に SIGHUP を送ると設定ファイルを再読み込みします。このとき、既存の
-エントリは履歴を保持します（名前・アドレスおよび中継属性で同一性を判定）。端末の
-リサイズには自動で追随します。
+Unix では deadman に SIGHUP を送ると設定ファイルを再読み込みします。
+このとき、既存のエントリは履歴を保持します（名前・アドレスおよび中継属性で同一性を判定）。
+端末のリサイズには自動で追随します。
 
-権限とプラットフォームに関する注意
-==================================
+## 権限とプラットフォームに関する注意
 
 直接 ICMP はネイティブソケットを使用します（`ping` バイナリは不要）。
 
@@ -149,22 +148,17 @@ Unix では deadman に SIGHUP を送ると設定ファイルを再読み込み�
 
 中継モードは外部コマンドを呼び出すため、それらが存在する環境でのみ動作します。
 `ssh`（ssh 中継）、`snmpping`（snmp）、`ip`（netns/vrf）、`hping3`（tcp）が該当します。
-netns・vrf・hping3 は Linux + root が前提です。RouterOS API モードは HTTP を使うため
-OS 非依存です。必要なコマンドが存在しない環境（たとえば Windows）では、その対象は
-クラッシュせず失敗（`X`）として表示されます。
+netns・vrf・hping3 は Linux + root が前提です。RouterOS API モードは HTTP を使うためOS 非依存です。
+必要なコマンドが存在しない環境（たとえば Windows）では、その対象はクラッシュせず失敗（`X`）として表示されます。
 
-`nexthop` 強制は AF_PACKET で L2 フレームを送るため Linux + root/CAP_NET_RAW が必須で、
-他 OS のビルドではその対象は失敗（`X`）として表示されます。
+`nexthop` 強制は AF_PACKET で L2 フレームを送るため Linux + root/CAP_NET_RAW が必須で、他 OS のビルドではその対象は失敗（`X`）として表示されます。
 
-ブロック文字による RTT バー（`▁▂▃▄▅▆▇█`）を正しく表示するため、Unicode と色に対応した
-端末を推奨します（Windows では Windows Terminal）。
+ブロック文字による RTT バー（`▁▂▃▄▅▆▇█`）を正しく表示するため、Unicode と色に対応した端末を推奨します（Windows では Windows Terminal）。
 
-ライセンス
-==========
+## ライセンス
 
 MIT
 
-連絡先
-======
+## 連絡先
 
 <yuu@tukushityann.net>
