@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -34,17 +35,53 @@ type TargetSpec struct {
 	UnterminatedQuote bool
 }
 
-// Config is the parsed configuration: the target list plus optional column
-// visibility overrides from "columns" directive lines. Columns holds only the
-// columns explicitly named; absent columns keep their default (shown).
+// Config is the parsed configuration: the target list plus optional display
+// settings from directive lines. Columns holds only the columns explicitly named
+// (absent columns keep their default, shown); Scale/Precision are zero/empty when
+// their directive is absent, letting the caller fall back to the CLI/default.
 type Config struct {
-	Targets []TargetSpec
-	Columns map[string]bool // column key (upper-case) -> shown.
+	Targets   []TargetSpec
+	Columns   map[string]bool // column key (upper-case) -> shown.
+	Scale     int             // RTT-bar ms-per-step from a "scale" directive; 0 = unset.
+	Precision string          // stat-precision label from a "precision" directive; "" = unset.
 }
 
-// columnDirective is the first token of a column-visibility line:
-// "columns KEY=on KEY=off ..." (a host named "columns" is not expected).
-const columnDirective = "columns"
+// Directive keywords. A line whose first field is one of these is a global display
+// setting rather than a target (a host named like a directive is not expected).
+const (
+	columnDirective    = "columns"
+	scaleDirective     = "scale"
+	precisionDirective = "precision"
+)
+
+// directives maps a keyword to its handler, applied to the line's remaining fields.
+// Handlers are lenient — malformed or out-of-range tokens are ignored, matching
+// applyColumn/applyAttr — so a typo degrades to the default rather than aborting the
+// parse. The precision label is stored verbatim and validated by the TUI (its
+// precisionModes table is the single source of valid labels), keeping config free of
+// a duplicate list.
+var directives = map[string]func(cfg *Config, args []string){
+	columnDirective: func(cfg *Config, args []string) {
+		for _, kv := range args {
+			applyColumn(cfg.Columns, kv)
+		}
+	},
+	scaleDirective: func(cfg *Config, args []string) {
+		if len(args) == 0 {
+			return
+		}
+
+		n, err := strconv.Atoi(args[0])
+		if err == nil && n > 0 {
+			cfg.Scale = n
+		}
+	},
+	precisionDirective: func(cfg *Config, args []string) {
+		if len(args) > 0 {
+			cfg.Precision = args[0]
+		}
+	},
+}
 
 var (
 	reComment = regexp.MustCompile(`^#.*`)
@@ -79,10 +116,8 @@ func ParseConfig(r io.Reader) (Config, error) {
 			continue
 		}
 
-		if fields[0] == columnDirective {
-			for _, kv := range fields[1:] {
-				applyColumn(cfg.Columns, kv)
-			}
+		if h, ok := directives[fields[0]]; ok {
+			h(&cfg, fields[1:])
 
 			continue
 		}

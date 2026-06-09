@@ -58,3 +58,23 @@ func TestParseArgsMissingConfig(t *testing.T) {
 		t.Error("expected error when configfile is missing")
 	}
 }
+
+func TestResolveScale(t *testing.T) {
+	cases := []struct {
+		name     string
+		cli, cfg int
+		want     int
+	}{
+		{"cli explicit wins over config", 20, 5, 20},
+		{"config used when cli unset", 0, 5, 5},
+		{"cli used when config unset", 7, 0, 7},
+		{"default when both unset", 0, 0, defaultScale},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolveScale(c.cli, c.cfg); got != c.want {
+				t.Errorf("resolveScale(%d, %d) = %d, want %d", c.cli, c.cfg, got, c.want)
+			}
+		})
+	}
+}

@@ -284,6 +284,45 @@ func TestParseConfigColumns(t *testing.T) {
 	}
 }
 
+func TestParseConfigScaleAndPrecision(t *testing.T) {
+	cfg, err := ParseConfig(strings.NewReader(
+		"scale 5\nprecision ms.1\n---\nhost 1.2.3.4\n",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Scale != 5 {
+		t.Errorf("Scale = %d, want 5", cfg.Scale)
+	}
+
+	// The precision label is stored verbatim; the TUI validates it against its mode
+	// table, so config keeps no duplicate list.
+	if cfg.Precision != "ms.1" {
+		t.Errorf("Precision = %q, want ms.1", cfg.Precision)
+	}
+
+	// The directive lines are not targets; the separator and real target still parse.
+	if len(cfg.Targets) != 2 || cfg.Targets[1].Name != "host" {
+		t.Fatalf("targets = %+v", cfg.Targets)
+	}
+}
+
+func TestParseConfigScaleLenient(t *testing.T) {
+	// A non-numeric or non-positive scale is ignored, leaving Scale unset (0) so the
+	// caller falls back to the CLI/default rather than aborting the parse.
+	for _, in := range []string{"scale abc\n", "scale -3\n", "scale 0\n", "scale\n"} {
+		cfg, err := ParseConfig(strings.NewReader(in))
+		if err != nil {
+			t.Fatalf("ParseConfig(%q) error: %v", in, err)
+		}
+
+		if cfg.Scale != 0 {
+			t.Errorf("ParseConfig(%q): Scale = %d, want 0 (unset)", in, cfg.Scale)
+		}
+	}
+}
+
 func TestParseConfigEmpty(t *testing.T) {
 	cfg, err := ParseConfig(strings.NewReader("\n  \n#only comments\n"))
 	if err != nil {

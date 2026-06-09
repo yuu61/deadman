@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,6 +31,7 @@ type Options struct {
 	Async      bool
 	Blink      bool
 	Scale      int
+	Precision  string // initial stat-precision label (config "precision"); "" = ms.
 	LogDir     string
 	ConfigPath string
 	Columns    map[string]bool // per-column visibility overrides (config file).
@@ -47,6 +49,9 @@ type Model struct {
 
 	visible map[string]bool // per-column visibility (config defaults + 'm' toggle).
 
+	scale   int // RTT-bar ms-per-step; adjusted live with up/down, applied when rendering glyphs.
+	precIdx int // index into precisionModes for the stat columns; cycled with 'p'.
+
 	tick     int  // round counter, drives the spinner.
 	arrowIdx int  // sync mode: target currently being probed.
 	blinkOn  bool // async + blink: arrow visibility toggle.
@@ -62,7 +67,7 @@ type Model struct {
 
 // New builds the initial model from parsed specs and options.
 func New(specs []config.TargetSpec, opts Options) (Model, error) {
-	rows, err := buildRows(specs, opts.Scale, nil)
+	rows, err := buildRows(specs, nil)
 	if err != nil {
 		return Model{}, err
 	}
@@ -70,6 +75,8 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 	return Model{
 		rows:     rows,
 		opts:     opts,
+		scale:    opts.Scale,
+		precIdx:  precisionIndex(opts.Precision),
 		hostInfo: hostInfo(),
 		visible:  buildVisible(opts.Columns),
 		warnings: startupWarnings(specs),
@@ -78,7 +85,7 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 
 // buildRows turns specs into rows. Targets present in existing (matched by Key)
 // are reused so their history/stats survive a reload.
-func buildRows(specs []config.TargetSpec, scale int, existing []Row) ([]Row, error) {
+func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, error) {
 	index := map[string]*monitor.Target{}
 
 	for _, r := range existing {
@@ -103,7 +110,7 @@ func buildRows(specs []config.TargetSpec, scale int, existing []Row) ([]Row, err
 			Relay:  s.Relay,
 		}
 
-		t, err := monitor.NewTarget(s.Name, spec, scale)
+		t, err := monitor.NewTarget(s.Name, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -128,7 +135,7 @@ type reload struct {
 
 // loadRows reparses the config file for a SIGHUP/manual reload. ok is false when
 // the file cannot be read or parsed (the current state is kept).
-func loadRows(path string, scale int, existing []Row) (reload, bool) {
+func loadRows(path string, existing []Row) (reload, bool) {
 	// #nosec G304 -- path is the operator-supplied config file, not remote input.
 	f, err := os.Open(path)
 	if err != nil {
@@ -141,7 +148,7 @@ func loadRows(path string, scale int, existing []Row) (reload, bool) {
 		return reload{}, false
 	}
 
-	rows, err := buildRows(cfg.Targets, scale, existing)
+	rows, err := buildRows(cfg.Targets, existing)
 	if err != nil {
 		return reload{}, false
 	}
@@ -192,7 +199,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey processes a keypress: quit, refresh stats ('r') or reload ('R').
+// handleKey processes a keypress: the control keys (quit, refresh 'r', reload 'R')
+// are handled here; the display-only keys are delegated to handleViewKey.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -207,31 +215,86 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "R":
 		return m, func() tea.Msg { return reloadMsg{} }
+	}
+
+	return m.handleViewKey(msg), nil
+}
+
+// handleViewKey handles the display-only keys: the MIN/MAX ('m') and VIA ('v')
+// column toggles, the RTT-bar scale (up/down), and the stat precision ('p'). An
+// unknown key leaves the model unchanged.
+func (m Model) handleViewKey(msg tea.KeyMsg) Model {
+	switch msg.String() {
 	case "m":
 		// Toggle the MIN/MAX pair: show both unless both are already shown.
 		// The header width changes, so the result-bar column is recomputed.
 		show := !m.visible[colMin] || !m.visible[colMax]
 		m.visible[colMin] = show
 		m.visible[colMax] = show
-		m = m.recalcWidths()
 
-		return m, nil
+		return m.recalcWidths()
 	case "v":
 		// Toggle the VIA (probing method) column; its width feeds the result-bar
 		// column, so recompute the layout.
 		m.visible[colVia] = !m.visible[colVia]
-		m = m.recalcWidths()
 
-		return m, nil
+		return m.recalcWidths()
+	case "up":
+		// Coarser RTT-bar scale (more ms per step). Glyphs are bucketed at render
+		// time, so the existing bar re-buckets with no width change.
+		m.scale = scaleUp(m.scale)
+	case "down":
+		// Finer RTT-bar scale.
+		m.scale = scaleDown(m.scale)
+	case "p":
+		// Cycle the stat precision (ms -> ms.1 -> ms.2 -> ms.3); the column width
+		// changes, so recompute the result-bar layout.
+		m.precIdx = (m.precIdx + 1) % len(precisionModes)
+
+		return m.recalcWidths()
+	default:
+		// Any other key is unbound; leave the model unchanged.
 	}
 
-	return m, nil
+	return m
+}
+
+// scaleSteps is the ladder the up/down keys move the RTT-bar scale through (ms).
+var scaleSteps = []int{1, 2, 5, 10, 20, 50, 100}
+
+// scaleUp returns the next coarser (larger-ms) rung above cur. An off-ladder cur
+// (e.g. from -s 7) snaps up to the nearest rung, so the live scale stays a free-form
+// int while the keys move through sensible presets. At or above the top rung cur is
+// preserved: Up means coarser, so it must never decrease the scale (a free-form
+// -s 1000 stays 1000 rather than snapping down to the ladder top).
+func scaleUp(cur int) int {
+	for _, s := range scaleSteps {
+		if s > cur {
+			return s
+		}
+	}
+
+	return cur
+}
+
+// scaleDown returns the next finer (smaller-ms) rung below cur, clamped at the bottom.
+func scaleDown(cur int) int {
+	for _, s := range slices.Backward(scaleSteps) {
+		if s < cur {
+			return s
+		}
+	}
+
+	return scaleSteps[0]
 }
 
 // handleReload reparses the config and starts a fresh generation, so stale
-// timers/results from the previous target set are ignored.
+// timers/results from the previous target set are ignored. The live scale/precision
+// are intentionally preserved (not reset to config), unlike column visibility:
+// scale has a CLI flag (-s) whose value a reload must not silently drop, and
+// precision is a live, key-driven view setting.
 func (m Model) handleReload() (tea.Model, tea.Cmd) {
-	if r, ok := loadRows(m.opts.ConfigPath, m.opts.Scale, m.rows); ok {
+	if r, ok := loadRows(m.opts.ConfigPath, m.rows); ok {
 		m.rows = r.rows
 		m.visible = buildVisible(r.columns)
 		m.warnings = r.warnings

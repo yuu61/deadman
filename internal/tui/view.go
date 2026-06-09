@@ -21,7 +21,12 @@ func (m Model) View() string {
 	b.WriteString(m.titleLine()) // line 1: host info (+spinner) and version.
 	b.WriteByte('\n')
 	b.WriteString(rear) // line 2.
-	fmt.Fprintf(&b, "RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia", m.opts.Scale)
+	fmt.Fprintf(
+		&b,
+		"RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s]",
+		m.scale,
+		m.precMode().Label,
+	)
 	b.WriteByte('\n')
 
 	for _, w := range m.warnings {
@@ -119,7 +124,8 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 
 	var g strings.Builder
 
-	for _, ch := range t.Glyphs(m.resW) {
+	for _, res := range t.Results(m.resW) {
+		ch := monitor.Glyph(res, m.scale)
 		if monitor.IsFailGlyph(ch) {
 			g.WriteString(styleDown.Render(ch))
 		} else {
