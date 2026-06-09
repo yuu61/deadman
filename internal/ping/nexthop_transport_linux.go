@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -100,7 +101,7 @@ func (afpacketTransport) resolveGateway(
 
 	// connect() alone does not trigger ARP; an actual write to the on-link gateway
 	// makes the kernel resolve it. Then re-read the cache until it lands.
-	kickARP(nexthop)
+	kickARP(iface, nexthop)
 
 	deadline := time.Now().Add(arpResolveTimeout)
 	for time.Now().Before(deadline) {
@@ -152,10 +153,32 @@ func arpLookup(ifname, ip string) (net.HardwareAddr, bool) {
 	return nil, false
 }
 
-// kickARP nudges the kernel to resolve gw by writing a datagram toward it. Errors
-// are ignored: the only purpose is the side effect of triggering resolution.
-func kickARP(gw net.IP) {
-	d := net.Dialer{Timeout: arpPollInterval}
+// kickARP nudges the kernel to resolve gw by writing a datagram toward it. The
+// socket is bound to iface (SO_BINDTODEVICE) so the neighbor entry lands on the
+// intended egress device — otherwise normal/policy routing could ARP gw on a
+// different interface and the later /proc/net/arp lookup by iface.Name would miss.
+// Errors are ignored: the only purpose is the side effect of triggering resolution.
+func kickARP(iface *net.Interface, gw net.IP) {
+	d := net.Dialer{
+		Timeout: arpPollInterval,
+		Control: func(_, _ string, c syscall.RawConn) error {
+			var serr error
+
+			cerr := c.Control(func(fd uintptr) {
+				serr = unix.SetsockoptString(
+					int(fd),
+					unix.SOL_SOCKET,
+					unix.SO_BINDTODEVICE,
+					iface.Name,
+				)
+			})
+			if cerr != nil {
+				return cerr
+			}
+
+			return serr
+		},
+	}
 
 	c, err := d.DialContext(context.Background(), "udp", net.JoinHostPort(gw.String(), arpKickPort))
 	if err != nil {

@@ -24,7 +24,10 @@ func rpFilterStrict() bool {
 	}
 
 	for _, e := range entries {
-		if e.Name() == "all" {
+		// "all" is folded in via max; "default" is the template for future
+		// interfaces (commonly 1) and not a live device, so it must be skipped to
+		// avoid a persistent false positive.
+		if e.Name() == "all" || e.Name() == "default" {
 			continue
 		}
 
@@ -35,6 +38,10 @@ func rpFilterStrict() bool {
 
 	return all == 1
 }
+
+// nexthopForcingSupported reports whether this platform can force a probe out a
+// chosen next-hop (Linux AF_PACKET). See the non-Linux stub for other platforms.
+func nexthopForcingSupported() bool { return true }
 
 // readRPFilter reads a single integer rp_filter value, returning 0 when it cannot
 // be read.

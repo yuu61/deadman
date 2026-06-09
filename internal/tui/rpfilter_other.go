@@ -5,3 +5,8 @@ package tui
 // rpFilterStrict is Linux-specific; other platforms have no /proc rp_filter knob
 // (and no next-hop forcing), so there is nothing to warn about.
 func rpFilterStrict() bool { return false }
+
+// nexthopForcingSupported reports whether this platform can force a probe out a
+// chosen next-hop. Only Linux (AF_PACKET) does today; elsewhere nexthop targets
+// degrade to a failure glyph, which nexthopWarnings flags at startup.
+func nexthopForcingSupported() bool { return false }

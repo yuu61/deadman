@@ -125,6 +125,12 @@ func newNexthopPinger(s Spec) (Pinger, error) {
 }
 
 func (p *nexthopPinger) Send(ctx context.Context) Result {
+	// Bound the whole probe (DNS + ARP + echo) to icmpTimeout: the TUI passes
+	// context.Background(), so without this an unresolvable name could block a
+	// round far past the intended timeout.
+	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
+	defer cancel()
+
 	dst := resolveIPv4Preferred(ctx, p.addr)
 	if dst == nil {
 		return Result{Code: Failed, TTL: -1}
