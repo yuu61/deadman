@@ -233,9 +233,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleViewKey(msg), nil
 }
 
-// handleViewKey handles the display-only keys: the MIN/MAX ('m') and VIA ('v')
-// column toggles, the RTT-bar scale (up/down), the stat precision ('p'), and the
-// newspaper-column count ('['/']'). An unknown key leaves the model unchanged.
+// handleViewKey handles the display-only keys: the MIN/MAX ('m') and structural
+// HOSTNAME/ADDRESS/VIA ('h'/'a'/'v') column toggles, the RTT-bar scale (up/down),
+// the stat precision ('p'), and the newspaper-column count ('['/']'). An unknown
+// key leaves the model unchanged.
 //
 // The layout-changing keys clampScroll after recalcWidths: a stat-column toggle
 // shifts minColumnWidth, which can change effectiveCols and thus the vertical
@@ -251,12 +252,11 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 		m.visible[colMax] = show
 
 		return m.recalcWidths().clampScroll()
-	case "v":
-		// Toggle the VIA (probing method) column; its width feeds the result-bar
-		// column and the multi-column fit, so recompute the layout.
-		m.visible[colVia] = !m.visible[colVia]
-
-		return m.recalcWidths().clampScroll()
+	case "h", "a", "v":
+		// Toggle a structural string column: HOSTNAME ('h'), ADDRESS ('a') or VIA
+		// ('v'). Each one's width feeds the result-bar column and the multi-column
+		// fit, so recompute the layout and re-pin the scroll, like the MIN/MAX toggle.
+		return m.toggleStructuralCol(msg.String()).recalcWidths().clampScroll()
 	case "up":
 		// Coarser RTT-bar scale (more ms per step). Glyphs are bucketed at render
 		// time, so the existing bar re-buckets with no width change.
@@ -281,6 +281,25 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 		return m.scroll(msg.String())
 	default:
 		// Any other key is unbound; leave the model unchanged.
+	}
+
+	return m
+}
+
+// toggleStructuralCol flips the visibility of the structural string column bound to
+// the key: 'h' -> HOSTNAME, 'a' -> ADDRESS, 'v' -> VIA. RESULT has no key and is
+// never hidden. The caller recomputes the layout afterwards, since each column's
+// width feeds the result-bar column and the multi-column fit.
+func (m Model) toggleStructuralCol(key string) Model {
+	switch key {
+	case "h":
+		m.visible[colHost] = !m.visible[colHost]
+	case "a":
+		m.visible[colAddr] = !m.visible[colAddr]
+	case "v":
+		m.visible[colVia] = !m.visible[colVia]
+	default:
+		// Unreachable: handleViewKey routes only "h"/"a"/"v" here.
 	}
 
 	return m
@@ -475,8 +494,19 @@ func (m Model) recalcWidths() Model {
 // remains. recalcWidths (to size the bar) and minColumnWidth (to size a column) both
 // derive from this, so the two can never drift.
 func (m Model) rowFixedWidth() int {
-	// arrow + host + 1 + addr + 1 [+ via + 1] + statsHeader + 2.
-	used := len(arrow) + m.hostW + 1 + m.addrW + 1 + len(m.statsHeader()) + 2
+	// arrow [+ host + 1] [+ addr + 1] [+ via + 1] + statsHeader + 2. The optional
+	// segments gate on the SAME columnVisible calls headerLine/targetLine use, so the
+	// measured fixed width and the rendered row can never drift (a drift would mis-size
+	// the result bar).
+	used := len(arrow) + len(m.statsHeader()) + 2
+	if m.columnVisible(colHost) {
+		used += m.hostW + 1
+	}
+
+	if m.columnVisible(colAddr) {
+		used += m.addrW + 1
+	}
+
 	if m.columnVisible(colVia) {
 		used += m.viaW + 1
 	}

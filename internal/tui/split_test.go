@@ -433,6 +433,44 @@ func TestColumnsCappedByRowCount(t *testing.T) {
 	}
 }
 
+// Hiding HOSTNAME and ADDRESS shrinks a row's fixed width, so minColumnWidth drops
+// and more newspaper columns fit the same terminal — the column toggles and the
+// split feature compose. The no-overflow invariant must still hold.
+func TestHidingHostAddrFitsMoreColumns(t *testing.T) {
+	hide := map[string]bool{"HOSTNAME": false, "ADDRESS": false}
+
+	all := sizedModel(t, 30, Options{Scale: 10, Cols: 1}, 400, 40)
+	hidden := sizedModel(t, 30, Options{Scale: 10, Cols: 1, Columns: hide}, 400, 40)
+
+	// The per-column budget shrinks by exactly the two gated segments (each column's
+	// width plus its trailing space); the computed hostW/addrW are identical (same
+	// data), only their inclusion differs.
+	wantDrop := (all.hostW + 1) + (all.addrW + 1)
+	if got := all.minColumnWidth() - hidden.minColumnWidth(); got != wantDrop {
+		t.Fatalf("minColumnWidth drop = %d, want %d (hostW=%d addrW=%d)",
+			got, wantDrop, all.hostW, all.addrW)
+	}
+
+	// At a width that fits exactly two hidden columns, the all-visible layout (wider
+	// per column) fits only one, while hiding the two columns fits two.
+	width := 2*hidden.minColumnWidth() + colGutterWidth
+
+	allAt := sizedModel(t, 30, Options{Scale: 10, Cols: 2}, width, 40)
+	if got := allAt.effectiveCols(); got != 1 {
+		t.Errorf("all columns visible at width %d: effectiveCols = %d, want 1", width, got)
+	}
+
+	hiddenAt := sizedModel(t, 30, Options{Scale: 10, Cols: 2, Columns: hide}, width, 40)
+	if got := hiddenAt.effectiveCols(); got < 2 {
+		t.Errorf("HOSTNAME+ADDRESS hidden at width %d: effectiveCols = %d, want >= 2", width, got)
+	}
+
+	if cw := hiddenAt.colContentWidth(); cw < hiddenAt.minColumnWidth() {
+		t.Errorf("colContentWidth %d < minColumnWidth %d (column would overflow)",
+			cw, hiddenAt.minColumnWidth())
+	}
+}
+
 // renderColumns must honor vp.top: when the list scrolls, each column starts at
 // vp.top + j*perCol, so a regression that drops the top offset is caught.
 func TestTwoColumnScrolledColumnMajor(t *testing.T) {

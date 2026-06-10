@@ -133,6 +133,8 @@ r           全対象の統計をリセットする（プログラムは動作�
 R           設定ファイルを再読み込みする（Windows。Unix では SIGHUP を使用）
 m           MIN / MAX 列の表示を切り替える
 v           VIA 列（取得方法）の表示を切り替える
+h           HOSTNAME 列の表示を切り替える
+a           ADDRESS 列の表示を切り替える
 j / k       監視リストを 1 行スクロールする（下 / 上。行数が端末の高さを超える場合）
 PgDn / PgUp 監視リストを 1 画面分スクロールする
 g / G       監視リストの先頭 / 末尾へジャンプする
@@ -166,15 +168,17 @@ split 2             一覧を 2 列で表示する（既定 1。明示した -c 
 
 ## 列（カラム）の表示
 
-統計列の表示は実行中にキーで切り替えられるほか、設定ファイルの `columns` ディレクティブで起動時の既定を指定できます。
+`RESULT`（結果バー）以外のすべての列は表示を切り替えられます。
+実行中のキー（`m` で MIN / MAX、`v` で VIA、`h` で HOSTNAME、`a` で ADDRESS）で切り替えられるほか、設定ファイルの `columns` ディレクティブで起動時の既定を指定できます。
 
 ```text
-columns MIN=off MAX=off VIA=on
+columns ADDRESS=off MIN=off MAX=off VIA=on
 ```
 
 `KEY=on|off`（`true|false` / `yes|no` / `1|0` も可、大文字小文字を問わない）で各列の表示を指定します。
 明示しなかった列は既定（表示）のままです。
-指定できるキーは`LOSS RTT AVG MIN MAX JIT SNT FAIL VIA` です。
+指定できるキーは`HOSTNAME ADDRESS VIA LOSS RTT AVG MIN MAX JIT SNT FAIL` です。
+`RESULT`（結果バー）は deadman の看板のため常に表示され、隠せません。
 
 `VIA` 列は各対象の**取得方法**を表示します（`direct` / `nexthop GWIP` / `ssh HOST` / `snmp HOST` / `netns NAME` / `vrf NAME` / `routeros HOST` / `tcp PORT`）。
 同じアドレスを別経路で監視している場合などに、一目で区別できます。

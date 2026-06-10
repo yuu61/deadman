@@ -126,7 +126,15 @@ func (m Model) titleLine() string {
 }
 
 func (m Model) headerLine() string {
-	h := rear + padRight("HOSTNAME", m.hostW) + " " + padRight("ADDRESS", m.addrW) + " "
+	h := rear
+	if m.columnVisible(colHost) {
+		h += padRight("HOSTNAME", m.hostW) + " "
+	}
+
+	if m.columnVisible(colAddr) {
+		h += padRight("ADDRESS", m.addrW) + " "
+	}
+
 	if m.columnVisible(colVia) {
 		h += padRight("VIA", m.viaW) + " "
 	}
@@ -165,7 +173,15 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 
 	stats := m.statsLine(t)
 
-	text := ar + padRight(t.Name, m.hostW) + " " + padRight(t.Addr, m.addrW) + " "
+	text := ar
+	if m.columnVisible(colHost) {
+		text += padRight(t.Name, m.hostW) + " "
+	}
+
+	if m.columnVisible(colAddr) {
+		text += padRight(t.Addr, m.addrW) + " "
+	}
+
 	if m.columnVisible(colVia) {
 		text += padRight(t.Via, m.viaW) + " "
 	}
