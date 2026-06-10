@@ -104,15 +104,7 @@ func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, error) {
 			continue
 		}
 
-		spec := ping.Spec{
-			Addr:   s.Addr,
-			OSName: s.Relay["os"],
-			Source: s.Source,
-			TCP:    s.TCP,
-			Relay:  s.Relay,
-		}
-
-		t, err := monitor.NewTarget(s.Name, spec)
+		t, err := monitor.NewTarget(s.Name, specToPingSpec(s))
 		if err != nil {
 			return nil, err
 		}
@@ -125,6 +117,20 @@ func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, error) {
 	}
 
 	return rows, nil
+}
+
+// specToPingSpec maps a parsed config target to the ping.Spec the probe layer
+// consumes. buildRows uses it to construct targets; the startup-warning code uses it
+// to ask ping.UsesDirectICMP / ping.UsesNexthop which method a target resolves to, so
+// both share one mapping and cannot drift.
+func specToPingSpec(s config.TargetSpec) ping.Spec {
+	return ping.Spec{
+		Addr:   s.Addr,
+		OSName: s.Relay["os"],
+		Source: s.Source,
+		TCP:    s.TCP,
+		Relay:  s.Relay,
+	}
 }
 
 // reload is the result of reparsing the config file: the new rows, the

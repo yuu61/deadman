@@ -8,9 +8,12 @@ import (
 )
 
 // startupWarnings collects every operator-facing warning shown under the header:
-// config-parse problems first (the most actionable), then next-hop caveats.
+// config-parse problems first (the most actionable), then the missing-ICMP-privilege
+// hint (which sinks every direct probe at once), then next-hop caveats.
 func startupWarnings(specs []config.TargetSpec) []string {
-	return append(parseWarnings(specs), nexthopWarnings(specs)...)
+	warns := append(parseWarnings(specs), icmpPrivilegeWarnings(specs)...)
+
+	return append(warns, nexthopWarnings(specs)...)
 }
 
 // parseWarnings flags targets whose config line had tokens silently dropped. The
