@@ -291,7 +291,11 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 // request to what the terminal width can actually hold.
 func (m Model) adjustCols(key string) Model {
 	if key == "]" {
-		m.cols++
+		// Cap one beyond what currently fits so repeated ']' on a narrow terminal
+		// can't run the request away (needing as many '[' presses to undo). Hiding
+		// stat columns lowers minColumnWidth and lifts the cap, so columns can still
+		// grow incrementally.
+		m.cols = min(m.cols+1, m.effectiveCols()+1)
 	} else {
 		m.cols = max(m.cols-1, 1)
 	}
@@ -487,17 +491,37 @@ func (m Model) minColumnWidth() int {
 	return m.rowFixedWidth() + minResultWidth
 }
 
-// effectiveCols clamps the requested column count (m.cols) to the number of columns
-// the terminal width can hold without any column dropping below minColumnWidth: n
-// columns need n*minCol + (n-1)*gutter <= width, i.e. n <= (width+gutter)/(minCol+gutter).
+// usableRows is the number of screen rows available for the scrollable list:
+// the terminal height minus the fixed header. Zero before the first size message
+// or when the header alone fills the screen.
+func (m Model) usableRows() int {
+	if m.height <= 0 {
+		return 0
+	}
+
+	return max(m.height-m.fixedHeaderLines(), 0)
+}
+
+// effectiveCols clamps the requested column count (m.cols) to what actually fits.
+// First by width: n columns need n*minCol + (n-1)*gutter <= width, i.e.
+// n <= (width+gutter)/(minCol+gutter). Then by row count: when the list fits the
+// height, only ceil(rows/perColumn) columns are needed to hold every row, so a
+// larger request would leave a phantom header-only column on the right. (When the
+// list overflows and scrolls, every column is full, so no row reduction applies.)
 func (m Model) effectiveCols() int {
 	if m.cols <= 1 || m.width <= 0 {
 		return 1
 	}
 
 	fit := (m.width + colGutterWidth) / (m.minColumnWidth() + colGutterWidth)
+	eff := max(1, min(m.cols, fit))
 
-	return max(1, min(m.cols, fit))
+	if usable := m.usableRows(); usable > 0 && len(m.rows) > 0 && len(m.rows) <= usable*eff {
+		perCol := ceilDiv(len(m.rows), eff)
+		eff = ceilDiv(len(m.rows), perCol)
+	}
+
+	return eff
 }
 
 // colContentWidth is the per-column content width: the terminal width minus the
@@ -568,7 +592,7 @@ func (m Model) scrollMetrics() viewport {
 	// usable is 0 when the fixed header fills (or exceeds) the screen. In that case
 	// render no rows: forcing a minimum of 1 here would emit height+1 lines, and
 	// Bubble Tea drops the top (title) line, defeating the fixed-header guarantee.
-	usable := max(m.height-m.fixedHeaderLines(), 0)
+	usable := m.usableRows()
 
 	// The grid holds usable rows per column across eff columns. When the whole list
 	// fits, show it all unscrolled; perCol is the column-major column height (column

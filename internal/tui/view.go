@@ -137,9 +137,7 @@ func (m Model) headerLine() string {
 }
 
 func (m Model) separatorLine() string {
-	n := max(m.width-2*len(arrow), 0)
-
-	return rear + strings.Repeat("-", n)
+	return separatorCell(m.width)
 }
 
 // arrowFor returns the leading arrow ("> ") for the target at idx, or the blank
@@ -270,7 +268,11 @@ func joinColumns(blocks [][]string) string {
 func padCell(s string, w int) string {
 	switch sw := lipgloss.Width(s); {
 	case sw > w:
-		return ansi.Truncate(s, w, "")
+		// ansi.Truncate stops below w when a wide glyph would straddle the cut, so
+		// re-pad to land exactly on w (otherwise the following column shifts left).
+		t := ansi.Truncate(s, w, "")
+
+		return t + strings.Repeat(" ", max(w-lipgloss.Width(t), 0))
 	case sw < w:
 		return s + strings.Repeat(" ", w-sw)
 	default:

@@ -394,3 +394,87 @@ func TestTwoColumnOverWideCellTruncated(t *testing.T) {
 		}
 	}
 }
+
+// Requesting more columns than there are rows must not open a phantom header-only
+// column: the effective count is capped so every column holds at least one row.
+func TestColumnsCappedByRowCount(t *testing.T) {
+	// 5 rows, 4 columns requested, wide+tall terminal. Without the cap, perCol would
+	// be ceil(5/4)=2 and the 4th column would be header-only empty.
+	opts := Options{
+		Scale:   10,
+		Cols:    4,
+		Columns: map[string]bool{"MIN": false, "MAX": false, "VIA": false},
+	}
+	m := sizedModel(t, 5, opts, 320, 40)
+
+	eff := m.effectiveCols()
+	if eff >= len(m.rows) {
+		t.Errorf("effectiveCols %d should be capped below the row count %d", eff, len(m.rows))
+	}
+
+	out := m.View()
+
+	// One header per displayed column, and never more headers than effective columns.
+	if n := strings.Count(out, "HOSTNAME"); n != eff {
+		t.Errorf("expected %d headers (one per column), got %d\n---\n%s", eff, n, out)
+	}
+
+	// Column-major with the cap: perCol = ceil(5/eff); the last visual column still
+	// carries a real row (no header-only column).
+	vp := m.scrollMetrics()
+
+	lastColStart := vp.top + (vp.cols-1)*vp.perCol
+	if lastColStart >= len(m.rows) {
+		t.Errorf(
+			"last column starts at row %d, past the %d rows (phantom column)",
+			lastColStart,
+			len(m.rows),
+		)
+	}
+}
+
+// renderColumns must honor vp.top: when the list scrolls, each column starts at
+// vp.top + j*perCol, so a regression that drops the top offset is caught.
+func TestTwoColumnScrolledColumnMajor(t *testing.T) {
+	opts := Options{Scale: 10, Cols: 2, Columns: map[string]bool{"MIN": false, "MAX": false}}
+	// Short terminal so 60 rows overflow and the list scrolls.
+	m := sizedModel(t, 60, opts, 160, 12)
+
+	vp := m.scrollMetrics()
+	if !vp.active || vp.cols != 2 {
+		t.Fatalf(
+			"precondition: want an active 2-column scroll, got active=%v cols=%d",
+			vp.active,
+			vp.cols,
+		)
+	}
+
+	// Scroll to the bottom; top is now non-zero.
+	m = m.scroll("G")
+
+	vp = m.scrollMetrics()
+	if vp.top == 0 {
+		t.Fatal("precondition: expected a non-zero top after G")
+	}
+
+	out := m.View()
+
+	// Early rows are scrolled past.
+	if strings.Contains(out, "h000 ") {
+		t.Errorf("h000 should be scrolled off\n---\n%s", out)
+	}
+
+	// Column-major with a top offset: column 0's first row and column 1's first row
+	// (top+perCol) share a physical line.
+	col0 := manySpecs(60)[vp.top].Name
+
+	col1 := manySpecs(60)[vp.top+vp.perCol].Name
+	if line := lineWith(out, col0); !strings.Contains(line, col1) {
+		t.Errorf(
+			"scrolled column-major: line with %s should also hold %s\n---\n%s",
+			col0,
+			col1,
+			out,
+		)
+	}
+}
