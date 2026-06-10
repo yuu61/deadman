@@ -10,7 +10,7 @@ deadman は ping によるホスト死活監視 TUI（Go 製）。設定構文�
 作業の検証はすべて Makefile 経由で行う（`make help` で一覧）。
 
 | 目的 | コマンド |
-|------|----------|
+| --- | --- |
 | ビルド | `make build` （`bin/deadman` を出力） |
 | テスト | `make test` （`-count=1`、キャッシュ無効） |
 | レース検出 | `make test-race` |

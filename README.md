@@ -72,15 +72,15 @@ google-via-ssh  173.194.117.176 relay=X.X.X.X os=Linux
 ssh のユーザ名と鍵は `user=USER`、`key=KEYPATH` で指定できます。その他の中継モードは
 `deadman.conf` 内にも記載があります。
 
-| モード        | 記述例                                                                   |
-|--------------|--------------------------------------------------------------------------|
-| 直接 ICMP    | `googleDNS 8.8.8.8`                                                       |
-| ssh 中継     | `name ADDR relay=SSHHOST os=Linux user=USER key=KEY`                     |
-| snmp         | `name ADDR relay=SNMPHOST via=snmp community=COMMUNITY`                  |
-| netns        | `name ADDR relay=NETNSNAME via=netns`（Linux・root）                      |
-| vrf          | `name ADDR relay=VRFNAME via=vrf`（Linux・root）                          |
-| routeros     | `name ADDR relay=ROS via=routeros_api username=U password=P method=https verify=false` |
-| tcp/hping3   | `name ADDR tcp=dstport:80`（Linux・root）                                 |
+| モード | 記述例 |
+| --- | --- |
+| 直接 ICMP | `googleDNS 8.8.8.8` |
+| ssh 中継 | `name ADDR relay=SSHHOST os=Linux user=USER key=KEY` |
+| snmp | `name ADDR relay=SNMPHOST via=snmp community=COMMUNITY` |
+| netns | `name ADDR relay=NETNSNAME via=netns`（Linux・root） |
+| vrf | `name ADDR relay=VRFNAME via=vrf`（Linux・root） |
+| routeros | `name ADDR relay=ROS via=routeros_api username=U password=P method=https verify=false` |
+| tcp/hping3 | `name ADDR tcp=dstport:80`（Linux・root） |
 | nexthop 強制 | `name ADDR nexthop=GWIP [source=eth0]`（直接 ICMP・Linux・root・IPv4/IPv6） |
 
 任意の `source=...` 属性で、プローブの送信元を指定できます。
