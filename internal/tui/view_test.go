@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -564,4 +565,368 @@ func TestReloadPreservesScaleAndPrecision(t *testing.T) {
 	if strings.Contains(out, "MIN") {
 		t.Errorf("reload should reset columns to the file (MIN hidden)\n---\n%s", out)
 	}
+}
+
+// manySpecs builds n direct-ICMP targets named h000, h001, … so each name is a
+// unique, non-overlapping substring for View assertions.
+func manySpecs(n int) []config.TargetSpec {
+	specs := make([]config.TargetSpec, n)
+	for i := range specs {
+		specs[i] = config.TargetSpec{
+			Name:  fmt.Sprintf("h%03d", i),
+			Addr:  fmt.Sprintf("10.0.0.%d", i+1),
+			Relay: map[string]string{},
+		}
+	}
+
+	return specs
+}
+
+// lineWith returns the first line of out containing sub, or "".
+func lineWith(out, sub string) string {
+	for ln := range strings.SplitSeq(out, "\n") {
+		if strings.Contains(ln, sub) {
+			return ln
+		}
+	}
+
+	return ""
+}
+
+// A list that fits the terminal renders every row and shows no scroll indicator,
+// so small configs look exactly as before the viewport existed.
+func TestViewportSmallFitsNoScroll(t *testing.T) {
+	m, err := New(manySpecs(3), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	for _, want := range []string{"h000", "h001", "h002"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("small list should show every row, missing %q\n---\n%s", want, out)
+		}
+	}
+
+	if strings.Contains(out, "j/k scroll") {
+		t.Errorf("a list that fits must not show the scroll indicator\n---\n%s", out)
+	}
+}
+
+// A list taller than the terminal renders only the visible window plus a one-line
+// position indicator; rows below the fold are absent.
+func TestViewportWindowAndStatus(t *testing.T) {
+	m, err := New(manySpecs(50), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
+
+	if !strings.Contains(out, "h000") || !strings.Contains(out, "h005") {
+		t.Errorf("top of the window should be visible\n---\n%s", out)
+	}
+
+	if strings.Contains(out, "h045") || strings.Contains(out, "h049") {
+		t.Errorf("rows below the fold must not render\n---\n%s", out)
+	}
+
+	for _, want := range []string{"j/k scroll", "/50]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("scroll indicator missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// The fixed header stays put (it is never part of the scrolled window).
+	if !strings.Contains(out, "HOSTNAME") || !strings.Contains(out, "Dead Man") {
+		t.Errorf("fixed header must remain when scrolled\n---\n%s", out)
+	}
+}
+
+// g/G jump to the ends, j past the bottom clamps, and PgUp walks back up.
+func TestScrollKeysMoveAndClamp(t *testing.T) {
+	m, err := New(manySpecs(50), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
+
+	// G -> bottom: last row visible, first gone, indicator ends at the total.
+	mBot, out := drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	if !strings.Contains(out, "h049") || strings.Contains(out, "h000") {
+		t.Errorf("G should reveal the bottom\n---\n%s", out)
+	}
+
+	if !strings.Contains(out, "-50/50]") {
+		t.Errorf("indicator should reach the end after G\n---\n%s", out)
+	}
+
+	// j at the bottom is a no-op (clamped), not an over-scroll.
+	_, out = drive(t, mBot, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if !strings.Contains(out, "-50/50]") || !strings.Contains(out, "h049") {
+		t.Errorf("j past the bottom must clamp\n---\n%s", out)
+	}
+
+	// g -> top.
+	_, out = drive(t, mBot, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if !strings.Contains(out, "h000") || strings.Contains(out, "h049") {
+		t.Errorf("g should return to the top\n---\n%s", out)
+	}
+
+	// PgUp from the bottom moves up by a page (away from the last row).
+	_, out = drive(t, mBot, tea.KeyMsg{Type: tea.KeyPgUp})
+	if strings.Contains(out, "h049") {
+		t.Errorf("PgUp from the bottom should scroll up\n---\n%s", out)
+	}
+}
+
+// Growing the terminal so the list fits drops the scroll state back to a full,
+// unscrolled view; shrinking re-engages the viewport from the top.
+func TestViewportResizeReclamps(t *testing.T) {
+	m, err := New(manySpecs(50), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Scroll to the bottom while overflowing.
+	m, _ = drive(t, m,
+		tea.WindowSizeMsg{Width: 120, Height: 20},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}},
+	)
+	if m.scrollTop == 0 {
+		t.Fatal("precondition: expected a non-zero scrollTop after G, got 0")
+	}
+
+	// Grow tall enough to fit all 50 rows: no scroll, indicator gone, top reset.
+	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 100})
+	if m.scrollTop != 0 {
+		t.Errorf("a fitting resize should reset scrollTop, got %d", m.scrollTop)
+	}
+
+	if strings.Contains(out, "j/k scroll") || !strings.Contains(out, "h049") {
+		t.Errorf("a fitting resize should show every row without the indicator\n---\n%s", out)
+	}
+
+	// Shrink again: viewport re-engages from the top.
+	m, out = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
+	if m.scrollTop != 0 || !strings.Contains(out, "h000") {
+		t.Errorf(
+			"shrinking should re-engage the viewport at the top (scrollTop=%d)\n---\n%s",
+			m.scrollTop,
+			out,
+		)
+	}
+}
+
+// A reload that shrinks the target set while scrolled near the bottom must clamp
+// scrollTop back into range without panicking.
+func TestReloadShrinkClampsScroll(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deadman.conf")
+
+	var big strings.Builder
+	for i := range 50 {
+		fmt.Fprintf(&big, "h%03d 10.0.0.%d\n", i, i+1)
+	}
+
+	err := os.WriteFile(path, []byte(big.String()), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := New(manySpecs(50), Options{Scale: 10, ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Overflow and scroll to the bottom.
+	m, _ = drive(t, m,
+		tea.WindowSizeMsg{Width: 120, Height: 20},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}},
+	)
+
+	// Reload a 3-row config: the new set fits, so scrollTop clamps to 0.
+	err = os.WriteFile(path, []byte("r0 10.1.0.1\nr1 10.1.0.2\nr2 10.1.0.3\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m, reloadMsg{})
+
+	if m.scrollTop != 0 {
+		t.Errorf("reload to a smaller set should clamp scrollTop to 0, got %d", m.scrollTop)
+	}
+
+	for _, want := range []string{"r0", "r1", "r2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("reloaded rows should all render, missing %q\n---\n%s", want, out)
+		}
+	}
+
+	if strings.Contains(out, "j/k scroll") {
+		t.Errorf("the reloaded 3-row set fits and must not show the indicator\n---\n%s", out)
+	}
+}
+
+// When scrolled, targetLine must receive the absolute row index so the probe
+// arrow lands on the right row (arrowFor reads m.arrowIdx by absolute index).
+func TestArrowUsesAbsoluteIndexWhenScrolled(t *testing.T) {
+	m, err := New(manySpecs(50), Options{Scale: 10}) // sync mode: a single arrow.
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mark row 40 as the one being probed, then scroll so it is inside the window.
+	_, out := drive(t, m,
+		tea.WindowSizeMsg{Width: 120, Height: 20},
+		pingStartMsg{idx: 40, gen: 0},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}},
+	)
+
+	if n := strings.Count(out, arrow); n != 1 {
+		t.Fatalf("sync mode should show exactly one arrow, got %d\n---\n%s", n, out)
+	}
+
+	if ln := lineWith(out, arrow); !strings.Contains(ln, "h040") {
+		t.Errorf("the arrow must sit on the probed row h040, got %q\n---\n%s", ln, out)
+	}
+}
+
+// With a width but no height yet (height 0), the whole list renders without a
+// viewport and without panicking.
+func TestViewportHeightZeroShowsAll(t *testing.T) {
+	m, err := New(manySpecs(3), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 0})
+
+	for _, want := range []string{"h000", "h001", "h002"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("height 0 should still render every row, missing %q\n---\n%s", want, out)
+		}
+	}
+
+	if strings.Contains(out, "j/k scroll") {
+		t.Errorf("no viewport without a height\n---\n%s", out)
+	}
+}
+
+// indexOfLine returns the index of the first rendered line containing sub, or -1.
+func indexOfLine(out, sub string) int {
+	i := 0
+
+	for ln := range strings.SplitSeq(out, "\n") {
+		if strings.Contains(ln, sub) {
+			return i
+		}
+
+		i++
+	}
+
+	return -1
+}
+
+// fixedHeaderLines must equal the number of lines View actually renders before the
+// first data row; otherwise the row window would overlap or gap the header. This
+// ties the bare "5" constant to the real render (no warnings -> 5, +1 per warning).
+func TestFixedHeaderLinesMatchesRender(t *testing.T) {
+	// No warnings: title, host info, keys, blank, header = 5 lines before row 0.
+	clean, err := New(manySpecs(3), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clean, out := drive(t, clean, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if got, want := indexOfLine(out, "h000"), clean.fixedHeaderLines(); got != want {
+		t.Errorf("first data row at line %d, fixedHeaderLines() = %d\n---\n%s", got, want, out)
+	}
+
+	if got := clean.fixedHeaderLines(); got != 5 {
+		t.Errorf("no warnings: fixedHeaderLines() = %d, want 5", got)
+	}
+
+	// A startup warning adds exactly one fixed line above the rows.
+	warned, err := New([]config.TargetSpec{{
+		Name:    "Cloudflare",
+		Addr:    "via",
+		Relay:   map[string]string{"nexthop": "10.98.38.9"},
+		Dropped: []string{"MGMT", "1.1.1.1"},
+	}}, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	warned, out = drive(t, warned, tea.WindowSizeMsg{Width: 120, Height: 40})
+	// Match the VIA column (unique to the data row; the warning line also names the host).
+	if got, want := indexOfLine(out, "nexthop 10.98.38.9"), warned.fixedHeaderLines(); got != want {
+		t.Errorf(
+			"with a warning: first data row at %d, fixedHeaderLines() = %d\n---\n%s",
+			got,
+			want,
+			out,
+		)
+	}
+
+	if got := warned.fixedHeaderLines(); got != 6 {
+		t.Errorf("one warning: fixedHeaderLines() = %d, want 6", got)
+	}
+}
+
+// PgDown pages forward and the Home/End aliases jump to the ends, mirroring
+// PgUp/g/G. Guards the bubbletea key-string mapping for the documented keys.
+func TestScrollPageDownAndAliases(t *testing.T) {
+	m, err := New(manySpecs(50), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
+
+	// PgDown from the top advances the window past the first page.
+	_, out := drive(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
+	if strings.Contains(out, "h000") {
+		t.Errorf("PgDown should advance past the top\n---\n%s", out)
+	}
+
+	// End -> bottom.
+	mEnd, out := drive(t, m, tea.KeyMsg{Type: tea.KeyEnd})
+	if !strings.Contains(out, "h049") || !strings.Contains(out, "-50/50]") {
+		t.Errorf("End should jump to the bottom\n---\n%s", out)
+	}
+
+	// Home from the bottom returns to the top.
+	_, out = drive(t, mEnd, tea.KeyMsg{Type: tea.KeyHome})
+	if !strings.Contains(out, "h000") || strings.Contains(out, "h049") {
+		t.Errorf("Home should return to the top\n---\n%s", out)
+	}
+}
+
+// The whole point of the viewport: View must never emit more lines than the
+// terminal has, so the fixed header is never pushed off-screen. Bubble Tea's
+// renderer truncates each line to the terminal width (it does not wrap), so one
+// logical line is one screen row regardless of width — making this logical line
+// count a valid physical-overflow check at any width, narrow or wide.
+func TestViewFitsTerminalHeight(t *testing.T) {
+	m, err := New(manySpecs(50), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, width := range []int{80, 120, 200} {
+		for _, height := range []int{10, 12, 20, 25, 100} {
+			_, out := drive(t, m, tea.WindowSizeMsg{Width: width, Height: height})
+
+			if lines := strings.Count(out, "\n") + 1; lines > height {
+				t.Errorf("%dx%d: rendered %d lines (overflow)\n---\n%s", width, height, lines, out)
+			}
+		}
+	}
+
+	// Eyeball sample for `go test -v`: the fixed header plus a scrolled window.
+	_, sample := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
+	t.Logf("sample render (120x20, 50 targets):\n%s", sample)
 }
