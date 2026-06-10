@@ -483,7 +483,9 @@ func (m Model) scrollMetrics() viewport {
 	}
 
 	// Reserve the bottom usable line for the scroll indicator, unless that would
-	// leave no room for a data row (usable <= 1).
+	// leave no room for a data row (usable <= 1). At usable == 1 (a terminal only
+	// one row taller than the header) we deliberately spend that row on data rather
+	// than the indicator, so the list still scrolls but shows no position hint.
 	status := usable >= 2
 
 	count := usable
@@ -538,8 +540,9 @@ func (m Model) scroll(key string) Model {
 }
 
 // clampScroll re-pins scrollTop into the current valid range, used after a resize
-// or a reload that shrinks the target set. It preserves the position when still
-// valid rather than resetting to the top.
+// or a reload that shrinks the target set. It preserves the position while the list
+// still overflows; growing the terminal until everything fits naturally lands at the
+// top (scrollMetrics returns top 0 when no scrolling is needed).
 func (m Model) clampScroll() Model {
 	m.scrollTop = m.scrollMetrics().top
 

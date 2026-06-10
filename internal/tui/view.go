@@ -52,12 +52,12 @@ func (m Model) View() string {
 	}
 
 	// Trim the trailing newline so the logical line count equals the physical
-	// line count, keeping the row-window math (fixedPhysicalLines) exact.
+	// line count, keeping the row-window math (fixedHeaderLines) exact.
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// keysLine is the scale + key-legend line (line 2). It is a method so both View
-// and fixedPhysicalLines render the exact same string.
+// keysLine is the scale + key-legend line (line 2), factored into a method to sit
+// alongside the other fixed-line builders (centerTitle/titleLine/headerLine).
 func (m Model) keysLine() string {
 	return rear + fmt.Sprintf(
 		"RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s]",
