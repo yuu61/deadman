@@ -86,6 +86,17 @@ ssh のユーザ名と鍵は `user=USER`、`key=KEYPATH` で指定できます�
 任意の `source=...` 属性で、プローブの送信元を指定できます。
 指定できるのは IP アドレス（全モード）か、もしくは直接 ICMP と Linux/macOS 上の ssh/netns/vrf 中継に限り、`source=eth0` のようなネットワークインターフェース名です。
 
+任意の `resolve_family=ipv4|ipv6` 属性で、ホスト名の解決をそのアドレスファミリーに固定できます（`ipv4` は A レコード、`ipv6` は AAAA レコード）。dual-stack なホスト名を IPv4 と IPv6 で別々に監視したいときに使います。
+
+```text
+web-v4 example.com resolve_family=ipv4
+web-v6 example.com resolve_family=ipv6
+```
+
+（VIA 列はどちらも `direct` になるため、上のように行名で区別すると見分けやすくなります。）
+`resolve_family` が異なれば名前・アドレスが同じでも別エントリとして扱われ、リロード時の履歴も分かれて保持されます。
+この属性は**直接 ICMP に限り**有効で、`relay`/`via`/`tcp`/`nexthop` を併用した対象では無視されます（それらは中継先やゲートウェイ側でファミリーが決まるため）。値は `ipv4`/`ipv6` のみを認識し、それ以外（綴り違いなど）は指定なし（自動）として扱います。指定したファミリーに該当レコードが無い場合や、反対のファミリーの IP アドレスリテラルを指定した場合は、その対象は `X`（到達不能）として表示されます。
+
 任意の `nexthop=GWIP` 属性で、直接 ICMP プローブを指定したゲートウェイ（next-hop）経由で強制送出できます（特定経路の到達性を監視するのに有用）。
 AF_PACKET で L2 宛先をゲートウェイの MAC に指定して送るため、**Linux + root/CAP_NET_RAW** で動作します（IPv4 は ARP、IPv6 は NDP でゲートウェイの MAC を解決）。
 ゲートウェイは egress インタフェースの直結サブネット上（on-link）である必要があり、egress は `source=`（インタフェース名または IP）で明示できます。
