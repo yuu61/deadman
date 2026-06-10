@@ -44,6 +44,7 @@ type Config struct {
 	Columns   map[string]bool // column key (upper-case) -> shown.
 	Scale     int             // RTT-bar ms-per-step from a "scale" directive; 0 = unset.
 	Precision string          // stat-precision label from a "precision" directive; "" = unset.
+	Cols      int             // newspaper-column count from a "split" directive; 0 = unset.
 }
 
 // Directive keywords. A line whose first field is one of these is a global display
@@ -52,6 +53,7 @@ const (
 	columnDirective    = "columns"
 	scaleDirective     = "scale"
 	precisionDirective = "precision"
+	splitDirective     = "split"
 )
 
 // directives maps a keyword to its handler, applied to the line's remaining fields.
@@ -79,6 +81,16 @@ var directives = map[string]func(cfg *Config, args []string){
 	precisionDirective: func(cfg *Config, args []string) {
 		if len(args) > 0 {
 			cfg.Precision = args[0]
+		}
+	},
+	splitDirective: func(cfg *Config, args []string) {
+		if len(args) == 0 {
+			return
+		}
+
+		n, err := strconv.Atoi(args[0])
+		if err == nil && n > 0 {
+			cfg.Cols = n
 		}
 	},
 }

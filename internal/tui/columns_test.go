@@ -45,7 +45,9 @@ func TestStatColumnWidths(t *testing.T) {
 // buildVisible seeds every column shown, applies known overrides, and ignores
 // unknown keys.
 func TestBuildVisible(t *testing.T) {
-	v := buildVisible(map[string]bool{"MIN": false, "BOGUS": false, "VIA": false})
+	v := buildVisible(map[string]bool{
+		"MIN": false, "BOGUS": false, "VIA": false, "HOSTNAME": false,
+	})
 
 	if !v["LOSS"] || !v["MAX"] {
 		t.Errorf("unspecified columns should stay shown: %+v", v)
@@ -55,9 +57,18 @@ func TestBuildVisible(t *testing.T) {
 		t.Errorf("MIN override not applied: %+v", v)
 	}
 
-	// The structural VIA column is seeded too, so its override applies.
+	// The structural VIA/HOSTNAME columns are seeded too, so their overrides apply,
+	// while the unspecified ADDRESS column keeps its shown default.
 	if v["VIA"] {
 		t.Errorf("VIA override not applied: %+v", v)
+	}
+
+	if v["HOSTNAME"] {
+		t.Errorf("HOSTNAME override not applied: %+v", v)
+	}
+
+	if !v["ADDRESS"] {
+		t.Errorf("unspecified ADDRESS should stay shown: %+v", v)
 	}
 
 	if _, ok := v["BOGUS"]; ok {

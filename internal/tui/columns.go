@@ -116,12 +116,21 @@ const (
 	colSnt  = "SNT"
 	colFail = "FAIL"
 
-	// colVia is the structural VIA column (the probing method). Unlike the
-	// statColumns it is a variable-width string column rendered in view.go, but it
-	// shares the same visibility map so the "columns" directive and the 'v' key can
-	// hide it.
-	colVia = "VIA"
+	// colHost, colAddr and colVia are the structural string columns. Unlike the
+	// statColumns they are variable-width and rendered in view.go, but they share the
+	// same visibility map, so the "columns" directive and the h/a/v keys can hide
+	// each. RESULT (the result bar) is deadman's signature and has no key — it is
+	// always shown, so it is deliberately absent from the map.
+	colHost = "HOSTNAME"
+	colAddr = "ADDRESS"
+	colVia  = "VIA"
 )
+
+// structuralCols is the ordered registry of the variable-width string columns
+// (rendered in view.go, not in statColumns). They are seeded shown in buildVisible
+// and gated identically in headerLine/targetLine and rowFixedWidth, so the rendered
+// width and the result-bar budget can never disagree.
+var structuralCols = []string{colHost, colAddr, colVia}
 
 // statColumns is the ordered registry of statistics columns. The header row, each
 // target row, and the width math in recalcWidths all derive from this single
@@ -144,15 +153,17 @@ var statColumns = []statColumn{
 
 // buildVisible returns a per-column visibility map seeded to all-shown, then
 // applies the config overrides (keys not in the registry are ignored). The
-// structural VIA column is seeded alongside the statColumns so it is hideable via
-// the "columns" directive and the 'v' key.
+// structural string columns (HOSTNAME/ADDRESS/VIA) are seeded alongside the
+// statColumns so each is hideable via the "columns" directive and its key.
 func buildVisible(overrides map[string]bool) map[string]bool {
-	v := make(map[string]bool, len(statColumns)+1)
+	v := make(map[string]bool, len(statColumns)+len(structuralCols))
 	for _, c := range statColumns {
 		v[c.Key] = true
 	}
 
-	v[colVia] = true
+	for _, k := range structuralCols {
+		v[k] = true
+	}
 
 	for k, show := range overrides {
 		if _, ok := v[k]; ok {

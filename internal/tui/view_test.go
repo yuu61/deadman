@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/yuu61/deadman/internal/config"
 	"github.com/yuu61/deadman/internal/ping"
@@ -117,6 +118,118 @@ func TestColumnsConfigHidesViaAtStart(t *testing.T) {
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if strings.Contains(out, "VIA") || strings.Contains(out, "nexthop 10.98.38.9") {
 		t.Errorf("columns VIA=off should hide the VIA column at startup\n---\n%s", out)
+	}
+}
+
+// The 'h' and 'a' keys hide and restore the structural HOSTNAME and ADDRESS columns,
+// and the "columns" directive can hide them at startup — bringing them to VIA's level
+// (every column but RESULT is toggleable).
+func TestHostAddrColumnToggle(t *testing.T) {
+	specs := []config.TargetSpec{
+		{Name: "alpha", Addr: "203.0.113.7", Relay: map[string]string{}},
+	}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	for _, want := range []string{"HOSTNAME", "ADDRESS", "alpha", "203.0.113.7"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("default view missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// 'h' hides HOSTNAME (header label and the target name), ADDRESS stays.
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if strings.Contains(out, "HOSTNAME") || strings.Contains(out, "alpha") {
+		t.Errorf("after 'h' the HOSTNAME column should be hidden\n---\n%s", out)
+	}
+
+	if !strings.Contains(out, "203.0.113.7") {
+		t.Errorf("'h' must not hide the ADDRESS column\n---\n%s", out)
+	}
+
+	// 'a' now also hides ADDRESS; both identity columns are gone (only RESULT-side
+	// content remains), which the user explicitly allows.
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if strings.Contains(out, "ADDRESS") || strings.Contains(out, "203.0.113.7") {
+		t.Errorf("after 'a' the ADDRESS column should be hidden too\n---\n%s", out)
+	}
+
+	// 'h' then 'a' restore both.
+	_, out = drive(
+		t, m,
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}},
+	)
+	for _, want := range []string{"alpha", "203.0.113.7"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("after restoring, %q should be back\n---\n%s", want, out)
+		}
+	}
+}
+
+// columns ADDRESS=off / HOSTNAME=off hide the structural columns at startup.
+func TestColumnsConfigHidesHostAddrAtStart(t *testing.T) {
+	specs := []config.TargetSpec{
+		{Name: "beta", Addr: "198.51.100.9", Relay: map[string]string{}},
+	}
+
+	m, err := New(specs, Options{Scale: 10, Columns: map[string]bool{"ADDRESS": false}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if strings.Contains(out, "ADDRESS") || strings.Contains(out, "198.51.100.9") {
+		t.Errorf("columns ADDRESS=off should hide the ADDRESS column at startup\n---\n%s", out)
+	}
+
+	// HOSTNAME is unaffected and still labels the row.
+	if !strings.Contains(out, "beta") {
+		t.Errorf("ADDRESS=off must not hide HOSTNAME\n---\n%s", out)
+	}
+}
+
+// The structural-column gating in headerLine must use the exact same visibility
+// conditions as rowFixedWidth, or the result bar is mis-sized. For every combination
+// of HOSTNAME/ADDRESS/VIA visibility, the header's display width must equal the fixed
+// width plus the always-on RESULT label.
+func TestStructuralGatingMatchesRowFixedWidth(t *testing.T) {
+	specs := []config.TargetSpec{
+		{
+			Name:  "host-longname",
+			Addr:  "203.0.113.45",
+			Relay: map[string]string{"nexthop": "10.0.0.1"},
+		},
+	}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 40})
+
+	for _, host := range []bool{true, false} {
+		for _, addr := range []bool{true, false} {
+			for _, via := range []bool{true, false} {
+				m.visible[colHost] = host
+				m.visible[colAddr] = addr
+				m.visible[colVia] = via
+
+				// lipgloss.Width ignores the bold SGR escapes headerLine adds.
+				got := lipgloss.Width(m.headerLine())
+				if want := m.rowFixedWidth() + len("RESULT"); got != want {
+					t.Errorf(
+						"host=%v addr=%v via=%v: headerLine width %d != rowFixedWidth+RESULT %d",
+						host, addr, via, got, want,
+					)
+				}
+			}
+		}
 	}
 }
 

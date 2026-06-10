@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/yuu61/deadman/internal/monitor"
@@ -28,21 +30,31 @@ func (m Model) View() string {
 		b.WriteByte('\n')
 	}
 
-	b.WriteByte('\n')             // blank line before the column headers.
-	b.WriteString(m.headerLine()) // column headers.
-	b.WriteByte('\n')
-
-	// Render only the visible window. targetLine takes the absolute row index so
-	// the probe arrow (arrowFor reads m.arrowIdx / m.inflight by absolute index)
-	// stays correct when scrolled.
 	vp := m.scrollMetrics()
-	for i := vp.top; i < vp.top+vp.count && i < len(m.rows); i++ {
-		if m.rows[i].Sep {
-			b.WriteString(m.separatorLine())
-		} else {
-			b.WriteString(m.targetLine(i, m.rows[i].Target))
-		}
 
+	b.WriteByte('\n') // blank line before the column header(s).
+
+	// Render only the visible window. targetLine takes the absolute row index so the
+	// probe arrow (arrowFor reads m.arrowIdx / m.inflight by absolute index) stays
+	// correct when scrolled.
+	if vp.cols <= 1 {
+		b.WriteString(m.headerLine()) // column headers.
+		b.WriteByte('\n')
+
+		for i := vp.top; i < vp.top+vp.count && i < len(m.rows); i++ {
+			if m.rows[i].Sep {
+				b.WriteString(m.separatorLine())
+			} else {
+				b.WriteString(m.targetLine(i, m.rows[i].Target))
+			}
+
+			b.WriteByte('\n')
+		}
+	} else {
+		// Newspaper layout: header and rows laid out as side-by-side columns. The
+		// merged block's first line is the (repeated) column header, so it occupies the
+		// same screen row headerLine() would, keeping fixedHeaderLines() exact.
+		b.WriteString(m.renderColumns(vp))
 		b.WriteByte('\n')
 	}
 
@@ -59,11 +71,22 @@ func (m Model) View() string {
 // keysLine is the scale + key-legend line (line 2), factored into a method to sit
 // alongside the other fixed-line builders (centerTitle/titleLine/headerLine).
 func (m Model) keysLine() string {
-	return rear + fmt.Sprintf(
-		"RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s]",
-		m.scale,
+	s := rear + fmt.Sprintf("RTT Scale %dms.", m.scale)
+
+	// The effective-vs-requested column count sits near the front, before the long
+	// key legend, so the renderer's width truncation (it clips lines, not wraps)
+	// never hides it: a request is clamped precisely on a narrow terminal, where a
+	// tail-appended hint would be the first thing cut.
+	if m.cols > 1 {
+		s += fmt.Sprintf(" cols %d/%d", m.effectiveCols(), m.cols)
+	}
+
+	s += fmt.Sprintf(
+		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s] ([/])cols",
 		m.precMode().Label,
 	)
+
+	return s
 }
 
 // scrollStatus is the one-line position indicator shown below the row window when
@@ -103,7 +126,15 @@ func (m Model) titleLine() string {
 }
 
 func (m Model) headerLine() string {
-	h := rear + padRight("HOSTNAME", m.hostW) + " " + padRight("ADDRESS", m.addrW) + " "
+	h := rear
+	if m.columnVisible(colHost) {
+		h += padRight("HOSTNAME", m.hostW) + " "
+	}
+
+	if m.columnVisible(colAddr) {
+		h += padRight("ADDRESS", m.addrW) + " "
+	}
+
 	if m.columnVisible(colVia) {
 		h += padRight("VIA", m.viaW) + " "
 	}
@@ -114,9 +145,7 @@ func (m Model) headerLine() string {
 }
 
 func (m Model) separatorLine() string {
-	n := max(m.width-2*len(arrow), 0)
-
-	return rear + strings.Repeat("-", n)
+	return separatorCell(m.width)
 }
 
 // arrowFor returns the leading arrow ("> ") for the target at idx, or the blank
@@ -144,7 +173,15 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 
 	stats := m.statsLine(t)
 
-	text := ar + padRight(t.Name, m.hostW) + " " + padRight(t.Addr, m.addrW) + " "
+	text := ar
+	if m.columnVisible(colHost) {
+		text += padRight(t.Name, m.hostW) + " "
+	}
+
+	if m.columnVisible(colAddr) {
+		text += padRight(t.Addr, m.addrW) + " "
+	}
+
 	if m.columnVisible(colVia) {
 		text += padRight(t.Via, m.viaW) + " "
 	}
@@ -166,6 +203,105 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 	}
 
 	return text + g.String()
+}
+
+// renderColumns lays the visible window out as vp.cols side-by-side newspaper
+// columns (column-major: column 0 holds the first vp.perCol rows, column 1 the next,
+// and so on). Each column carries its own header so it is self-labeled, and every
+// cell is padded to the per-column content width so the columns line up.
+func (m Model) renderColumns(vp viewport) string {
+	w := m.colContentWidth()
+	header := padCell(m.headerLine(), w)
+
+	blocks := make([][]string, vp.cols)
+
+	for j := range blocks {
+		lines := make([]string, 0, vp.perCol+1)
+		lines = append(lines, header)
+
+		start := vp.top + j*vp.perCol
+		for k := range vp.perCol {
+			lines = append(lines, m.columnCell(start+k, w))
+		}
+
+		blocks[j] = lines
+	}
+
+	return joinColumns(blocks)
+}
+
+// columnCell renders the row at absolute index i to exactly w display columns for
+// the newspaper layout, or a blank cell when i is past the last row (the final
+// column may be short). targetLine is given the absolute index so arrowFor keeps the
+// probe arrow on the right row.
+func (m Model) columnCell(i, w int) string {
+	switch {
+	case i >= len(m.rows):
+		return strings.Repeat(" ", w)
+	case m.rows[i].Sep:
+		return padCell(separatorCell(w), w)
+	default:
+		return padCell(m.targetLine(i, m.rows[i].Target), w)
+	}
+}
+
+// joinColumns merges equal-height column blocks side by side, separated by
+// colGutter. Every cell is already padded to its column width, so a plain row-by-row
+// concatenation aligns.
+func joinColumns(blocks [][]string) string {
+	if len(blocks) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	rows := len(blocks[0])
+	for i := range rows {
+		for j, col := range blocks {
+			if j > 0 {
+				b.WriteString(colGutter)
+			}
+
+			b.WriteString(col[i])
+		}
+
+		if i < rows-1 {
+			b.WriteByte('\n')
+		}
+	}
+
+	return b.String()
+}
+
+// padCell fits s to exactly w display columns, measuring width ANSI-aware
+// (lipgloss.Width ignores the SGR escapes styleBold/styleUp/styleDown add, and
+// ansi.Truncate never cuts mid-escape) so the colored glyphs and bold header stay
+// intact — unlike padRight, whose runewidth basis would count the escape bytes.
+// Cells are normally <= w (effectiveCols budgets the result bar), but a long-uptime
+// SNT/FAIL count can widen the stats past their fixed header budget; the over-width
+// branch then trims the cell from the right (cutting the result bar's oldest glyphs,
+// the least-important content) so the following column never shifts.
+func padCell(s string, w int) string {
+	switch sw := lipgloss.Width(s); {
+	case sw > w:
+		// ansi.Truncate stops below w when a wide glyph would straddle the cut, so
+		// re-pad to land exactly on w (otherwise the following column shifts left).
+		t := ansi.Truncate(s, w, "")
+
+		return t + strings.Repeat(" ", max(w-lipgloss.Width(t), 0))
+	case sw < w:
+		return s + strings.Repeat(" ", w-sw)
+	default:
+		return s
+	}
+}
+
+// separatorCell is the column-local separator: dashes filling one column's content
+// width, mirroring separatorLine's leading rear so it lines up with the data rows.
+func separatorCell(w int) string {
+	n := max(w-2*len(arrow), 0)
+
+	return rear + strings.Repeat("-", n)
 }
 
 func spinner(tick int) string {
