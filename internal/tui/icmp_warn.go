@@ -6,39 +6,45 @@ import (
 )
 
 // icmpPrivilegeWarnings warns when the config has direct-ICMP or forced next-hop
-// targets but this host can open neither native ICMP path — no CAP_NET_RAW for the
-// raw socket and a net.ipv4.ping_group_range that excludes the caller for the
-// unprivileged datagram socket. In that state every such probe fails as X with no
-// packet sent (and tcpdump shows nothing), so without this hint the cause is
-// invisible. Relay-only configs (ssh/snmp/netns/vrf/routeros/tcp) need no local ICMP
-// privilege and stay silent.
+// targets that cannot probe on this host for lack of socket privilege, and points at
+// the fix. In that state the affected probes fail as X with no packet sent (and
+// tcpdump shows nothing), so without this hint the cause is invisible. Relay-only
+// configs (ssh/snmp/netns/vrf/routeros/tcp) need no local ICMP privilege and stay
+// silent.
 //
-// The hint is split into two short slice entries — a problem line and a fix line
-// that front-loads the setcap remedy — because the renderer clips each warning to
-// the terminal width (it does not wrap) and fixedHeaderLines counts one line per
-// entry; a single ~250-column line would render correctly in the layout math but
-// clip the actionable remedy off-screen on any normal terminal.
+// The two target classes have different requirements, so they are gated
+// independently:
+//   - direct ICMP works over the raw socket OR the unprivileged datagram socket, so
+//     it is broken only when DirectICMPAvailable reports neither is open;
+//   - a forced next-hop sends via AF_PACKET and needs CAP_NET_RAW specifically, so it
+//     is broken whenever the raw path is unavailable — even if the datagram path is
+//     up. Gating it on DirectICMPAvailable would miss exactly that case (datagram up,
+//     no CAP_NET_RAW): direct targets work while next-hop targets silently stay X.
 //
-// The gate (DirectICMPAvailable = raw OR datagram) fully covers next-hop only when
-// both paths are dead; a host with the datagram path up but no CAP_NET_RAW still
-// fails next-hop (it needs raw/AF_PACKET) yet stays silent here. That false negative
-// is an accepted limitation, not handled elsewhere: nexthopWarnings checks
-// mode/family/OS/rp_filter, never CAP_NET_RAW, so nothing catches the
-// datagram-up/raw-down/next-hop case. This warning targets the reported case where
-// neither path works.
+// The remedy follows from which class is broken. A next-hop needs CAP_NET_RAW, and
+// widening net.ipv4.ping_group_range only opens the datagram path — useless to a
+// next-hop, and it would flip the direct gate to available and hide this warning — so
+// the ping_group_range fix is offered only when the breakage is direct-only.
 //
-// The remedy is next-hop-aware. A next-hop probe sends via AF_PACKET and needs
-// CAP_NET_RAW; widening net.ipv4.ping_group_range only opens the unprivileged
-// datagram path, which a next-hop never uses — yet doing so flips directICMPProbe()
-// to true and silences this very warning while every next-hop probe stays X. So the
-// ping_group_range fix is offered only for a direct-ICMP-only config; when any
-// next-hop target is present we steer to setcap/root, which fixes both.
+// The hint is split into two short slice entries — a problem line and a fix line that
+// front-loads the setcap remedy — because the renderer clips each warning to the
+// terminal width (it does not wrap) and fixedHeaderLines counts one line per entry; a
+// single ~250-column line would render in the layout math but clip the actionable
+// remedy off-screen on any normal terminal.
 func icmpPrivilegeWarnings(specs []config.TargetSpec) []string {
-	if !needsLocalICMP(specs) || directICMPProbe() {
+	need := localICMPNeeds(specs)
+
+	nexthopBroken := need.nexthop && !rawICMPProbe()
+	directBroken := need.direct && !directICMPProbe()
+
+	if !nexthopBroken && !directBroken {
 		return nil
 	}
 
-	if hasNexthop(specs) {
+	// A broken next-hop (or a mix) is fixed only by CAP_NET_RAW, so never advertise
+	// the ping_group_range datagram fix here — it would not help and would silence
+	// the warning. setcap/root fixes both classes at once.
+	if nexthopBroken {
 		return []string{
 			"native ICMP unavailable: no CAP_NET_RAW, so probes fail (X) with no packet sent",
 			"fix: `sudo setcap cap_net_raw+ep <deadman>`, or run deadman as root " +
@@ -54,44 +60,45 @@ func icmpPrivilegeWarnings(specs []config.TargetSpec) []string {
 	}
 }
 
-// hasNexthop reports whether any target is force-routed through a next-hop gateway.
-// Such targets send via AF_PACKET and need CAP_NET_RAW; the datagram path that
-// net.ipv4.ping_group_range governs does not help them, so the warning must not offer
-// that remedy when one is present (see icmpPrivilegeWarnings).
-func hasNexthop(specs []config.TargetSpec) bool {
+// icmpNeeds records which local-ICMP target classes a config contains; each has a
+// distinct socket-privilege requirement (see icmpPrivilegeWarnings).
+type icmpNeeds struct {
+	direct  bool // a default direct-ICMP target (raw OR datagram).
+	nexthop bool // a forced next-hop target (AF_PACKET, needs CAP_NET_RAW).
+}
+
+// localICMPNeeds classifies the targets a config relies on, tracking the direct and
+// next-hop classes separately because their privilege needs differ. selectMethod (via
+// ping.UsesDirectICMP / ping.UsesNexthop) is the single source of truth per target.
+func localICMPNeeds(specs []config.TargetSpec) icmpNeeds {
+	var n icmpNeeds
+
 	for _, s := range specs {
 		if s.IsSeparator {
 			continue
 		}
 
-		if ping.UsesNexthop(specToPingSpec(s)) {
-			return true
+		ps := specToPingSpec(s)
+		switch {
+		case ping.UsesNexthop(ps):
+			n.nexthop = true
+		case ping.UsesDirectICMP(ps):
+			n.direct = true
+		default:
+			// Relay modes (ssh/snmp/netns/vrf/routeros/tcp): no local ICMP privilege.
 		}
 	}
 
-	return false
+	return n
 }
 
-// directICMPProbe reports whether a native direct-ICMP socket can be opened on this
-// host. It is a package var rather than a direct call so tests can pin the result and
-// keep startup warnings deterministic regardless of the runner's CAP_NET_RAW or
-// ping_group_range; production leaves it as ping.DirectICMPAvailable.
-var directICMPProbe = ping.DirectICMPAvailable
-
-// needsLocalICMP reports whether any target probes through a native socket this
-// process opens (direct ICMP or a forced next-hop), which is what depends on local
-// CAP_NET_RAW or ping_group_range membership. selectMethod (via ping.UsesLocalICMP)
-// is the single source of truth for the per-target verdict.
-func needsLocalICMP(specs []config.TargetSpec) bool {
-	for _, s := range specs {
-		if s.IsSeparator {
-			continue
-		}
-
-		if ping.UsesLocalICMP(specToPingSpec(s)) {
-			return true
-		}
-	}
-
-	return false
-}
+// directICMPProbe reports whether a native direct-ICMP socket (raw or unprivileged
+// datagram) can be opened on this host; rawICMPProbe reports whether the raw/
+// CAP_NET_RAW path specifically is open, which is what a forced next-hop needs. Both
+// are package vars rather than direct calls so tests can pin them and keep startup
+// warnings deterministic regardless of the runner's privilege; production leaves them
+// as the ping probes.
+var (
+	directICMPProbe = ping.DirectICMPAvailable
+	rawICMPProbe    = ping.RawICMPAvailable
+)

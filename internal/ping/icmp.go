@@ -71,9 +71,15 @@ var directICMPAvailable = sync.OnceValue(func() bool {
 })
 
 // DirectICMPAvailable reports whether native direct ICMP can open a socket here.
-// The TUI uses it to warn when a config has direct/next-hop targets but neither the
-// raw nor the unprivileged datagram path is usable.
+// The TUI uses it to warn when a config has direct targets but neither the raw nor
+// the unprivileged datagram path is usable.
 func DirectICMPAvailable() bool { return directICMPAvailable() }
+
+// RawICMPAvailable reports whether the privileged raw-socket path can be opened here
+// (root or CAP_NET_RAW). A forced next-hop needs this specifically — it sends via
+// AF_PACKET, for which the unprivileged datagram path cannot substitute — so the TUI
+// checks it independently of DirectICMPAvailable.
+func RawICMPAvailable() bool { return useICMPPrivileged() }
 
 // icmpPinger sends a native ICMP echo using pro-bing. Native ICMP is portable
 // (Windows/Linux/macOS) and avoids shelling out to `ping -c 1` and parsing

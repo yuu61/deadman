@@ -121,8 +121,8 @@ func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, error) {
 
 // specToPingSpec maps a parsed config target to the ping.Spec the probe layer
 // consumes. buildRows uses it to construct targets; the startup-warning code uses it
-// to ask ping.UsesLocalICMP which probing method a target resolves to, so both share
-// one mapping and cannot drift.
+// to ask ping.UsesDirectICMP / ping.UsesNexthop which method a target resolves to, so
+// both share one mapping and cannot drift.
 func specToPingSpec(s config.TargetSpec) ping.Spec {
 	return ping.Spec{
 		Addr:   s.Addr,

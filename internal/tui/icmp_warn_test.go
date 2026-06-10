@@ -23,23 +23,39 @@ func remedyColumn(lines []string, sub string) int {
 	return -1
 }
 
-// TestMain pins the ICMP-availability probe to "available" so the rest of the tui
-// tests stay deterministic regardless of whether the test host has CAP_NET_RAW or a
-// configured ping_group_range. The missing-privilege path is covered explicitly by
-// TestICMPPrivilegeWarningsEndToEnd, which flips the probe itself.
+// pinProbes fixes both ICMP-availability probes for one test and restores them
+// afterward, so a test can stage a precise privilege scenario (raw and/or datagram
+// open) without depending on the runner's actual CAP_NET_RAW or ping_group_range.
+func pinProbes(t *testing.T, raw, direct bool) {
+	t.Helper()
+
+	origRaw, origDirect := rawICMPProbe, directICMPProbe
+
+	t.Cleanup(func() { rawICMPProbe, directICMPProbe = origRaw, origDirect })
+
+	rawICMPProbe = func() bool { return raw }
+	directICMPProbe = func() bool { return direct }
+}
+
+// TestMain pins both ICMP-availability probes to "available" so the rest of the tui
+// tests stay deterministic regardless of the runner's CAP_NET_RAW or ping_group_range.
+// The missing-privilege paths are covered explicitly by the TestICMPPrivilegeWarning*
+// tests, which pin the probes themselves.
 func TestMain(m *testing.M) {
 	directICMPProbe = func() bool { return true }
+	rawICMPProbe = func() bool { return true }
 
 	m.Run()
 }
 
-func TestNeedsLocalICMP(t *testing.T) {
+func TestLocalICMPNeeds(t *testing.T) {
 	tests := []struct {
-		name string
-		spec config.TargetSpec
-		want bool
+		name        string
+		spec        config.TargetSpec
+		wantDirect  bool
+		wantNexthop bool
 	}{
-		{"direct", config.TargetSpec{Name: "a", Addr: "8.8.8.8"}, true},
+		{"direct", config.TargetSpec{Name: "a", Addr: "8.8.8.8"}, true, false},
 		{
 			"nexthop",
 			config.TargetSpec{
@@ -47,6 +63,7 @@ func TestNeedsLocalICMP(t *testing.T) {
 				Addr:  "8.8.8.8",
 				Relay: map[string]string{"nexthop": "192.0.2.1"},
 			},
+			false,
 			true,
 		},
 		{
@@ -57,56 +74,54 @@ func TestNeedsLocalICMP(t *testing.T) {
 				Relay: map[string]string{"relay": "host"},
 			},
 			false,
+			false,
 		},
 		{
 			"snmp",
 			config.TargetSpec{Name: "a", Addr: "8.8.8.8", Relay: map[string]string{"via": "snmp"}},
-			false,
+			false, false,
 		},
-		{
-			"netns",
-			config.TargetSpec{Name: "a", Addr: "8.8.8.8", Relay: map[string]string{"via": "netns"}},
-			false,
-		},
-		{"tcp", config.TargetSpec{Name: "a", Addr: "8.8.8.8", TCP: "dstport:80"}, false},
-		{"separator", config.TargetSpec{IsSeparator: true}, false},
+		{"tcp", config.TargetSpec{Name: "a", Addr: "8.8.8.8", TCP: "dstport:80"}, false, false},
+		{"separator", config.TargetSpec{IsSeparator: true}, false, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := needsLocalICMP([]config.TargetSpec{tt.spec}); got != tt.want {
-				t.Errorf("needsLocalICMP(%s) = %v, want %v", tt.name, got, tt.want)
+			got := localICMPNeeds([]config.TargetSpec{tt.spec})
+			if got.direct != tt.wantDirect || got.nexthop != tt.wantNexthop {
+				t.Errorf(
+					"localICMPNeeds(%s) = (direct=%v, nexthop=%v), want (%v, %v)",
+					tt.name, got.direct, got.nexthop, tt.wantDirect, tt.wantNexthop,
+				)
 			}
 		})
 	}
 }
 
-func TestNeedsLocalICMPRelayOnlyConfig(t *testing.T) {
-	// A config mixing a separator with relay-only targets must not need local ICMP.
+func TestLocalICMPNeedsRelayOnly(t *testing.T) {
 	specs := []config.TargetSpec{
 		{IsSeparator: true},
 		{Name: "s", Addr: "8.8.8.8", Relay: map[string]string{"relay": "host"}},
 		{Name: "t", Addr: "8.8.8.8", TCP: "dstport:80"},
 	}
-	if needsLocalICMP(specs) {
-		t.Error("needsLocalICMP = true for a relay-only config; want false (no local ICMP needed)")
+	if got := localICMPNeeds(specs); got.direct || got.nexthop {
+		t.Errorf(
+			"relay-only config: localICMPNeeds = (direct=%v, nexthop=%v), want (false, false)",
+			got.direct, got.nexthop,
+		)
 	}
 }
 
-// TestICMPPrivilegeWarnings drives the warning end to end by pinning the
-// availability probe, covering the spec-gating and the probe together: warn only
-// when a direct/next-hop target is present AND no native path is available.
+// TestICMPPrivilegeWarnings covers the direct-ICMP path: warn (with the sysctl
+// remedy) when a direct target cannot open either native socket, and stay silent for
+// relay-only configs or when a path is available.
 func TestICMPPrivilegeWarnings(t *testing.T) {
-	orig := directICMPProbe
-
-	t.Cleanup(func() { directICMPProbe = orig })
+	pinProbes(t, true, false) // raw value irrelevant here; direct path unavailable.
 
 	direct := []config.TargetSpec{{Name: "a", Addr: "8.8.8.8"}}
 	relayOnly := []config.TargetSpec{
 		{Name: "s", Addr: "8.8.8.8", Relay: map[string]string{"relay": "h"}},
 	}
-
-	directICMPProbe = func() bool { return false }
 
 	got := icmpPrivilegeWarnings(direct)
 	if len(got) == 0 {
@@ -137,20 +152,16 @@ func TestICMPPrivilegeWarnings(t *testing.T) {
 	directICMPProbe = func() bool { return true }
 
 	if w := icmpPrivilegeWarnings(direct); len(w) != 0 {
-		t.Errorf("privileged host should stay silent; got %v", w)
+		t.Errorf("available direct path should stay silent; got %v", w)
 	}
 }
 
 // TestICMPPrivilegeWarningNexthopRemedy verifies the next-hop remedy steers to
 // CAP_NET_RAW only. A next-hop sends via AF_PACKET, so widening ping_group_range
-// would not fix it yet would flip the probe to available and silence this warning —
-// so the sysctl command must not be offered when a next-hop target is present.
+// would not fix it yet would flip the direct gate to available and silence this
+// warning — so the sysctl command must not be offered when a next-hop is present.
 func TestICMPPrivilegeWarningNexthopRemedy(t *testing.T) {
-	orig := directICMPProbe
-
-	t.Cleanup(func() { directICMPProbe = orig })
-
-	directICMPProbe = func() bool { return false }
+	pinProbes(t, false, false) // both native paths dead.
 
 	nexthop := []config.TargetSpec{
 		{Name: "gw", Addr: "8.8.8.8", Relay: map[string]string{"nexthop": "192.0.2.1"}},
@@ -185,16 +196,43 @@ func TestICMPPrivilegeWarningNexthopRemedy(t *testing.T) {
 	}
 }
 
+// TestICMPPrivilegeWarningNexthopRawOnly is the regression for the raw-vs-datagram
+// gap: with the datagram path up but no CAP_NET_RAW, a direct target probes fine
+// while a next-hop (AF_PACKET) cannot. The next-hop must still be warned about, and a
+// direct-only config in the same environment must stay silent.
+func TestICMPPrivilegeWarningNexthopRawOnly(t *testing.T) {
+	pinProbes(t, false, true) // raw down, datagram up.
+
+	nexthop := []config.TargetSpec{
+		{Name: "gw", Addr: "8.8.8.8", Relay: map[string]string{"nexthop": "192.0.2.1"}},
+	}
+
+	got := icmpPrivilegeWarnings(nexthop)
+	if len(got) == 0 {
+		t.Fatal("next-hop with raw unavailable (datagram up) must still warn; got none")
+	}
+
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, "setcap cap_net_raw+ep") {
+		t.Errorf("remedy must offer setcap; got %q", joined)
+	}
+
+	if strings.Contains(joined, "sysctl") {
+		t.Errorf("next-hop remedy must not offer the ping_group_range sysctl; got %q", joined)
+	}
+
+	direct := []config.TargetSpec{{Name: "d", Addr: "8.8.8.8"}}
+	if w := icmpPrivilegeWarnings(direct); len(w) != 0 {
+		t.Errorf("direct-only config works over datagram and must stay silent; got %v", w)
+	}
+}
+
 // TestICMPPrivilegeWarningRenders confirms the warning reaches the screen: an
 // unprivileged host with a direct target surfaces the (always-visible, front-of-line)
 // problem statement in the header, not just in the warning slice. The remedy's
 // on-screen visibility is guarded separately by TestICMPPrivilegeWarnings.
 func TestICMPPrivilegeWarningRenders(t *testing.T) {
-	orig := directICMPProbe
-
-	t.Cleanup(func() { directICMPProbe = orig })
-
-	directICMPProbe = func() bool { return false }
+	pinProbes(t, true, false)
 
 	m, err := New([]config.TargetSpec{{Name: "a", Addr: "8.8.8.8"}}, Options{Scale: 10})
 	if err != nil {
