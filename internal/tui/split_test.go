@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/yuu61/deadman/internal/config"
 	"github.com/yuu61/deadman/internal/ping"
@@ -269,6 +271,14 @@ func TestColumnClampHintInKeysLine(t *testing.T) {
 	if out := clamped.View(); !strings.Contains(out, "1/3") {
 		t.Errorf("clamped request should show 1/3 in the keys line\n---\n%s", out)
 	}
+
+	// The hint must survive the renderer's width truncation (Bubble Tea clips lines,
+	// it does not wrap), so it sits ahead of the long key legend. A clamp happens on
+	// a narrow terminal, exactly where a tail-appended hint would be cut.
+	keys := lineWith(clamped.View(), "RTT Scale")
+	if got := runewidth.Truncate(keys, 80, ""); !strings.Contains(got, "1/3") {
+		t.Errorf("clamp hint must survive truncation to 80 columns, got %q", got)
+	}
 }
 
 // The '[' and ']' keys increase/decrease the requested column count, clamped at 1.
@@ -329,5 +339,58 @@ func TestTwoColumnSeparatorRenders(t *testing.T) {
 
 	if !strings.Contains(out, "----------") {
 		t.Errorf("a separator inside a column should render dashes\n---\n%s", out)
+	}
+}
+
+// padCell fits a styled string to exactly w display columns: it pads when short and
+// truncates (ANSI-aware) when long, so a cell can never push the next column over.
+func TestPadCellFitsWidth(t *testing.T) {
+	short := styleUp.Render("▁▂▃") // 3 glyphs.
+	if got := lipgloss.Width(padCell(short, 8)); got != 8 {
+		t.Errorf("padCell(short, 8) width = %d, want 8", got)
+	}
+
+	// A styled string wider than the cell must be trimmed to exactly w cells.
+	long := styleUp.Render("▁▂▃▄▅▆▇█") + styleDown.Render("XXXXXX") // 14 glyphs wide.
+	if got := lipgloss.Width(padCell(long, 6)); got != 6 {
+		t.Errorf("padCell(long, 6) width = %d, want 6 (must truncate)", got)
+	}
+}
+
+// A long-uptime SNT/FAIL count widens the stats cell past its fixed header budget;
+// combined with a full result bar that overflows the per-column width. padCell must
+// truncate so no rendered line exceeds the terminal width (which would make Bubble
+// Tea clip the rightmost column).
+func TestTwoColumnOverWideCellTruncated(t *testing.T) {
+	const width = 160
+
+	opts := Options{Scale: 10, Cols: 2, Columns: map[string]bool{"MIN": false, "MAX": false}}
+
+	m, err := New(manySpecs(12), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, _ = drive(t, m, tea.WindowSizeMsg{Width: width, Height: 40})
+
+	// Fill each target's history (so the result bar is full) and force a 6-digit
+	// SNT/FAIL, which makes the stats cell wider than its 5-column header budget.
+	for _, r := range m.rows {
+		if r.Target == nil {
+			continue
+		}
+
+		for range 300 {
+			r.Target.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 5})
+		}
+
+		r.Target.Snt = 123456
+		r.Target.Loss = 654321
+	}
+
+	for ln := range strings.SplitSeq(m.View(), "\n") {
+		if w := lipgloss.Width(ln); w > width {
+			t.Errorf("rendered line exceeds terminal width: %d > %d\n%q", w, width, ln)
+		}
 	}
 }

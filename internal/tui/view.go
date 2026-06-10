@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/yuu61/deadman/internal/monitor"
@@ -70,17 +71,20 @@ func (m Model) View() string {
 // keysLine is the scale + key-legend line (line 2), factored into a method to sit
 // alongside the other fixed-line builders (centerTitle/titleLine/headerLine).
 func (m Model) keysLine() string {
-	s := rear + fmt.Sprintf(
-		"RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s] ([/])cols",
-		m.scale,
+	s := rear + fmt.Sprintf("RTT Scale %dms.", m.scale)
+
+	// The effective-vs-requested column count sits near the front, before the long
+	// key legend, so the renderer's width truncation (it clips lines, not wraps)
+	// never hides it: a request is clamped precisely on a narrow terminal, where a
+	// tail-appended hint would be the first thing cut.
+	if m.cols > 1 {
+		s += fmt.Sprintf(" cols %d/%d", m.effectiveCols(), m.cols)
+	}
+
+	s += fmt.Sprintf(
+		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s] ([/])cols",
 		m.precMode().Label,
 	)
-
-	// In the multi-column layout, surface effective-vs-requested so a width-clamped
-	// request (e.g. 3 asked but only 2 fit) is not silently swallowed.
-	if m.cols > 1 {
-		s += fmt.Sprintf(" %d/%d", m.effectiveCols(), m.cols)
-	}
 
 	return s
 }
@@ -255,19 +259,23 @@ func joinColumns(blocks [][]string) string {
 	return b.String()
 }
 
-// padCell pads s with spaces to exactly w display columns. Width is measured
-// ANSI-aware (lipgloss.Width ignores the SGR escapes styleBold/styleUp/styleDown
-// add), so the colored glyphs and bold header are never split mid-escape — unlike
-// padRight, whose runewidth basis would count the escape bytes. Cells are built no
-// wider than w (the effectiveCols math guarantees it), so the over-width branch is a
-// defensive no-op rather than a truncation.
+// padCell fits s to exactly w display columns, measuring width ANSI-aware
+// (lipgloss.Width ignores the SGR escapes styleBold/styleUp/styleDown add, and
+// ansi.Truncate never cuts mid-escape) so the colored glyphs and bold header stay
+// intact — unlike padRight, whose runewidth basis would count the escape bytes.
+// Cells are normally <= w (effectiveCols budgets the result bar), but a long-uptime
+// SNT/FAIL count can widen the stats past their fixed header budget; the over-width
+// branch then trims the cell from the right (cutting the result bar's oldest glyphs,
+// the least-important content) so the following column never shifts.
 func padCell(s string, w int) string {
-	sw := lipgloss.Width(s)
-	if sw >= w {
+	switch sw := lipgloss.Width(s); {
+	case sw > w:
+		return ansi.Truncate(s, w, "")
+	case sw < w:
+		return s + strings.Repeat(" ", w-sw)
+	default:
 		return s
 	}
-
-	return s + strings.Repeat(" ", w-sw)
 }
 
 // separatorCell is the column-local separator: dashes filling one column's content
