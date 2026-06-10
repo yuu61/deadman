@@ -132,6 +132,15 @@ func UsesLocalICMP(s Spec) bool {
 	return false
 }
 
+// UsesNexthop reports whether a Spec resolves to the forced next-hop method, which
+// sends via AF_PACKET and so needs CAP_NET_RAW specifically — the unprivileged
+// datagram path (governed by net.ipv4.ping_group_range) does not apply to it. The
+// TUI uses this to avoid steering a next-hop operator toward a ping_group_range fix
+// that would not work. It shares selectMethod with New/Describe.
+func UsesNexthop(s Spec) bool {
+	return selectMethod(s) == MethodNexthop
+}
+
 // Describe returns a short human label for how a target is probed: the method
 // name plus its key differentiator (nexthop gateway, relay host, tcp port). It
 // shares selectMethod with New, so the label always matches the mode actually

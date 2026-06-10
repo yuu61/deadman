@@ -141,6 +141,50 @@ func TestICMPPrivilegeWarnings(t *testing.T) {
 	}
 }
 
+// TestICMPPrivilegeWarningNexthopRemedy verifies the next-hop remedy steers to
+// CAP_NET_RAW only. A next-hop sends via AF_PACKET, so widening ping_group_range
+// would not fix it yet would flip the probe to available and silence this warning —
+// so the sysctl command must not be offered when a next-hop target is present.
+func TestICMPPrivilegeWarningNexthopRemedy(t *testing.T) {
+	orig := directICMPProbe
+
+	t.Cleanup(func() { directICMPProbe = orig })
+
+	directICMPProbe = func() bool { return false }
+
+	nexthop := []config.TargetSpec{
+		{Name: "gw", Addr: "8.8.8.8", Relay: map[string]string{"nexthop": "192.0.2.1"}},
+	}
+
+	got := icmpPrivilegeWarnings(nexthop)
+	if len(got) == 0 {
+		t.Fatal("unprivileged host with a next-hop target should warn; got none")
+	}
+
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, "setcap cap_net_raw+ep") {
+		t.Errorf("next-hop remedy must offer setcap; got %q", joined)
+	}
+
+	if strings.Contains(joined, "sysctl") {
+		t.Errorf(
+			"next-hop remedy must not offer the ping_group_range sysctl "+
+				"(it would silence the warning without fixing next-hop); got %q",
+			joined,
+		)
+	}
+
+	// A mixed direct + next-hop config must also suppress sysctl: setcap fixes both,
+	// and offering sysctl would clear the warning while next-hop probes stay X.
+	mixed := []config.TargetSpec{
+		{Name: "d", Addr: "8.8.8.8"},
+		{Name: "gw", Addr: "1.1.1.1", Relay: map[string]string{"nexthop": "192.0.2.1"}},
+	}
+	if strings.Contains(strings.Join(icmpPrivilegeWarnings(mixed), "\n"), "sysctl") {
+		t.Error("mixed direct+next-hop config must not offer the ping_group_range sysctl")
+	}
+}
+
 // TestICMPPrivilegeWarningRenders confirms the warning reaches the screen: an
 // unprivileged host with a direct target surfaces the (always-visible, front-of-line)
 // problem statement in the header, not just in the warning slice. The remedy's

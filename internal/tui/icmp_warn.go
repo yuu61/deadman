@@ -22,19 +22,54 @@ import (
 // The gate (DirectICMPAvailable = raw OR datagram) fully covers next-hop only when
 // both paths are dead; a host with the datagram path up but no CAP_NET_RAW still
 // fails next-hop (it needs raw/AF_PACKET) yet stays silent here. That false negative
-// is left to the next-hop warning surface; this warning targets the reported case
-// where neither path works.
+// is an accepted limitation, not handled elsewhere: nexthopWarnings checks
+// mode/family/OS/rp_filter, never CAP_NET_RAW, so nothing catches the
+// datagram-up/raw-down/next-hop case. This warning targets the reported case where
+// neither path works.
+//
+// The remedy is next-hop-aware. A next-hop probe sends via AF_PACKET and needs
+// CAP_NET_RAW; widening net.ipv4.ping_group_range only opens the unprivileged
+// datagram path, which a next-hop never uses — yet doing so flips directICMPProbe()
+// to true and silences this very warning while every next-hop probe stays X. So the
+// ping_group_range fix is offered only for a direct-ICMP-only config; when any
+// next-hop target is present we steer to setcap/root, which fixes both.
 func icmpPrivilegeWarnings(specs []config.TargetSpec) []string {
 	if !needsLocalICMP(specs) || directICMPProbe() {
 		return nil
 	}
 
+	if hasNexthop(specs) {
+		return []string{
+			"native ICMP unavailable: no CAP_NET_RAW, so probes fail (X) with no packet sent",
+			"fix: `sudo setcap cap_net_raw+ep <deadman>`, or run deadman as root " +
+				"(a next-hop needs CAP_NET_RAW; ping_group_range does not help it)",
+		}
+	}
+
 	return []string{
 		"native ICMP unavailable: no CAP_NET_RAW and net.ipv4.ping_group_range " +
-			"excludes you, so direct/next-hop probes fail (X) with no packet sent",
+			"excludes you, so direct probes fail (X) with no packet sent",
 		"fix: `sudo setcap cap_net_raw+ep <deadman>`, or widen the range with " +
 			`sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"`,
 	}
+}
+
+// hasNexthop reports whether any target is force-routed through a next-hop gateway.
+// Such targets send via AF_PACKET and need CAP_NET_RAW; the datagram path that
+// net.ipv4.ping_group_range governs does not help them, so the warning must not offer
+// that remedy when one is present (see icmpPrivilegeWarnings).
+func hasNexthop(specs []config.TargetSpec) bool {
+	for _, s := range specs {
+		if s.IsSeparator {
+			continue
+		}
+
+		if ping.UsesNexthop(specToPingSpec(s)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // directICMPProbe reports whether a native direct-ICMP socket can be opened on this
