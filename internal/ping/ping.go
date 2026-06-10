@@ -114,6 +114,24 @@ func selectMethod(s Spec) Method {
 	}
 }
 
+// UsesLocalICMP reports whether a Spec probes through a native socket opened in
+// this process — direct ICMP or a forced next-hop — and so depends on local
+// CAP_NET_RAW or net.ipv4.ping_group_range membership. Relay modes
+// (ssh/snmp/netns/vrf/routeros/tcp) shell out or use other sockets and need no such
+// privilege. It shares selectMethod with New/Describe, so it can never disagree with
+// the mode actually used. The TUI uses it to decide whether a missing ICMP privilege
+// is worth warning about.
+func UsesLocalICMP(s Spec) bool {
+	switch selectMethod(s) {
+	case MethodDirect, MethodNexthop:
+		return true
+	case MethodTCP, MethodSNMP, MethodNetns, MethodVRF, MethodRouterOS, MethodSSH:
+		return false
+	}
+
+	return false
+}
+
 // Describe returns a short human label for how a target is probed: the method
 // name plus its key differentiator (nexthop gateway, relay host, tcp port). It
 // shares selectMethod with New, so the label always matches the mode actually

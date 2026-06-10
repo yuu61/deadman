@@ -170,7 +170,13 @@ precision ms.1      統計値の表示精度（ms / ms.1 / ms.2 / ms.3 のいず
   なお `net.ipv4.ping_group_range` は呼び出し元の gid が範囲に含まれることを要求し、
   既定では root（gid 0）を含みません。非特権 LXC コンテナのように当該 sysctl を
   変更できない環境では、root か setcap（いずれも raw ソケット経路）を使ってください。
+  WSL2 の既定値 `1 0` は start > end の**空レンジ**で誰も非特権 ICMP を使えないため、
+  非 root で動かすには setcap か上記 sysctl のいずれかが必須です。
 - **macOS**: そのまま動作します。
+
+直接・`nexthop` 対象がありながら raw・非特権 ICMP のどちらのソケットも開けない場合、
+deadman は起動時に対処方法（setcap / sysctl）を案内する警告をヘッダ下に表示します。
+この状態では全プローブが失敗（`X`）し、パケットは 1 つも送出されません。
 
 中継モードは外部コマンドを呼び出すため、それらが存在する環境でのみ動作します。
 `ssh`（ssh 中継）、`snmpping`（snmp）、`ip`（netns/vrf）、`hping3`（tcp）が該当します。
