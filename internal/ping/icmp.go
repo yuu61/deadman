@@ -87,6 +87,7 @@ func RawICMPAvailable() bool { return useICMPPrivileged() }
 type icmpPinger struct {
 	addr       string
 	source     string
+	network    string // "ip4"/"ip6" to pin the resolve family (resolve_family=), "" for auto.
 	privileged bool
 }
 
@@ -94,6 +95,7 @@ func newICMPPinger(s Spec) (Pinger, error) {
 	return &icmpPinger{
 		addr:       s.Addr,
 		source:     s.Source,
+		network:    resolveNetwork(s),
 		privileged: useICMPPrivileged(),
 	}, nil
 }
@@ -102,9 +104,12 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
 	defer cancel()
 
-	pinger, err := probing.NewPinger(p.addr)
-	if err != nil {
-		return Result{Code: Failed, TTL: -1}
+	// New defers resolution; SetNetwork pins the family so RunWithContext resolves
+	// v4/v6 as configured. A resolve failure (no record in the pinned family, or an
+	// IP literal of the other family) surfaces from RunWithContext below as Failed.
+	pinger := probing.New(p.addr)
+	if p.network != "" {
+		pinger.SetNetwork(p.network)
 	}
 
 	pinger.SetPrivileged(p.privileged)
@@ -122,7 +127,7 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 		}
 	}
 
-	err = pinger.RunWithContext(ctx)
+	err := pinger.RunWithContext(ctx)
 	if err != nil {
 		return Result{Code: Failed, TTL: -1}
 	}

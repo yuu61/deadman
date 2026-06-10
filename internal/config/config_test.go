@@ -96,6 +96,28 @@ func TestParseConfigNexthop(t *testing.T) {
 	}
 }
 
+func TestParseConfigResolveFamily(t *testing.T) {
+	// resolve_family is a relay key, so it lands in the relay map verbatim (the ping
+	// layer normalizes it); it is not recorded in Dropped as an unknown attribute.
+	cfg, err := ParseConfig(strings.NewReader("web example.com resolve_family=ipv6\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := cfg.Targets
+	if len(specs) != 1 {
+		t.Fatalf("got %d specs, want 1: %+v", len(specs), specs)
+	}
+
+	if specs[0].Relay["resolve_family"] != "ipv6" {
+		t.Errorf("resolve_family = %q, want %q", specs[0].Relay["resolve_family"], "ipv6")
+	}
+
+	if len(specs[0].Dropped) != 0 {
+		t.Errorf("Dropped = %v, want empty", specs[0].Dropped)
+	}
+}
+
 func TestParseConfigDroppedTokens(t *testing.T) {
 	// A name with spaces shifts real tokens past the address slot: this parses to
 	// name="Cloudflare", address="via", with "MGMT" and "1.1.1.1" unroutable and

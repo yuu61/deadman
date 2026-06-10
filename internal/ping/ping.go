@@ -79,6 +79,26 @@ const (
 // the fallback label when a forced nexthop cannot be honored.
 const labelDirect = "direct"
 
+// pro-bing network strings that pin the address family during hostname resolution
+// (passed to (*probing.Pinger).SetNetwork); "" / "ip" leave the choice to the resolver.
+const (
+	networkIPv4 = "ip4"
+	networkIPv6 = "ip6"
+)
+
+// resolveFamilies maps each accepted resolve_family attribute value to the pro-bing
+// network string that pins that address family during hostname resolution. It is the
+// single source of truth for the resolve_family contract; extend it to accept more
+// spellings.
+var resolveFamilies = map[string]string{"ipv4": networkIPv4, "ipv6": networkIPv6}
+
+// resolveNetwork returns the network a target's resolve_family pins ("ip4"/"ip6"), or
+// "" to let the resolver choose (today's behavior) when the attribute is unset or
+// unrecognized. Only "ipv4"/"ipv6" are recognized; the lenient unknown->"" fallback
+// matches deadman's other attribute handling. Honored only by the direct-ICMP path:
+// relay/via/tcp/nexthop targets resolve their family elsewhere (gateway or remote).
+func resolveNetwork(s Spec) string { return resolveFamilies[s.Relay["resolve_family"]] }
+
 // selectMethod resolves the probing method from a Spec. New switches on it to
 // build the Pinger and Describe to label it, so the two never drift. The
 // precedence is: tcp > via=snmp/netns/vrf/routers_api > relay (ssh) > nexthop >

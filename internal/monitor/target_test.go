@@ -121,6 +121,32 @@ func TestKeyStableAndMatches(t *testing.T) {
 	}
 }
 
+// TestKeyResolveFamilySeparates guards the dual-stack use case: two rows for the
+// same hostname differing only in resolve_family must get distinct Keys, so a reload
+// keeps their history apart instead of collapsing the A and AAAA rows into one.
+func TestKeyResolveFamilySeparates(t *testing.T) {
+	v4 := &Target{
+		Name:  "web",
+		Addr:  "example.com",
+		Relay: map[string]string{"resolve_family": "ipv4"},
+	}
+	v6 := &Target{
+		Name:  "web",
+		Addr:  "example.com",
+		Relay: map[string]string{"resolve_family": "ipv6"},
+	}
+	auto := &Target{Name: "web", Addr: "example.com", Relay: map[string]string{}}
+
+	keys := map[string]string{"v4": v4.Key(), "v6": v6.Key(), "auto": auto.Key()}
+	for a := range keys {
+		for b := range keys {
+			if a < b && keys[a] == keys[b] {
+				t.Errorf("Key collision between %s and %s: %q", a, b, keys[a])
+			}
+		}
+	}
+}
+
 // TestResultsRescale shows the result bar re-buckets when the scale changes: the
 // same stored result renders to a different glyph at a different scale. This is what
 // lets the up/down keys re-scale bars already on screen.
