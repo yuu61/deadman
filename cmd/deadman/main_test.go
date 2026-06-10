@@ -78,3 +78,48 @@ func TestResolveScale(t *testing.T) {
 		})
 	}
 }
+
+func TestParseArgsSplit(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"short flag", []string{"-c", "2", "deadman.conf"}, 2},
+		{"long flag", []string{"--split", "3", "deadman.conf"}, 3},
+		{"after config", []string{"deadman.conf", "-c", "2"}, 2},
+		{"unset defaults to 0", []string{"deadman.conf"}, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			opts, err := parseArgs(c.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if opts.Cols != c.want {
+				t.Errorf("Cols = %d, want %d", opts.Cols, c.want)
+			}
+		})
+	}
+}
+
+func TestResolveCols(t *testing.T) {
+	cases := []struct {
+		name     string
+		cli, cfg int
+		want     int
+	}{
+		{"cli explicit wins over config", 3, 2, 3},
+		{"config used when cli unset", 0, 2, 2},
+		{"cli used when config unset", 2, 0, 2},
+		{"unset stays 0 (New normalizes to 1)", 0, 0, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolveCols(c.cli, c.cfg); got != c.want {
+				t.Errorf("resolveCols(%d, %d) = %d, want %d", c.cli, c.cfg, got, c.want)
+			}
+		})
+	}
+}

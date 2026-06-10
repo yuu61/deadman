@@ -35,6 +35,7 @@ type Options struct {
 	LogDir     string
 	ConfigPath string
 	Columns    map[string]bool // per-column visibility overrides (config file).
+	Cols       int             // requested newspaper-column count (CLI -c/--split, config "split"); <=1 = single.
 }
 
 // Model is the Bubble Tea model.
@@ -53,6 +54,8 @@ type Model struct {
 	precIdx int // index into precisionModes for the stat columns; cycled with 'p'.
 
 	scrollTop int // first visible row when the list exceeds the viewport; moved with j/k/g/G/PgUp/PgDn.
+
+	cols int // requested newspaper-column count ('['/']'); effectiveCols clamps it to the terminal width.
 
 	tick     int  // round counter, drives the spinner.
 	arrowIdx int  // sync mode: target currently being probed.
@@ -82,6 +85,7 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 		hostInfo: hostInfo(),
 		visible:  buildVisible(opts.Columns),
 		warnings: startupWarnings(specs),
+		cols:     max(opts.Cols, 1),
 	}, nil
 }
 
@@ -230,24 +234,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleViewKey handles the display-only keys: the MIN/MAX ('m') and VIA ('v')
-// column toggles, the RTT-bar scale (up/down), and the stat precision ('p'). An
-// unknown key leaves the model unchanged.
+// column toggles, the RTT-bar scale (up/down), the stat precision ('p'), and the
+// newspaper-column count ('['/']'). An unknown key leaves the model unchanged.
+//
+// The layout-changing keys clampScroll after recalcWidths: a stat-column toggle
+// shifts minColumnWidth, which can change effectiveCols and thus the vertical
+// capacity, so the scroll position must be re-pinned just like a column-count change.
 func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 	switch msg.String() {
 	case "m":
-		// Toggle the MIN/MAX pair: show both unless both are already shown.
-		// The header width changes, so the result-bar column is recomputed.
+		// Toggle the MIN/MAX pair: show both unless both are already shown. The
+		// header width changes, so the result-bar column (and the multi-column fit)
+		// are recomputed.
 		show := !m.visible[colMin] || !m.visible[colMax]
 		m.visible[colMin] = show
 		m.visible[colMax] = show
 
-		return m.recalcWidths()
+		return m.recalcWidths().clampScroll()
 	case "v":
 		// Toggle the VIA (probing method) column; its width feeds the result-bar
-		// column, so recompute the layout.
+		// column and the multi-column fit, so recompute the layout.
 		m.visible[colVia] = !m.visible[colVia]
 
-		return m.recalcWidths()
+		return m.recalcWidths().clampScroll()
 	case "up":
 		// Coarser RTT-bar scale (more ms per step). Glyphs are bucketed at render
 		// time, so the existing bar re-buckets with no width change.
@@ -260,13 +269,31 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 		// changes, so recompute the result-bar layout.
 		m.precIdx = (m.precIdx + 1) % len(precisionModes)
 
-		return m.recalcWidths()
+		return m.recalcWidths().clampScroll()
+	case "[", "]":
+		// Adjust the newspaper-column count (']' more, '[' fewer; effectiveCols clamps
+		// it to what the width fits). The count changes both the per-column width and
+		// the vertical capacity, so recompute the widths and re-pin the scroll.
+		return m.adjustCols(msg.String()).recalcWidths().clampScroll()
 	case "k", "j", "pgup", "pgdown", "g", "G", "home", "end":
 		// Scroll the row window. When the list fits the screen these are no-ops
 		// (maxTop is 0). The arrows stay bound to the RTT-bar scale.
 		return m.scroll(msg.String())
 	default:
 		// Any other key is unbound; leave the model unchanged.
+	}
+
+	return m
+}
+
+// adjustCols bumps the requested newspaper-column count: ']' adds one, anything else
+// ('[') removes one with a floor of a single column. effectiveCols later clamps the
+// request to what the terminal width can actually hold.
+func (m Model) adjustCols(key string) Model {
+	if key == "]" {
+		m.cols++
+	} else {
+		m.cols = max(m.cols-1, 1)
 	}
 
 	return m
@@ -429,15 +456,58 @@ func (m Model) recalcWidths() Model {
 
 	m.viaW = m.viaWidth()
 
-	// arrow + host + 1 + addr + 1 [+ via + 1] + statsHeader + 2 + result.
+	// The terminal width is split across effectiveCols newspaper columns; resW
+	// absorbs the leftover within one column's content width. With a single column
+	// colContentWidth == m.width, so this matches the original full-width bar exactly.
+	used := m.rowFixedWidth()
+	m.resW = max(m.colContentWidth()-used, minResultWidth)
+
+	return m
+}
+
+// rowFixedWidth is the display width of one row's fixed part — everything left of
+// the result bar: the arrow, HOSTNAME, ADDRESS, the optional VIA column, the stats
+// columns, and the two-space gap. The result bar fills whatever column width
+// remains. recalcWidths (to size the bar) and minColumnWidth (to size a column) both
+// derive from this, so the two can never drift.
+func (m Model) rowFixedWidth() int {
+	// arrow + host + 1 + addr + 1 [+ via + 1] + statsHeader + 2.
 	used := len(arrow) + m.hostW + 1 + m.addrW + 1 + len(m.statsHeader()) + 2
 	if m.columnVisible(colVia) {
 		used += m.viaW + 1
 	}
 
-	m.resW = max(m.width-used, minResultWidth)
+	return used
+}
 
-	return m
+// minColumnWidth is the narrowest a single newspaper column may be: a full row plus
+// the minimum result bar. effectiveCols never returns a count that forces a column
+// below this, so a column can never overflow its slice of the width.
+func (m Model) minColumnWidth() int {
+	return m.rowFixedWidth() + minResultWidth
+}
+
+// effectiveCols clamps the requested column count (m.cols) to the number of columns
+// the terminal width can hold without any column dropping below minColumnWidth: n
+// columns need n*minCol + (n-1)*gutter <= width, i.e. n <= (width+gutter)/(minCol+gutter).
+func (m Model) effectiveCols() int {
+	if m.cols <= 1 || m.width <= 0 {
+		return 1
+	}
+
+	fit := (m.width + colGutterWidth) / (m.minColumnWidth() + colGutterWidth)
+
+	return max(1, min(m.cols, fit))
+}
+
+// colContentWidth is the per-column content width: the terminal width minus the
+// inter-column gutters, divided across the effective columns. With one column it is
+// exactly m.width (no gutters). The floor division pairs with effectiveCols so the
+// result is always >= minColumnWidth, keeping resW >= minResultWidth (no overflow).
+func (m Model) colContentWidth() int {
+	eff := m.effectiveCols()
+
+	return (m.width - (eff-1)*colGutterWidth) / eff
 }
 
 // viaWidth is the display width of the VIA column: the widest target label,
@@ -465,10 +535,23 @@ func (m Model) viaWidth() int {
 // viewport describes which slice of rows View renders. When the list fits the
 // screen active is false and every row is shown; otherwise the window is
 // rows[top : top+count] and, when there is room (status), a one-line scroll
-// indicator is appended below it.
+// indicator is appended below it. cols/perCol carry the newspaper-grid shape: the
+// window is laid out column-major into cols columns of perCol rows each, so
+// count == perCol*cols (cols is 1 in the single-column layout).
 type viewport struct {
 	top, count, maxTop int
+	cols, perCol       int
 	active, status     bool
+}
+
+// ceilDiv returns ceil(a/b) for non-negative a and positive b, used to size a
+// column-major grid's height from the row count and the column count.
+func ceilDiv(a, b int) int {
+	if b <= 0 {
+		return a
+	}
+
+	return (a + b - 1) / b
 }
 
 // scrollMetrics derives the visible row window from the terminal height. It is
@@ -477,15 +560,21 @@ type viewport struct {
 // Before the first WindowSizeMsg (width/height still 0) the whole list is shown.
 func (m Model) scrollMetrics() viewport {
 	if m.width == 0 || m.height <= 0 {
-		return viewport{count: len(m.rows)}
+		return viewport{count: len(m.rows), cols: 1, perCol: len(m.rows)}
 	}
+
+	eff := m.effectiveCols()
 
 	// usable is 0 when the fixed header fills (or exceeds) the screen. In that case
 	// render no rows: forcing a minimum of 1 here would emit height+1 lines, and
 	// Bubble Tea drops the top (title) line, defeating the fixed-header guarantee.
 	usable := max(m.height-m.fixedHeaderLines(), 0)
-	if len(m.rows) <= usable {
-		return viewport{count: len(m.rows)}
+
+	// The grid holds usable rows per column across eff columns. When the whole list
+	// fits, show it all unscrolled; perCol is the column-major column height (column
+	// 0 fills first) and is <= usable, so the merged block never overflows the screen.
+	if len(m.rows) <= usable*eff {
+		return viewport{count: len(m.rows), cols: eff, perCol: ceilDiv(len(m.rows), eff)}
 	}
 
 	// Reserve the bottom usable line for the scroll indicator, unless that would
@@ -494,15 +583,24 @@ func (m Model) scrollMetrics() viewport {
 	// than the indicator, so the list still scrolls but shows no position hint.
 	status := usable >= 2
 
-	count := usable
+	perCol := usable
 	if status {
-		count = usable - 1
+		perCol = usable - 1
 	}
 
+	count := perCol * eff
 	maxTop := len(m.rows) - count
 	top := max(min(m.scrollTop, maxTop), 0)
 
-	return viewport{top: top, count: count, maxTop: maxTop, active: true, status: status}
+	return viewport{
+		top:    top,
+		count:  count,
+		maxTop: maxTop,
+		cols:   eff,
+		perCol: perCol,
+		active: true,
+		status: status,
+	}
 }
 
 // fixedHeaderLines is the number of screen rows View renders above the scrollable

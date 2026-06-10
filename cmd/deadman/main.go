@@ -49,6 +49,8 @@ func parseArgs(args []string) (tui.Options, error) {
 	fs.BoolVar(blink, "blink-arrow", false, "blink arrow in async mode")
 	logdir := fs.String("l", "", "directory for log files")
 	fs.StringVar(logdir, "logging", "", "directory for log files")
+	cols := fs.Int("c", 0, "split the host list into N side-by-side columns (default 1)")
+	fs.IntVar(cols, "split", 0, "split the host list into N side-by-side columns (default 1)")
 
 	var positional []string
 
@@ -77,8 +79,21 @@ func parseArgs(args []string) (tui.Options, error) {
 		Blink:      *blink,
 		Scale:      *scale,
 		LogDir:     *logdir,
+		Cols:       *cols,
 		ConfigPath: positional[0],
 	}, nil
+}
+
+// resolveCols picks the newspaper-column count: an explicit CLI -c/--split wins,
+// else a config "split" directive, else a single column. 0 means "unset" for both
+// inputs (the -c flag defaults to 0, and a missing/invalid "split" directive leaves
+// cfg at 0), and tui.New normalizes a non-positive count to 1.
+func resolveCols(cli, cfg int) int {
+	if cli > 0 {
+		return cli
+	}
+
+	return cfg
 }
 
 func main() {
@@ -106,6 +121,7 @@ func main() {
 	opts.Columns = cfg.Columns
 	opts.Scale = resolveScale(opts.Scale, cfg.Scale)
 	opts.Precision = cfg.Precision
+	opts.Cols = resolveCols(opts.Cols, cfg.Cols)
 
 	m, err := tui.New(cfg.Targets, opts)
 	if err != nil {

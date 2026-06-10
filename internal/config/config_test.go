@@ -330,6 +330,36 @@ func TestParseConfigScaleAndPrecision(t *testing.T) {
 	}
 }
 
+func TestParseConfigSplit(t *testing.T) {
+	cfg, err := ParseConfig(strings.NewReader("split 2\nhost 1.2.3.4\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Cols != 2 {
+		t.Errorf("Cols = %d, want 2", cfg.Cols)
+	}
+
+	if len(cfg.Targets) != 1 || cfg.Targets[0].Name != "host" {
+		t.Fatalf("targets = %+v", cfg.Targets)
+	}
+}
+
+func TestParseConfigSplitLenient(t *testing.T) {
+	// A non-numeric or non-positive split is ignored, leaving Cols unset (0) so the
+	// caller falls back to the CLI/default rather than aborting the parse.
+	for _, in := range []string{"split abc\n", "split -2\n", "split 0\n", "split\n"} {
+		cfg, err := ParseConfig(strings.NewReader(in))
+		if err != nil {
+			t.Fatalf("ParseConfig(%q) error: %v", in, err)
+		}
+
+		if cfg.Cols != 0 {
+			t.Errorf("ParseConfig(%q): Cols = %d, want 0 (unset)", in, cfg.Cols)
+		}
+	}
+}
+
 func TestParseConfigScaleLenient(t *testing.T) {
 	// A non-numeric or non-positive scale is ignored, leaving Scale unset (0) so the
 	// caller falls back to the CLI/default rather than aborting the parse.
