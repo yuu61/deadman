@@ -29,6 +29,8 @@ func newSNMPPinger(s Spec) (Pinger, error) {
 		return nil, fmt.Errorf("'relay' is not specified for %s", s.Addr)
 	}
 
+	// A source= is silently ignored here (the relay originates the probe); the TUI
+	// surfaces a startup warning via ping.SourceUnsupported rather than failing.
 	return &snmpPinger{addr: s.Addr, relay: s.Relay["relay"], community: s.Relay["community"]}, nil
 }
 

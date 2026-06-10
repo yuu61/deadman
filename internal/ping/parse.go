@@ -5,14 +5,23 @@ import (
 	"strconv"
 )
 
+// msPerS converts seconds to milliseconds.
+const msPerS = 1000.0
+
 var (
 	reTimeFloat = regexp.MustCompile(`time=(\d+\.\d+)`)
 	reTimeInt   = regexp.MustCompile(`time=(\d+)`)
 	reTTL       = regexp.MustCompile(`ttl=(\d+)`)
 	reHlim      = regexp.MustCompile(`hlim=(\d+)`)
-	reSNMP      = regexp.MustCompile(`rtt min/avg/max/stddev = (\d+)`)
-	reHping     = regexp.MustCompile(`round-trip min/avg/max = (\d+)`)
-	reRouterOS  = regexp.MustCompile(`((\d+)ms)?(\d+)us`)
+	// reSNMP/reHping capture the first min value of the summary line. The fractional
+	// part is optional but matched when present, so a sub-millisecond reply
+	// (e.g. "= 0.4/...") reports its real RTT instead of truncating to 0.
+	reSNMP  = regexp.MustCompile(`rtt min/avg/max/stddev = (\d+(?:\.\d+)?)`)
+	reHping = regexp.MustCompile(`round-trip min/avg/max = (\d+(?:\.\d+)?)`)
+	// reRouterOSUnit matches one "<n><unit>" run of a RouterOS duration. Each unit is
+	// independently optional and summed, so any combination ("1ms500us", "500us",
+	// "5ms", "2s") parses — unlike a fixed ms+us shape that dropped whole-ms values.
+	reRouterOSUnit = regexp.MustCompile(`(\d+)(us|ms|s)`)
 )
 
 // ParsePingOutput extracts a Result from the stdout of a `ping`/`ping6` run,
@@ -44,22 +53,31 @@ func ParsePingOutput(out string) Result {
 	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
 }
 
-// ParseRouterOSMinRTT parses RouterOS min-rtt values like "1ms500us" into
-// milliseconds (1.5). The "ms" group is optional, e.g. "500us" -> 0.5.
+// ParseRouterOSMinRTT parses a RouterOS min-rtt duration into milliseconds. Each
+// unit run (s/ms/us) is summed, so "1ms500us" -> 1.5, "500us" -> 0.5, "5ms" -> 5
+// and "2s" -> 2000 all parse. ok is false when no recognizable unit is present.
 func ParseRouterOSMinRTT(s string) (float64, bool) {
-	m := reRouterOS.FindStringSubmatch(s)
-	if m == nil {
+	matches := reRouterOSUnit.FindAllStringSubmatch(s, -1)
+	if len(matches) == 0 {
 		return 0, false
 	}
 
-	var ms, us float64
-	if m[2] != "" {
-		ms, _ = strconv.ParseFloat(m[2], 64)
+	var ms float64
+
+	for _, m := range matches {
+		n, _ := strconv.ParseFloat(m[1], 64)
+
+		switch m[2] {
+		case "s":
+			ms += n * msPerS
+		case "ms":
+			ms += n
+		case "us":
+			ms += n / usPerMs
+		default:
+			// Unreachable: reRouterOSUnit only captures s/ms/us.
+		}
 	}
 
-	if m[3] != "" {
-		us, _ = strconv.ParseFloat(m[3], 64)
-	}
-
-	return ms + us/usPerMs, true
+	return ms, true
 }

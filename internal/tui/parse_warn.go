@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/yuu61/deadman/internal/config"
+	"github.com/yuu61/deadman/internal/ping"
 )
 
 // startupWarnings collects every operator-facing warning shown under the header:
@@ -30,6 +31,14 @@ func parseWarnings(specs []config.TargetSpec) []string {
 				"%q: unterminated quote in config line — the rest of the line was absorbed "+
 					"into one field; close the quote or wrap a name in matching quotes",
 				s.Name,
+			))
+		}
+
+		if ping.SourceUnsupported(specToPingSpec(s)) {
+			warns = append(warns, fmt.Sprintf(
+				"%q: source=%q is ignored in this relay mode (snmp/routeros/tcp have no local "+
+					"source) — remove it, or use a source-capable mode (direct/nexthop/ssh/netns/vrf)",
+				s.Name, s.Source,
 			))
 		}
 

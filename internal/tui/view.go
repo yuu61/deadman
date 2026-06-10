@@ -65,7 +65,17 @@ func (m Model) View() string {
 
 	// Trim the trailing newline so the logical line count equals the physical
 	// line count, keeping the row-window math (fixedHeaderLines) exact.
-	return strings.TrimRight(b.String(), "\n")
+	out := strings.TrimRight(b.String(), "\n")
+
+	// When the terminal is shorter than the fixed header itself (height <
+	// fixedHeaderLines), keep only the first m.height lines so Bubble Tea's top-drop
+	// can never push the title off-screen. The scroll math keeps the content within
+	// height whenever there is room for a data row, so this is a no-op there.
+	if lines := strings.Split(out, "\n"); m.height > 0 && len(lines) > m.height {
+		out = strings.Join(lines[:m.height], "\n")
+	}
+
+	return out
 }
 
 // keysLine is the scale + key-legend line (line 2), factored into a method to sit

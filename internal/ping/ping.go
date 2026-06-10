@@ -152,6 +152,22 @@ func UsesNexthop(s Spec) bool {
 	return selectMethod(s) == MethodNexthop
 }
 
+// SourceUnsupported reports whether the Spec sets a source= that its resolved mode
+// cannot honor: snmp/routeros originate the probe at the relay and tcp(hping3) has no
+// per-probe source, so the attribute is silently ignored by those modes. The TUI
+// warns about these (rather than failing the target) so monitoring still runs with
+// the source ignored. The source-capable modes (direct ICMP, nexthop, ssh/netns/vrf)
+// return false. It shares selectMethod with New, so it cannot disagree with dispatch.
+func SourceUnsupported(s Spec) bool {
+	if s.Source == "" {
+		return false
+	}
+
+	m := selectMethod(s)
+
+	return m == MethodSNMP || m == MethodTCP || m == MethodRouterOS
+}
+
 // Describe returns a short human label for how a target is probed: the method
 // name plus its key differentiator (nexthop gateway, relay host, tcp port). It
 // shares selectMethod with New, so the label always matches the mode actually

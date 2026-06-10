@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/yuu61/deadman/internal/ping"
 )
 
 // File permissions for the log directory and the per-target log files.
@@ -14,9 +16,12 @@ const (
 )
 
 // AppendLog appends one line per probe to <dir>/<target name> in the format
-// "<timestamp> <rtt> <avg> <snt>". The timestamp is passed in so the function
+// "<timestamp> <status> <rtt> <avg> <snt>". status is "up"/"down" so a failed probe
+// is distinguishable from a real reply (a failure has no RTT, logged as 0 rather
+// than the previous success's stale value); rtt/avg are fixed-precision milliseconds
+// and snt is the running send count. The timestamp is passed in so the function
 // stays testable.
-func AppendLog(dir string, t *Target, now time.Time) error {
+func AppendLog(dir string, t *Target, res ping.Result, now time.Time) error {
 	err := os.MkdirAll(dir, logDirPerm)
 	if err != nil {
 		return err
@@ -34,10 +39,19 @@ func AppendLog(dir string, t *Target, now time.Time) error {
 	}
 	defer func() { _ = f.Close() }()
 
+	status := "down"
+	rtt := 0.0 // a failed probe has no RTT; log 0, not the stale last-success RTT.
+
+	if res.Success {
+		status = "up"
+		rtt = res.RTT
+	}
+
 	line := fmt.Sprintf(
-		"%s %v %v %d\n",
+		"%s %s %.3f %.3f %d\n",
 		now.Format("2006-01-02 15:04:05.000000"),
-		t.RTT,
+		status,
+		rtt,
 		t.Avg,
 		t.Snt,
 	)

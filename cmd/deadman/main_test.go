@@ -1,6 +1,39 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"flag"
+	"os"
+	"testing"
+)
+
+// -h/--help must surface flag.ErrHelp so main can exit 0 (success) rather than the
+// generic exit-2 error path.
+func TestParseArgsHelp(t *testing.T) {
+	// flag writes its usage to os.Stderr on -h/--help; redirect it to a pipe so the
+	// test output stays quiet (only the returned error matters here).
+	orig := os.Stderr
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	os.Stderr = w
+
+	defer func() {
+		os.Stderr = orig
+		_ = w.Close()
+		_ = r.Close()
+	}()
+
+	for _, arg := range []string{"-h", "--help"} {
+		_, perr := parseArgs([]string{arg})
+		if !errors.Is(perr, flag.ErrHelp) {
+			t.Errorf("parseArgs(%q) error = %v, want flag.ErrHelp", arg, perr)
+		}
+	}
+}
 
 func TestParseArgsAsync(t *testing.T) {
 	cases := []struct {

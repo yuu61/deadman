@@ -166,6 +166,66 @@ func TestParseConfigCommentTrailer(t *testing.T) {
 	}
 }
 
+func TestParseConfigIndentedComment(t *testing.T) {
+	// An indented '#' line is a full-line comment, not a target: a host the operator
+	// disabled by indenting the '#' must not be silently pinged.
+	cfg, err := ParseConfig(strings.NewReader(
+		"  # disabled note\n\t#realhost 1.2.3.4\nhost 5.6.7.8\n",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cfg.Targets) != 1 || cfg.Targets[0].Name != "host" || cfg.Targets[0].Addr != "5.6.7.8" {
+		t.Fatalf("indented comments must be stripped, got %+v", cfg.Targets)
+	}
+}
+
+func TestParseConfigDirectiveCaseInsensitive(t *testing.T) {
+	// A capitalized directive applies the setting instead of becoming a phantom
+	// target (the previous case-sensitive lookup silently lost both).
+	cfg, err := ParseConfig(strings.NewReader("Scale 5\nSPLIT 2\nhost 1.2.3.4\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Scale != 5 {
+		t.Errorf("Scale = %d, want 5", cfg.Scale)
+	}
+
+	if cfg.Cols != 2 {
+		t.Errorf("Cols = %d, want 2", cfg.Cols)
+	}
+
+	if len(cfg.Targets) != 1 || cfg.Targets[0].Name != "host" {
+		t.Fatalf("capitalized directives must not become targets, got %+v", cfg.Targets)
+	}
+}
+
+func TestParseConfigSemicolonHashInValue(t *testing.T) {
+	// A quoted value protects a literal ';#': it is no longer mistaken for a trailer
+	// comment and truncated.
+	cfg, err := ParseConfig(strings.NewReader("host 1.2.3.4 community=\"a;#b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := cfg.Targets[0].Relay["community"]; got != "a;#b" {
+		t.Errorf("community = %q, want %q (';#' inside quotes must be preserved)", got, "a;#b")
+	}
+
+	// An unquoted ';#' is still a trailer comment (the documented way to opt out is
+	// to quote the value).
+	bare, err := ParseConfig(strings.NewReader("host 1.2.3.4 community=a;#b\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := bare.Targets[0].Relay["community"]; got != "a" {
+		t.Errorf("unquoted community = %q, want %q (trailer stripped)", got, "a")
+	}
+}
+
 func TestParseConfigQuotedName(t *testing.T) {
 	// Double quotes let a name contain spaces; the quotes are removed and the
 	// address/attributes after the closing quote parse normally.
