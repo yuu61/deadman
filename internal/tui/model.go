@@ -52,6 +52,8 @@ type Model struct {
 	scale   int // RTT-bar ms-per-step; adjusted live with up/down, applied when rendering glyphs.
 	precIdx int // index into precisionModes for the stat columns; cycled with 'p'.
 
+	scrollTop int // first visible row when the list exceeds the viewport; moved with j/k/g/G/PgUp/PgDn.
+
 	tick     int  // round counter, drives the spinner.
 	arrowIdx int  // sync mode: target currently being probed.
 	blinkOn  bool // async + blink: arrow visibility toggle.
@@ -182,6 +184,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m = m.recalcWidths()
+		m = m.clampScroll()
 
 		return m, nil
 	case tea.KeyMsg:
@@ -252,6 +255,10 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 		m.precIdx = (m.precIdx + 1) % len(precisionModes)
 
 		return m.recalcWidths()
+	case "k", "j", "pgup", "pgdown", "g", "G", "home", "end":
+		// Scroll the row window. When the list fits the screen these are no-ops
+		// (maxTop is 0). The arrows stay bound to the RTT-bar scale.
+		return m.scroll(msg.String())
 	default:
 		// Any other key is unbound; leave the model unchanged.
 	}
@@ -299,6 +306,7 @@ func (m Model) handleReload() (tea.Model, tea.Cmd) {
 		m.visible = buildVisible(r.columns)
 		m.warnings = r.warnings
 		m = m.recalcWidths()
+		m = m.clampScroll() // a shrunk target set may leave scrollTop past the end.
 	}
 
 	m.gen++
@@ -446,4 +454,97 @@ func (m Model) viaWidth() int {
 	}
 
 	return w
+}
+
+// viewport describes which slice of rows View renders. When the list fits the
+// screen active is false and every row is shown; otherwise the window is
+// rows[top : top+count] and, when there is room (status), a one-line scroll
+// indicator is appended below it.
+type viewport struct {
+	top, count, maxTop int
+	active, status     bool
+}
+
+// scrollMetrics derives the visible row window from the terminal height. It is
+// the single source of truth shared by View (to slice rows) and the scroll keys
+// (to clamp scrollTop), so the rendered window and the clamp can never disagree.
+// Before the first WindowSizeMsg (width/height still 0) the whole list is shown.
+func (m Model) scrollMetrics() viewport {
+	if m.width == 0 || m.height <= 0 {
+		return viewport{count: len(m.rows)}
+	}
+
+	// usable is 0 when the fixed header fills (or exceeds) the screen. In that case
+	// render no rows: forcing a minimum of 1 here would emit height+1 lines, and
+	// Bubble Tea drops the top (title) line, defeating the fixed-header guarantee.
+	usable := max(m.height-m.fixedHeaderLines(), 0)
+	if len(m.rows) <= usable {
+		return viewport{count: len(m.rows)}
+	}
+
+	// Reserve the bottom usable line for the scroll indicator, unless that would
+	// leave no room for a data row (usable <= 1). At usable == 1 (a terminal only
+	// one row taller than the header) we deliberately spend that row on data rather
+	// than the indicator, so the list still scrolls but shows no position hint.
+	status := usable >= 2
+
+	count := usable
+	if status {
+		count = usable - 1
+	}
+
+	maxTop := len(m.rows) - count
+	top := max(min(m.scrollTop, maxTop), 0)
+
+	return viewport{top: top, count: count, maxTop: maxTop, active: true, status: status}
+}
+
+// fixedHeaderLines is the number of screen rows View renders above the scrollable
+// window: the centered title, the host-info line, the keys line, one row per
+// startup warning, a blank separator, and the column header. Bubble Tea's renderer
+// truncates over-wide lines to the terminal width rather than wrapping them (see
+// standard_renderer flush), so each is exactly one row and this logical count is
+// exact.
+func (m Model) fixedHeaderLines() int {
+	const nonWarnLines = 5 // title, host info, keys, blank separator, header.
+
+	return nonWarnLines + len(m.warnings)
+}
+
+// scroll moves the row window in response to a navigation key and clamps the new
+// top into range. With a list that fits the screen maxTop is 0, so every key is
+// a no-op.
+func (m Model) scroll(key string) Model {
+	vp := m.scrollMetrics()
+
+	switch key {
+	case "k":
+		m.scrollTop--
+	case "j":
+		m.scrollTop++
+	case "pgup":
+		m.scrollTop -= vp.count
+	case "pgdown":
+		m.scrollTop += vp.count
+	case "g", "home":
+		m.scrollTop = 0
+	case "G", "end":
+		m.scrollTop = vp.maxTop
+	default:
+		// Unreachable: handleViewKey routes only the keys handled above.
+	}
+
+	m.scrollTop = max(min(m.scrollTop, vp.maxTop), 0)
+
+	return m
+}
+
+// clampScroll re-pins scrollTop into the current valid range, used after a resize
+// or a reload that shrinks the target set. It preserves the position while the list
+// still overflows; growing the terminal until everything fits naturally lands at the
+// top (scrollMetrics returns top 0 when no scrolling is needed).
+func (m Model) clampScroll() Model {
+	m.scrollTop = m.scrollMetrics().top
+
+	return m
 }

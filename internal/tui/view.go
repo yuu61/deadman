@@ -20,13 +20,7 @@ func (m Model) View() string {
 	b.WriteByte('\n')
 	b.WriteString(m.titleLine()) // line 1: host info (+spinner) and version.
 	b.WriteByte('\n')
-	b.WriteString(rear) // line 2.
-	fmt.Fprintf(
-		&b,
-		"RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s]",
-		m.scale,
-		m.precMode().Label,
-	)
+	b.WriteString(m.keysLine()) // line 2: scale + key legend.
 	b.WriteByte('\n')
 
 	for _, w := range m.warnings {
@@ -38,17 +32,55 @@ func (m Model) View() string {
 	b.WriteString(m.headerLine()) // column headers.
 	b.WriteByte('\n')
 
-	for i, r := range m.rows {
-		if r.Sep {
+	// Render only the visible window. targetLine takes the absolute row index so
+	// the probe arrow (arrowFor reads m.arrowIdx / m.inflight by absolute index)
+	// stays correct when scrolled.
+	vp := m.scrollMetrics()
+	for i := vp.top; i < vp.top+vp.count && i < len(m.rows); i++ {
+		if m.rows[i].Sep {
 			b.WriteString(m.separatorLine())
 		} else {
-			b.WriteString(m.targetLine(i, r.Target))
+			b.WriteString(m.targetLine(i, m.rows[i].Target))
 		}
 
 		b.WriteByte('\n')
 	}
 
-	return b.String()
+	if vp.status {
+		b.WriteString(m.scrollStatus(vp))
+		b.WriteByte('\n')
+	}
+
+	// Trim the trailing newline so the logical line count equals the physical
+	// line count, keeping the row-window math (fixedHeaderLines) exact.
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// keysLine is the scale + key-legend line (line 2), factored into a method to sit
+// alongside the other fixed-line builders (centerTitle/titleLine/headerLine).
+func (m Model) keysLine() string {
+	return rear + fmt.Sprintf(
+		"RTT Scale %dms. Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s]",
+		m.scale,
+		m.precMode().Label,
+	)
+}
+
+// scrollStatus is the one-line position indicator shown below the row window when
+// the list is scrolled. It is truncated to the terminal width so it always
+// occupies exactly one physical line, which the row-window math assumes.
+func (m Model) scrollStatus(vp viewport) string {
+	first := vp.top + 1
+	last := min(vp.top+vp.count, len(m.rows))
+	s := fmt.Sprintf(
+		"%s[%d-%d/%d]  j/k scroll  PgUp/PgDn page  g/G top/bottom",
+		rear,
+		first,
+		last,
+		len(m.rows),
+	)
+
+	return styleBold.Render(runewidth.Truncate(s, m.width, ""))
 }
 
 func (m Model) centerTitle() string {
