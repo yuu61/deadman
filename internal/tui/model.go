@@ -474,13 +474,16 @@ func (m Model) scrollMetrics() viewport {
 		return viewport{count: len(m.rows)}
 	}
 
-	usable := max(m.height-m.fixedHeaderLines(), 1)
+	// usable is 0 when the fixed header fills (or exceeds) the screen. In that case
+	// render no rows: forcing a minimum of 1 here would emit height+1 lines, and
+	// Bubble Tea drops the top (title) line, defeating the fixed-header guarantee.
+	usable := max(m.height-m.fixedHeaderLines(), 0)
 	if len(m.rows) <= usable {
 		return viewport{count: len(m.rows)}
 	}
 
 	// Reserve the bottom usable line for the scroll indicator, unless that would
-	// leave no room for a data row (usable == 1).
+	// leave no room for a data row (usable <= 1).
 	status := usable >= 2
 
 	count := usable

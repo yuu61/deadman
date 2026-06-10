@@ -905,11 +905,47 @@ func TestScrollPageDownAndAliases(t *testing.T) {
 	}
 }
 
+// At the boundary where the terminal is exactly tall enough for the fixed header
+// (height == fixedHeaderLines), there is no room for any data row. The viewport must
+// render zero rows rather than forcing one and emitting height+1 lines, which would
+// push the title off the top via Bubble Tea's top-drop.
+func TestViewportNoRoomForRows(t *testing.T) {
+	m, err := New(manySpecs(50), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Size once to compute the fixed-header height (5 with no warnings), then shrink
+	// the terminal to exactly that.
+	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	hl := m.fixedHeaderLines()
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: hl})
+
+	if lines := strings.Count(out, "\n") + 1; lines > hl {
+		t.Errorf(
+			"height==fixedHeaderLines(%d): rendered %d lines (overflow)\n---\n%s",
+			hl,
+			lines,
+			out,
+		)
+	}
+
+	if !strings.Contains(out, "Dead Man") || !strings.Contains(out, "HOSTNAME") {
+		t.Errorf("the fixed header must stay fully on screen at the boundary\n---\n%s", out)
+	}
+
+	if strings.Contains(out, "h000") {
+		t.Errorf("no room for any data row at the boundary, but one rendered\n---\n%s", out)
+	}
+}
+
 // The whole point of the viewport: View must never emit more lines than the
 // terminal has, so the fixed header is never pushed off-screen. Bubble Tea's
 // renderer truncates each line to the terminal width (it does not wrap), so one
 // logical line is one screen row regardless of width — making this logical line
-// count a valid physical-overflow check at any width, narrow or wide.
+// count a valid physical-overflow check at any width, narrow or wide. Height 5
+// is the boundary == fixedHeaderLines (no warnings); the rest leave room for rows.
 func TestViewFitsTerminalHeight(t *testing.T) {
 	m, err := New(manySpecs(50), Options{Scale: 10})
 	if err != nil {
@@ -917,7 +953,7 @@ func TestViewFitsTerminalHeight(t *testing.T) {
 	}
 
 	for _, width := range []int{80, 120, 200} {
-		for _, height := range []int{10, 12, 20, 25, 100} {
+		for _, height := range []int{5, 10, 12, 20, 25, 100} {
 			_, out := drive(t, m, tea.WindowSizeMsg{Width: width, Height: height})
 
 			if lines := strings.Count(out, "\n") + 1; lines > height {
