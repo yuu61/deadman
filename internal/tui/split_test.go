@@ -433,6 +433,29 @@ func TestColumnsCappedByRowCount(t *testing.T) {
 	}
 }
 
+// A config with no target rows (only directives/comments, or a reload to a
+// temporarily empty config) must clamp to a single column. Otherwise the width/
+// request-based fit stays above 1 and renderColumns paints several header-only
+// phantom columns — the very thing the row-count clamp exists to prevent.
+func TestEmptyRowsClampToOneColumn(t *testing.T) {
+	m, err := New(nil, Options{Scale: 10, Cols: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wide + tall enough that, without the empty-list guard, the width fit would
+	// yield several columns.
+	m, out := drive(t, m, tea.WindowSizeMsg{Width: 400, Height: 40})
+
+	if got := m.effectiveCols(); got != 1 {
+		t.Errorf("empty row list: effectiveCols = %d, want 1", got)
+	}
+
+	if n := strings.Count(out, "HOSTNAME"); n != 1 {
+		t.Errorf("empty row list should show exactly one header, got %d\n---\n%s", n, out)
+	}
+}
+
 // Hiding HOSTNAME and ADDRESS shrinks a row's fixed width, so minColumnWidth drops
 // and more newspaper columns fit the same terminal — the column toggles and the
 // split feature compose. The no-overflow invariant must still hold.

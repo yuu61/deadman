@@ -539,14 +539,22 @@ func (m Model) usableRows() int {
 // larger request would leave a phantom header-only column on the right. (When the
 // list overflows and scrolls, every column is full, so no row reduction applies.)
 func (m Model) effectiveCols() int {
-	if m.cols <= 1 || m.width <= 0 {
+	// An empty row set (a config of only directives/comments, or a reload to a
+	// temporarily empty config) trivially fits one column. Returning here keeps the
+	// width/request fit from leaving header-only phantom columns the row-count clamp
+	// below would otherwise prevent (it is guarded on usableRows, which the clamp
+	// also needs).
+	if m.cols <= 1 || m.width <= 0 || len(m.rows) == 0 {
 		return 1
 	}
 
 	fit := (m.width + colGutterWidth) / (m.minColumnWidth() + colGutterWidth)
 	eff := max(1, min(m.cols, fit))
 
-	if usable := m.usableRows(); usable > 0 && len(m.rows) > 0 && len(m.rows) <= usable*eff {
+	// When the whole list fits the height, only ceil(rows/perColumn) columns hold
+	// every row; a larger fit would leave a phantom header-only column. len(m.rows) is
+	// >= 1 here (the empty case returned above).
+	if usable := m.usableRows(); usable > 0 && len(m.rows) <= usable*eff {
 		perCol := ceilDiv(len(m.rows), eff)
 		eff = ceilDiv(len(m.rows), perCol)
 	}
