@@ -71,7 +71,8 @@ func ipVersion(ctx context.Context, addr string) int {
 //
 //   - macOS keeps a separate ping6 and its `ping` does not accept IPv6, so Darwin
 //     must use ping6.
-//   - modern Linux/FreeBSD fold IPv6 into a unified `ping -6` and may not ship a
+//   - FreeBSD uses ping6 for compatibility with releases before ping gained -6.
+//   - modern Linux folds IPv6 into a unified `ping -6` and may not ship a
 //     separate ping6 binary at all, so everything else uses `ping -6`.
 //
 // The earlier local exec.LookPath("ping6") was wrong for ssh (the local binary set
@@ -81,7 +82,7 @@ func pingCommand(ipv int, osname string) []string {
 	switch {
 	case ipv != ipv6:
 		return []string{cmdPing, "-c", "1"}
-	case osname == osDarwin:
+	case osname == osDarwin || osname == osFreeBSD:
 		return []string{cmdPing6, "-c", "1"}
 	default:
 		return []string{cmdPing, "-6", "-c", "1"}

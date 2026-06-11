@@ -6,9 +6,8 @@ import (
 )
 
 // The ping binary is chosen by the target's OS, not by probing a local ping6 (which
-// is irrelevant to an ssh remote): macOS uses its separate ping6, everything else
-// uses the unified `ping -6` (modern Linux/FreeBSD may not ship ping6). IPv4 is
-// always plain ping.
+// is irrelevant to an ssh remote): macOS and FreeBSD use ping6, while Linux uses
+// the unified `ping -6`. IPv4 is always plain ping.
 func TestPingCommand(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -19,7 +18,7 @@ func TestPingCommand(t *testing.T) {
 		{"ipv4_linux", ipv4, osLinux, []string{cmdPing, "-c", "1"}},
 		{"ipv4_darwin", ipv4, osDarwin, []string{cmdPing, "-c", "1"}},
 		{"ipv6_linux", ipv6, osLinux, []string{cmdPing, "-6", "-c", "1"}},
-		{"ipv6_freebsd", ipv6, osFreeBSD, []string{cmdPing, "-6", "-c", "1"}},
+		{"ipv6_freebsd", ipv6, osFreeBSD, []string{cmdPing6, "-c", "1"}},
 		{"ipv6_darwin", ipv6, osDarwin, []string{cmdPing6, "-c", "1"}},
 	}
 	for _, c := range cases {
