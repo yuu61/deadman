@@ -5,6 +5,7 @@ package ping
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"net"
 	"net/netip"
@@ -314,6 +315,17 @@ func openICMPSocket(fam icmpFamily, sockType int) (int, error) {
 	// Reply TTL/hop-limit as a control message (captured, not displayed).
 	_ = unix.SetsockoptInt(fd, fam.ttlLevel, fam.ttlRecvOpt, 1)
 
+	// We deliberately do NOT attach a kernel BPF id-filter on the raw path the way
+	// pro-bing's InstallICMPIDFilter does. Correctness already lives in the userspace match
+	// (id+seq+token+src), so a filter would only be a scale optimization: dropping foreign
+	// ICMP in-kernel to spare CPU and rcvbuf when root+many-targets+async fan-out every
+	// host's ICMP onto each socket. That degradation is visible and load-correlated (and
+	// the in-repo nexthop raw path is unfiltered too), whereas a subtly wrong BPF that the
+	// kernel still accepts would silently drop every probe's own reply — a monitor that
+	// reports everything down. Not shipped because it can't be validated here (needs root)
+	// and is catastrophic if wrong. A future root-tested change could add SO_ATTACH_FILTER
+	// mirroring pro-bing's utils_linux.go if high-N raw load ever demands it.
+
 	return fd, nil
 }
 
@@ -355,7 +367,7 @@ func sendProbe(rc syscall.RawConn, wb, oob []byte, dst unix.Sockaddr) (time.Time
 		tSend = time.Now()
 		serr = unix.Sendmsg(int(fd), wb, oob, dst, 0)
 
-		return !retryable(serr)
+		return !retryableSend(serr)
 	})
 	if werr != nil {
 		return time.Time{}, werr
@@ -426,6 +438,13 @@ func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) Resul
 func retryable(err error) bool {
 	return errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) ||
 		errors.Is(err, unix.EINTR)
+}
+
+// retryableSend extends retryable with ENOBUFS — transient output-queue congestion (a full
+// qdisc/txqueue), which pro-bing retried rather than scoring as a down host. Bounded by the
+// write deadline, so sustained congestion still ends as a timeout failure.
+func retryableSend(err error) bool {
+	return retryable(err) || errors.Is(err, unix.ENOBUFS)
 }
 
 // payload returns the ICMP message bytes from a received datagram. A raw IPv4 socket
@@ -524,8 +543,11 @@ func (fam icmpFamily) parseControl(oob []byte) (time.Time, bool, int) {
 		}
 
 		if int(c.Header.Level) == fam.ttlLevel && int(c.Header.Type) == fam.ttlCmsgType &&
-			len(c.Data) > 0 {
-			ttl = int(c.Data[0])
+			len(c.Data) >= 4 {
+			// The IP_TTL / IPV6_HOPLIMIT cmsg is a native-endian C int; reading c.Data[0]
+			// would yield 0 on a big-endian host (s390x/ppc64). All shipped arches are LE,
+			// but NativeEndian keeps it correct everywhere.
+			ttl = int(binary.NativeEndian.Uint32(c.Data))
 		}
 	}
 
