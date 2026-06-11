@@ -128,12 +128,20 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 		return failedResult
 	}
 
-	tSend, err := sendProbe(c.rc, wb, c.egressOOB, dst)
+	// One absolute deadline bounds both the send (a poller wait on a full buffer) and the
+	// recv, so neither can park past the probe timeout.
+	err = c.f.SetDeadline(deadline)
 	if err != nil {
 		return failedResult
 	}
 
-	err = c.f.SetReadDeadline(deadline)
+	// A ctx cancellation collapses the deadline so a parked send/recv unblocks at once,
+	// honoring the ctx Send is given (matching pro-bing's RunWithContext; deadman's TUI
+	// passes context.Background(), but a cancellable ctx is now respected).
+	stopCancel := context.AfterFunc(ctx, func() { _ = c.f.SetDeadline(time.Now()) })
+	defer stopCancel()
+
+	tSend, err := sendProbe(c.rc, wb, c.egressOOB, dst)
 	if err != nil {
 		return failedResult
 	}
@@ -347,7 +355,7 @@ func sendProbe(rc syscall.RawConn, wb, oob []byte, dst unix.Sockaddr) (time.Time
 		tSend = time.Now()
 		serr = unix.Sendmsg(int(fd), wb, oob, dst, 0)
 
-		return !errors.Is(serr, unix.EAGAIN)
+		return !retryable(serr)
 	})
 	if werr != nil {
 		return time.Time{}, werr
@@ -394,7 +402,7 @@ func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) Resul
 		readErr := rc.Read(func(fd uintptr) bool {
 			n, oobn, _, from, rerr = unix.Recvmsg(int(fd), buf, oob, 0)
 
-			return !retryRecv(rerr)
+			return !retryable(rerr)
 		})
 
 		recvUser := time.Now()
@@ -412,9 +420,10 @@ func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) Resul
 	}
 }
 
-// retryRecv reports whether a recvmsg error means "wait for readability and try again"
-// rather than fail: EAGAIN/EWOULDBLOCK (poller will re-arm) or an interrupted syscall.
-func retryRecv(err error) bool {
+// retryable reports whether a send/recv syscall error means "wait for the fd to be ready
+// and try again" rather than fail: EAGAIN/EWOULDBLOCK (the poller re-arms) or an
+// interrupted syscall (EINTR). Shared by sendProbe and recv so both classify identically.
+func retryable(err error) bool {
 	return errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) ||
 		errors.Is(err, unix.EINTR)
 }

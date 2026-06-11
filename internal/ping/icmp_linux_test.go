@@ -161,7 +161,9 @@ func TestTimespecToTimeValidation(t *testing.T) {
 		t.Fatal("zero timespec must be rejected")
 	}
 
-	if _, ok := timespecToTime(tsBytes(unix.Timespec{Sec: 1, Nsec: int64(2 * time.Second)})); ok {
+	// nsPerSec is an untyped constant, so it assigns to Nsec whether it is int64 (amd64) or
+	// int32 (386/arm); a literal int64 here would not compile on the 32-bit linux arches.
+	if _, ok := timespecToTime(tsBytes(unix.Timespec{Sec: 1, Nsec: nsPerSec})); ok {
 		t.Fatal("out-of-range nsec must be rejected")
 	}
 

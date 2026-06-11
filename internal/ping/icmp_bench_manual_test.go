@@ -86,3 +86,31 @@ func TestICMPSourceEgress(t *testing.T) {
 		})
 	}
 }
+
+// TestICMPContextCancel verifies a ctx cancellation interrupts the recv wait: a probe to
+// an unreachable TEST-NET address must return shortly after cancel, not at the ~1s timeout.
+//
+//	go test -tags manual -run TestICMPContextCancel -v ./internal/ping
+func TestICMPContextCancel(t *testing.T) {
+	p, err := newICMPPinger(Spec{Addr: "192.0.2.1"}) // TEST-NET-1: never replies.
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	start := time.Now()
+	res := p.Send(ctx)
+	elapsed := time.Since(start)
+
+	t.Logf("cancelled probe returned after %v (success=%v)", elapsed, res.Success)
+
+	if res.Success {
+		t.Fatal("probe to TEST-NET-1 must not succeed")
+	}
+
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("ctx cancel was not honored: returned after %v, want ~100ms", elapsed)
+	}
+}
