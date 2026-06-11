@@ -5,6 +5,7 @@ package monitor
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/yuu61/deadman/internal/ping"
@@ -58,6 +59,12 @@ type Target struct {
 
 	history []ping.Result // raw probe results (newest first); rendered to glyphs at view time.
 	prevRTT float64       // previous successful RTT, for the jitter delta.
+
+	// failed marks a placeholder built by NewFailedTarget (a target whose config could
+	// not be constructed). It is excluded from reload history-reuse so that fixing the
+	// config and reloading replaces the placeholder with the real target, rather than
+	// the new target inheriting the always-fail placeholder via a matching Key().
+	failed bool
 }
 
 // NewTarget builds a Target and its Pinger from a Spec.
@@ -78,6 +85,26 @@ func NewTarget(name string, spec ping.Spec) (*Target, error) {
 		State:  Unknown,
 	}, nil
 }
+
+// NewFailedTarget builds a placeholder target that always reports a failure (a
+// permanent X). buildRows uses it when a target's config cannot be constructed (e.g. a
+// missing required relay attribute or an option-like operand) so that one target
+// degrades visibly while monitoring of the rest continues, instead of aborting startup.
+func NewFailedTarget(name, addr string) *Target {
+	return &Target{
+		Name:   name,
+		Addr:   addr,
+		Relay:  map[string]string{},
+		Via:    "error",
+		Pinger: ping.AlwaysFail(),
+		State:  Unknown,
+		failed: true,
+	}
+}
+
+// IsFailed reports whether this is a NewFailedTarget placeholder. buildRows uses it to
+// keep placeholders out of the reload history-reuse index.
+func (t *Target) IsFailed() bool { return t.failed }
 
 // Consume folds a probe result into the running statistics.
 func (t *Target) Consume(res ping.Result) {
@@ -135,7 +162,9 @@ func (t *Target) Refresh() {
 }
 
 // Key is a stable identity used to preserve history across SIGHUP reloads. Relay
-// keys are sorted so map iteration order cannot affect equality.
+// keys are sorted so map iteration order cannot affect equality, and every field is
+// strconv.Quote'd before concatenation so a value containing the ':'/'=' delimiters
+// cannot forge a field boundary and alias another target's identity.
 func (t *Target) Key() string {
 	keys := make([]string, 0, len(t.Relay))
 	for k := range t.Relay {
@@ -145,25 +174,25 @@ func (t *Target) Key() string {
 	slices.Sort(keys)
 
 	var sb strings.Builder
-	sb.WriteString(t.Name)
+	sb.WriteString(strconv.Quote(t.Name))
 	sb.WriteString(":")
-	sb.WriteString(t.Addr)
+	sb.WriteString(strconv.Quote(t.Addr))
 
 	for _, k := range keys {
 		sb.WriteString(":")
-		sb.WriteString(k)
+		sb.WriteString(strconv.Quote(k))
 		sb.WriteString("=")
-		sb.WriteString(t.Relay[k])
+		sb.WriteString(strconv.Quote(t.Relay[k]))
 	}
 
 	if t.Source != "" {
 		sb.WriteString(":src=")
-		sb.WriteString(t.Source)
+		sb.WriteString(strconv.Quote(t.Source))
 	}
 
 	if t.TCP != "" {
 		sb.WriteString(":tcp=")
-		sb.WriteString(t.TCP)
+		sb.WriteString(strconv.Quote(t.TCP))
 	}
 
 	return sb.String()

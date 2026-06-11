@@ -18,6 +18,13 @@ var (
 	// (e.g. "= 0.4/...") reports its real RTT instead of truncating to 0.
 	reSNMP  = regexp.MustCompile(`rtt min/avg/max/stddev = (\d+(?:\.\d+)?)`)
 	reHping = regexp.MustCompile(`round-trip min/avg/max = (\d+(?:\.\d+)?)`)
+	// reHpingRecv captures hping3's received-packet count ("N packets received").
+	// hping3 prints the "round-trip min/avg/max = 0.0/0.0/0.0 ms" summary
+	// UNCONDITIONALLY — even on 100% loss — so liveness must gate on received > 0,
+	// not on the presence of that summary, or a down host reads as up. hping3
+	// misspells its transmit word ("tramitted") but "packets received" is normal, so
+	// matching on it is safe.
+	reHpingRecv = regexp.MustCompile(`(\d+) packets received`)
 	// reRouterOSUnit matches one "<n><unit>" run of a RouterOS duration. Each unit is
 	// independently optional and summed, so any combination ("1ms500us", "500us",
 	// "5ms", "2s") parses — unlike a fixed ms+us shape that dropped whole-ms values.

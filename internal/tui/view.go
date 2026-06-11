@@ -122,17 +122,28 @@ func (m Model) centerTitle() string {
 	return strings.Repeat(" ", pad) + styleBold.Render(titleProgName)
 }
 
+// versionLabel renders the title-bar version tag from the injected build version,
+// falling back to defaultVersion when none was set (a go install/run build).
+func versionLabel(v string) string {
+	if v == "" {
+		v = defaultVersion
+	}
+
+	return "[ver " + v + "]"
+}
+
 func (m Model) titleLine() string {
 	left := m.hostInfo
 	if m.opts.Async {
 		left += " " + spinner(m.tick)
 	}
 
+	label := versionLabel(m.opts.Version)
 	leftW := runewidth.StringWidth(left)
-	target := m.width - len(arrow) - len(titleVersion) // column where the version starts.
+	target := m.width - len(arrow) - len(label) // column where the version starts.
 	gap := max(target-(len(arrow)+leftW), 1)
 
-	return rear + styleBold.Render(left) + strings.Repeat(" ", gap) + styleBold.Render(titleVersion)
+	return rear + styleBold.Render(left) + strings.Repeat(" ", gap) + styleBold.Render(label)
 }
 
 func (m Model) headerLine() string {

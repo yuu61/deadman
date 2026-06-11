@@ -194,6 +194,75 @@ func (m Model) precMode() precisionMode {
 	return precisionModes[m.precIdx]
 }
 
+// computeStatWidths sizes each stat column to the widest of its header and its rendered
+// cells across all targets. A long-uptime SNT/FAIL count (or a rare >=10000 ms stat)
+// overflows the fixed 5-wide header, so without this the row grows past statsHeader's
+// budget and shifts the result bar, breaking alignment. Below 10000 every cell fits the
+// header width, so the result is identical to the fixed-width form (no layout change).
+func (m Model) computeStatWidths() map[string]int {
+	mode := m.precMode()
+	w := make(map[string]int, len(statColumns))
+
+	for _, c := range statColumns {
+		cw := len(c.header(mode))
+
+		for _, r := range m.rows {
+			if r.Target == nil {
+				continue
+			}
+
+			if l := len(c.cell(r.Target, mode)); l > cw {
+				cw = l
+			}
+		}
+
+		w[c.Key] = cw
+	}
+
+	return w
+}
+
+// growStatWidths widens the stat columns for the just-updated target if its cells now
+// exceed the current width (e.g. a counter crossed a digit boundary), recomputing the
+// result bar only when a width actually grew. Stat widths only grow within a session
+// (counters increase until a reload/refresh recomputes from scratch), so this O(1) path
+// replaces a full per-probe recalcWidths that would be O(N) per result. A nil statW
+// (before the first recalcWidths) is left for that pass to seed.
+func (m Model) growStatWidths(t *monitor.Target) Model {
+	if m.statW == nil || t == nil {
+		return m
+	}
+
+	mode := m.precMode()
+	grew := false
+
+	for _, c := range statColumns {
+		if w := len(c.cell(t, mode)); w > m.statW[c.Key] {
+			m.statW[c.Key] = w
+			grew = true
+		}
+	}
+
+	if grew {
+		used := m.rowFixedWidth()
+		m.resW = max(m.colContentWidth()-used, minResultWidth)
+	}
+
+	return m
+}
+
+// padStat left-pads a stat header/cell to its column's computed width (statW), keeping
+// the value right-aligned. A nil statW (a Model not built through recalcWidths) or a
+// width not exceeding the rendered string is a no-op, so the fixed-width formatters
+// still apply unchanged.
+func (m Model) padStat(key, s string) string {
+	if d := m.statW[key] - len(s); d > 0 {
+		return strings.Repeat(" ", d) + s
+	}
+
+	return s
+}
+
 // statsHeader builds the statistics header from the visible columns. It also
 // drives the width math in recalcWidths, so the header and each row stay aligned.
 func (m Model) statsHeader() string {
@@ -203,7 +272,7 @@ func (m Model) statsHeader() string {
 
 	for _, c := range statColumns {
 		if m.columnVisible(c.Key) {
-			b.WriteString(c.header(mode))
+			b.WriteString(m.padStat(c.Key, c.header(mode)))
 		}
 	}
 
@@ -219,7 +288,7 @@ func (m Model) statsLine(t *monitor.Target) string {
 
 	for _, c := range statColumns {
 		if m.columnVisible(c.Key) {
-			b.WriteString(c.cell(t, mode))
+			b.WriteString(m.padStat(c.Key, c.cell(t, mode)))
 		}
 	}
 

@@ -1,10 +1,10 @@
 package ping
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -41,10 +41,28 @@ func newSubprocessPinger(s Spec, mode subprocessMode) (Pinger, error) {
 	if s.Relay["relay"] == "" {
 		return nil, fmt.Errorf("'relay' is not specified for %s", s.Addr)
 	}
+	// relay (the ssh host or the `ip netns/vrf exec` namespace name) and addr (the
+	// remote ping destination) are bare operands in the argv, so a leading '-' would be
+	// parsed as an option — most dangerously an ssh relay of "-oProxyCommand=..." that
+	// runs an arbitrary local command. Reject both.
+	err := validateOperands(s.Relay["relay"], s.Addr)
+	if err != nil {
+		return nil, err
+	}
 	// The remote `ping` only takes a source flag on Linux (-I) / Darwin (-S);
 	// reject a source on any other OS.
 	if s.Source != "" && s.OSName != osLinux && s.OSName != osDarwin {
 		return nil, fmt.Errorf("'source' not supported on %s", s.OSName)
+	}
+	// macOS/BSD `ping -S` takes a source ADDRESS, not an interface name (interface
+	// binding is a separate flag there), so an interface-name source would silently fail
+	// as X every round on a Darwin relay. Reject it at construction so the operator gets
+	// a clear warning instead.
+	if s.OSName == osDarwin && s.Source != "" && net.ParseIP(s.Source) == nil {
+		return nil, fmt.Errorf(
+			"interface-name source %q is not supported on a Darwin relay; use a source IP",
+			s.Source,
+		)
 	}
 
 	return &subprocessPinger{
@@ -67,10 +85,12 @@ func (p *subprocessPinger) Send(ctx context.Context) Result {
 
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Separate capped writers: sshFailure classifies on stderr while ParsePingOutput
+	// reads stdout, and the cap bounds memory if a hostile relay floods either stream.
+	stdout := &capWriter{limit: maxProbeOutput}
+	stderr := &capWriter{limit: maxProbeOutput}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	err := cmd.Run()
 	if errors.Is(err, exec.ErrNotFound) {

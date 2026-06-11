@@ -12,11 +12,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/yuu61/deadman/internal/config"
+	"github.com/yuu61/deadman/internal/monitor"
 	"github.com/yuu61/deadman/internal/tui"
 )
 
 // defaultScale is the default RTT bar gap in milliseconds.
 const defaultScale = 10
+
+// version is the build version shown in the TUI title bar. It is overridden at build
+// time via -ldflags "-X main.version=..." (see the Makefile, which derives it from git
+// describe); a plain `go install`/`go build` leaves it at "dev".
+var version = "dev"
 
 // resolveScale picks the effective RTT-bar scale: an explicit CLI -s wins, else a
 // config "scale" directive, else defaultScale. 0 means "unset" for both inputs (the
@@ -73,6 +79,15 @@ func parseArgs(args []string) (tui.Options, error) {
 	if len(positional) < 1 {
 		return tui.Options{}, errors.New("configfile is required")
 	}
+	// Exactly one configfile is accepted. Erroring on extras (rather than silently
+	// using the first) also closes a `--` foot-gun: `deadman -- -a cfg.conf` previously
+	// dropped cfg.conf and ran the nonexistent file "-a".
+	if len(positional) > 1 {
+		return tui.Options{}, fmt.Errorf(
+			"only one configfile may be given, got %d: %v",
+			len(positional), positional,
+		)
+	}
 
 	return tui.Options{
 		Async:      *async,
@@ -128,6 +143,11 @@ func main() {
 	opts.Scale = resolveScale(opts.Scale, cfg.Scale)
 	opts.Precision = cfg.Precision
 	opts.Cols = resolveCols(opts.Cols, cfg.Cols)
+	opts.Version = version
+
+	if opts.LogDir != "" {
+		opts.LogWriter = monitor.NewLogWriter(opts.LogDir)
+	}
 
 	m, err := tui.New(cfg.Targets, opts)
 	if err != nil {
@@ -139,6 +159,13 @@ func main() {
 	tui.InstallReloadSignal(p)
 
 	_, err = p.Run()
+
+	// Drain any queued log lines before exit. The TUI has stopped, so no Log call races
+	// this Close. os.Exit skips defers, so close explicitly before the error exit too.
+	if opts.LogWriter != nil {
+		opts.LogWriter.Close()
+	}
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

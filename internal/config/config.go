@@ -97,10 +97,13 @@ var directives = map[string]func(cfg *Config, args []string){
 
 var reSeparator = regexp.MustCompile(`^-+$`)
 
-// relayKeys is the set of attribute keys routed into a target's relay map.
+// relayKeys is the set of attribute keys routed into a target's relay map. "netns" is
+// deliberately absent: the netns mode is selected by via=netns and reads the namespace
+// name from relay=, so a `netns=` token is a typo that should surface as an ignored
+// stray token (the warning every other unknown key gets), not be silently swallowed.
 var relayKeys = map[string]bool{
 	"os": true, "relay": true, "via": true, "community": true,
-	"netns": true, "user": true, "key": true, "method": true,
+	"user": true, "key": true, "method": true,
 	"username": true, "password": true, "verify": true,
 	"nexthop": true, "resolve_family": true,
 }
@@ -111,8 +114,20 @@ func ParseConfig(r io.Reader) (Config, error) {
 	cfg := Config{Columns: map[string]bool{}}
 
 	sc := bufio.NewScanner(r)
+
+	first := true
+
 	for sc.Scan() {
 		line := strings.ReplaceAll(sc.Text(), "\t", " ")
+		if first {
+			// Strip a leading UTF-8 BOM (U+FEFF) from the first line only. Windows
+			// editors (Notepad/PowerShell) routinely save it, and otherwise it sticks to
+			// the first token — turning a directive like "scale 5" into a phantom target
+			// or garbling the first host's name.
+			line = strings.TrimPrefix(line, "\ufeff")
+			first = false
+		}
+
 		line = stripComment(line)
 
 		fields, terminated := tokenize(line)

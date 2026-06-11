@@ -13,12 +13,13 @@ Go で実装されており、クロスプラットフォーム対応（Windows 
 
 ## ビルド
 
-Go 1.25 以上が必要です
+Go 1.25 以上が必要です。
+配布用バイナリは、標準ライブラリのセキュリティ修正を取り込むため最新のパッチ版 Go でビルドしてください。
 
 ```sh
 git clone https://github.com/yuu61/deadman
 cd deadman
-go build -o deadman ./cmd/deadman      # Windows: go build -o deadman.exe ./cmd/deadman
+go build -o bin/deadman ./cmd/deadman      # Windows: go build -o bin/deadman.exe ./cmd/deadman
 # or
 make build
 ```
@@ -87,6 +88,7 @@ kame6           2001:200:dff:fff1:216:3eff:feb1:44d7
 
 ssh 中継の例 `google-via-ssh 173.194.117.176 relay=X.X.X.X os=Linux` は、リモートサーバ X.X.X.X 経由で対象へ ping します。
 `user=USER` / `key=KEYPATH` で ssh のユーザ名と鍵を指定でき、`os` を省略すると deadman を実行している OS 名が使われます。
+`os=` は中継先（Unix 系）の OS を表し、リモートで使う `ping`/`ping6` の選択や送信元フラグ（`-I`/`-S`）に影響します。Windows の中継先（`ping -n`）は未対応です。
 各モードの記述例は `deadman.conf` にもコメントとして含まれています。
 中継モードが必要とする外部コマンドや権限は「[権限とプラットフォームに関する注意](#権限とプラットフォームに関する注意)」を参照してください。
 
@@ -94,7 +96,8 @@ ssh 中継の例 `google-via-ssh 173.194.117.176 relay=X.X.X.X os=Linux` は、�
 
 - **`source=...`** … プローブの送信元を指定します（**直接 ICMP・`nexthop`・ssh/netns/vrf 中継**で有効）。
   値は送信元 IP アドレス、または `source=eth0` のようなネットワークインターフェース名です。
-  インターフェース名を指定できるのは直接 ICMP・`nexthop`（Linux）と Linux/macOS 上の ssh/netns/vrf 中継に限ります。
+  インターフェース名を指定できるのは直接 ICMP・`nexthop`（Linux）と **Linux 上**の ssh/netns/vrf 中継に限ります。
+  macOS/BSD の中継先では `ping -S` が送信元**アドレス**のみを受け付けるため、ソースには IP アドレスを指定してください（インターフェース名は構築時に拒否され、起動時に警告が表示されます）。
   snmp / routeros / tcp(hping3) モードは `source` を使いません（プローブは中継先で生成されるか hping3 が未対応のため）。指定しても無視され、起動時に警告が表示されます（対象の監視は継続します）。
 
 - **`verify=on|off`**（routeros モード）… RouterOS REST API の TLS 証明書検証の有無を指定します。
@@ -134,6 +137,8 @@ ssh 中継の例 `google-via-ssh 173.194.117.176 relay=X.X.X.X os=Linux` は、�
 -l, --logging DIR   DIR 配下に対象ごとのログファイルを書き出す
 -c, --split N       一覧を N 列の段組みで表示する（既定 1。実行中は [ / ] でも変更可）
 ```
+
+設定ファイルは 1 つだけ指定できます（フラグの前後どちらでも可）。複数指定した場合はエラーになります。
 
 ## 操作
 
@@ -191,7 +196,7 @@ columns ADDRESS=off MIN=off MAX=off VIA=on
 指定できるキーは`HOSTNAME ADDRESS VIA LOSS RTT AVG MIN MAX JIT SNT FAIL` です。
 `RESULT`（結果バー）は deadman の看板のため常に表示され、隠せません。
 
-`VIA` 列は各対象の**取得方法**を表示します（`direct` / `nexthop GWIP` / `ssh HOST` / `snmp HOST` / `netns NAME` / `vrf NAME` / `routeros HOST` / `tcp PORT`）。
+`VIA` 列は各対象の**取得方法**を表示します（`direct` / `nexthop GWIP` / `ssh HOST` / `snmp HOST` / `netns NAME` / `vrf NAME` / `routeros HOST` / `tcp dstport:PORT`）。
 同じアドレスを別経路で監視している場合などに、一目で区別できます。
 表示は設定上の意図ではなく**実際に使われる経路**を反映するため、relay/via/tcp が優先されて nexthop が無視される対象では、その実際のモード（`ssh` など）が表示されます。
 
@@ -244,6 +249,12 @@ RouterOS API モードは HTTP を使うためOS 非依存です。
 > strict を検出すると deadman は起動時に警告を表示します（IPv6 には同等の設定はありません）。
 
 ブロック文字による RTT バー（`▁▂▃▄▅▆▇█`）を正しく表示するため、Unicode と色に対応した端末を推奨します（Windows では Windows Terminal）。
+
+## セキュリティに関する注意
+
+設定ファイルは**コードと同等に信頼できる必要があります**。deadman は中継モードを多く root（または `CAP_NET_RAW`）で実行するため、設定ファイルに書き込める者は deadman の権限で外部コマンドを起動できると考えてください。
+`relay` / アドレスなどの値はそのまま `ssh` / `ping` / `ip` / `snmpping` / `hping3` の引数に渡されます。インベントリや CMDB から自動生成した値など、信頼できない入力をそのまま設定へ流し込まないでください。
+引数注入を防ぐため、オペランド位置に来る値（ssh 中継ホスト、netns/vrf 名、ping 先アドレス）が `-` で始まる場合は拒否され、その対象は永続的に失敗（`X`）として表示されます。
 
 ## ライセンス
 

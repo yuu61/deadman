@@ -19,7 +19,8 @@ EXE       := $(shell $(GO) env GOEXE)
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 # リリースビルド用フラグ。-s -w でシンボルを除去、-trimpath で絶対パスを排除して再現性を上げる。
-LDFLAGS   := -s -w
+# -X main.version で git 由来のバージョン文字列をバイナリへ埋め込み、TUI のタイトル表示に反映する。
+LDFLAGS   := -s -w -X main.version=$(VERSION)
 BUILDFLAGS := -trimpath -ldflags '$(LDFLAGS)'
 
 # クロスコンパイル対象 (GOOS/GOARCH)。
