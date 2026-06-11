@@ -104,7 +104,6 @@ var reSeparator = regexp.MustCompile(`^-+$`)
 // "port"/"alpn"/"sni" are QUIC (via=quic) sub-attributes; like "method"/"verify" they
 // are meaningful only to their mode and harmlessly ignored by the others.
 var relayKeys = map[string]bool{
-	//nolint:goconst // "via" else recurs only in excluded tests; a one-off key constant adds no clarity.
 	"os": true, "relay": true, "via": true, "community": true,
 	"user": true, "key": true, "method": true,
 	"username": true, "password": true, "verify": true,

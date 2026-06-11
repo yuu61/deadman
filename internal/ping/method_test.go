@@ -132,6 +132,18 @@ func TestSourceIgnoredNotRejected(t *testing.T) {
 	}
 }
 
+// The source-ignored warning's mode list comes from methodRegistry, so a new
+// source-ignoring mode joins it automatically. Pin the set so the registry's
+// sourceUnsupported flags cannot silently drift from the warning text.
+func TestSourceModeNames(t *testing.T) {
+	if got := SourceUnsupportedModeNames(); !slices.Equal(
+		got,
+		[]string{"quic", "routeros", "snmp", "tcp"},
+	) {
+		t.Errorf("SourceUnsupportedModeNames = %v, want [quic routeros snmp tcp]", got)
+	}
+}
+
 // selectMethod and Describe must agree with New's dispatch precedence: tcp >
 // via=snmp/netns/vrf/routers_api/quic > relay (ssh) > nexthop > direct.
 func TestSelectMethodAndDescribe(t *testing.T) {

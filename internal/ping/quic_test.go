@@ -136,6 +136,33 @@ func TestNewQUICPinger(t *testing.T) {
 	}
 }
 
+// resolve_family pins the QUIC dial's hostname resolution to a family (like direct
+// ICMP); an unset or unrecognized value lets the resolver choose ("ip").
+func TestNewQUICPingerResolveFamily(t *testing.T) {
+	cases := map[string]string{"": "ip", "ipv4": "ip4", "ipv6": "ip6", "bogus": "ip"}
+
+	for rf, want := range cases {
+		relay := map[string]string{"via": "quic"}
+		if rf != "" {
+			relay["resolve_family"] = rf
+		}
+
+		pinger, err := newQUICPinger(Spec{Addr: "example.com", Relay: relay})
+		if err != nil {
+			t.Fatalf("resolve_family=%q: newQUICPinger error: %v", rf, err)
+		}
+
+		qp, ok := pinger.(*quicPinger)
+		if !ok {
+			t.Fatalf("resolve_family=%q: returned %T, want *quicPinger", rf, pinger)
+		}
+
+		if qp.network != want {
+			t.Errorf("resolve_family=%q: network = %q, want %q", rf, qp.network, want)
+		}
+	}
+}
+
 // An invalid port= must fail at construction, so model.go turns it into a startup
 // warning and a permanent-failure row rather than a silent, undebuggable X.
 func TestNewQUICPingerInvalidPort(t *testing.T) {

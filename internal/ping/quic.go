@@ -33,6 +33,7 @@ const (
 type quicPinger struct {
 	host      string // hostname or IP literal, resolved per Send (no port).
 	port      string // dial port, validated at construction.
+	network   string // LookupNetIP network: "ip4"/"ip6" pins resolve_family, "ip" = either.
 	tlsConfig *tls.Config
 }
 
@@ -94,7 +95,15 @@ func newQUICPinger(s Spec) (Pinger, error) {
 		ServerName:         sni,
 	}
 
-	return &quicPinger{host: s.Addr, port: port, tlsConfig: tlsConfig}, nil
+	// resolve_family pins a dual-stack hostname to A (ip4) or AAAA (ip6) records, like the
+	// direct-ICMP path; an unset/unrecognized value lets the resolver choose. It is
+	// applied only to hostname resolution — an IP literal already fixes its family.
+	network := resolveNetwork(s)
+	if network == "" {
+		network = networkAny
+	}
+
+	return &quicPinger{host: s.Addr, port: port, network: network, tlsConfig: tlsConfig}, nil
 }
 
 func (p *quicPinger) Send(ctx context.Context) Result {
@@ -137,7 +146,7 @@ func (p *quicPinger) resolveAddr(ctx context.Context) (string, error) {
 		return net.JoinHostPort(p.host, p.port), nil
 	}
 
-	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", p.host)
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, p.network, p.host)
 	if err != nil {
 		return "", err
 	}
