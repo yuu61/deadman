@@ -243,6 +243,13 @@ func TestZoneIndex(t *testing.T) {
 	if got := zoneIndex("nonexistent-if-zzz"); got != 0 {
 		t.Errorf("unknown zone = %d, want 0", got)
 	}
+
+	// An out-of-range numeric zone must not truncate into a bogus ZoneId; it degrades to 0.
+	for _, z := range []string{"-1", "4294967296", "99999999999999999999"} {
+		if got := zoneIndex(z); got != 0 {
+			t.Errorf("out-of-range zone %q = %d, want 0", z, got)
+		}
+	}
 }
 
 // TestLiteralAddrZone pins F3: a scoped IPv6 literal keeps its zone as an interface index;

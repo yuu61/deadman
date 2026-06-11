@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"math"
 	"net"
 	"net/netip"
 	"os"
@@ -197,8 +198,11 @@ func (p *icmpPinger) literalAddr(a netip.Addr) (net.IP, int, error) {
 // zoneIndex resolves an IPv6 zone (scope) to an interface index, accepting both a numeric
 // scope id (fe80::1%2) and an interface name (fe80::1%eth0); 0 means "no zone".
 func zoneIndex(zone string) int {
+	// strconv.Atoi yields a 64-bit int; reject anything outside a valid (uint32) interface
+	// index so an out-of-range zone (e.g. %-1 or %4294967296) cannot truncate into a wrong
+	// ZoneId — it falls through to a no-zone (0) result instead.
 	idx, err := strconv.Atoi(zone)
-	if err == nil {
+	if err == nil && idx >= 0 && idx <= math.MaxInt32 {
 		return idx
 	}
 
@@ -594,7 +598,12 @@ func ipSockaddr(ip net.IP, zoneID int) (unix.Sockaddr, error) {
 	copy(a[:], ip16)
 
 	sa := &unix.SockaddrInet6{Addr: a}
-	sa.ZoneId = uint32(zoneID) //nolint:gosec // ifindex is non-negative.
+	// Bounded narrowing: a zoneID outside the uint32 interface-index range leaves ZoneId 0
+	// (no zone) rather than truncating. zoneIndex already filters numeric zones, so this is
+	// belt-and-suspenders that also keeps the int->uint32 conversion provably safe here.
+	if zoneID >= 0 && zoneID <= math.MaxInt32 {
+		sa.ZoneId = uint32(zoneID)
+	}
 
 	return sa, nil
 }
