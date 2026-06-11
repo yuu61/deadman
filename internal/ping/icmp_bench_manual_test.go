@@ -61,3 +61,28 @@ func TestICMPRTTLoopback(t *testing.T) {
 	t.Run("v4", func(t *testing.T) { benchLoopback(t, "127.0.0.1") })
 	t.Run("v6", func(t *testing.T) { benchLoopback(t, "::1") })
 }
+
+// TestICMPSourceEgress exercises source= on the live socket: an interface name (the
+// IP_PKTINFO egress path that replaced SO_BINDTODEVICE) and a source IP (the bind path).
+// Both must succeed to 127.0.0.1 over loopback on the unprivileged datagram socket.
+//
+//	go test -tags manual -run TestICMPSourceEgress -v ./internal/ping
+func TestICMPSourceEgress(t *testing.T) {
+	cases := map[string]string{"interface=lo": "lo", "ip=127.0.0.1": "127.0.0.1"}
+
+	for name, source := range cases {
+		t.Run(name, func(t *testing.T) {
+			p, err := newICMPPinger(Spec{Addr: "127.0.0.1", Source: source})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			res := p.Send(context.Background())
+			if !res.Success {
+				t.Fatalf("source=%q probe failed: %+v", source, res)
+			}
+
+			t.Logf("source=%q rtt=%.4fms ttl=%d", source, res.RTT, res.TTL)
+		})
+	}
+}

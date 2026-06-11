@@ -7,6 +7,10 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
+	"os"
+	"strconv"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -44,12 +48,14 @@ var failedResult = Result{Code: Failed, TTL: -1}
 // a quiet LAN/loopback target and inflates AVG/JIT far above the true network RTT (MIN
 // stays near the floor; AVG and JIT balloon).
 //
-// Here the send and receive happen synchronously on the calling goroutine (no hop), and
-// the receive instant comes from the kernel's SO_TIMESTAMPNS software timestamp (stamped
-// at RX softirq, before any scheduling) — the same TX=userspace-CLOCK_REALTIME /
-// RX=kernel-software approach iputils' ping uses. A persistent socket would not help: it
-// is opened before tSend, so its setup is never inside the measured RTT; Send stays
-// stateless per-probe to avoid socket-lifecycle and concurrency complexity.
+// Here the send and receive happen synchronously on the calling goroutine, and the
+// receive instant comes from the kernel's SO_TIMESTAMPNS software timestamp (stamped at
+// RX softirq, before any scheduling) — the same TX=userspace-CLOCK_REALTIME /
+// RX=kernel-software approach iputils' ping uses. The socket is nonblocking and driven
+// through the Go runtime poller (os.File + RawConn), so a parked recv holds no OS thread
+// (one blocked thread per in-flight probe would otherwise pile up across an async round
+// during an outage). A persistent socket would not help accuracy: it is opened before
+// tSend, so its setup is never inside the measured RTT; Send stays stateless per-probe.
 //
 // raw vs datagram follows useICMPPrivileged() exactly as the portable path does, so the
 // behavior on root, non-root, and unprivileged LXC (where the datagram path is blocked
@@ -80,7 +86,7 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
 	defer cancel()
 
-	ip, err := p.resolve(ctx)
+	ip, zoneID, err := p.resolve(ctx)
 	if err != nil {
 		return failedResult
 	}
@@ -97,12 +103,17 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 		sockType = unix.SOCK_RAW
 	}
 
-	fd, err := openICMPSocket(fam, sockType, p.source)
+	c, err := dialICMP(fam, sockType, p.source)
 	if err != nil {
 		return failedResult
 	}
 
-	defer func() { _ = unix.Close(fd) }()
+	defer func() { _ = c.f.Close() }()
+
+	dst, err := ipSockaddr(ip, zoneID)
+	if err != nil {
+		return failedResult
+	}
 
 	pr := icmpProbe{
 		fam:        fam,
@@ -117,34 +128,27 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 		return failedResult
 	}
 
-	dst, err := ipSockaddr(ip)
+	tSend, err := sendProbe(c.rc, wb, c.egressOOB, dst)
 	if err != nil {
 		return failedResult
 	}
 
-	tSend := time.Now()
-
-	err = unix.Sendto(fd, wb, 0, dst)
+	err = c.f.SetReadDeadline(deadline)
 	if err != nil {
 		return failedResult
 	}
 
-	return pr.recv(fd, ip, tSend, deadline)
+	return pr.recv(c.rc, ip, tSend)
 }
 
-// resolve turns the configured address into an IP, honoring the resolve_family pin
-// (network) the same way the pro-bing path does via SetNetwork.
-func (p *icmpPinger) resolve(ctx context.Context) (net.IP, error) {
-	if ip := net.ParseIP(p.addr); ip != nil {
-		if p.network == networkIPv4 && ip.To4() == nil {
-			return nil, errAddrFamily
-		}
-
-		if p.network == networkIPv6 && ip.To4() != nil {
-			return nil, errAddrFamily
-		}
-
-		return ip, nil
+// resolve turns the configured address into an IP plus an IPv6 zone (scope) index,
+// honoring the resolve_family pin (network) the same way the pro-bing path did. netip is
+// used for literals because, unlike net.ParseIP, it accepts the fe80::1%zone form and
+// exposes the zone — net.DefaultResolver.LookupIP (the hostname path) drops it.
+func (p *icmpPinger) resolve(ctx context.Context) (net.IP, int, error) {
+	a, perr := netip.ParseAddr(p.addr)
+	if perr == nil {
+		return p.literalAddr(a)
 	}
 
 	netw := "ip"
@@ -154,10 +158,47 @@ func (p *icmpPinger) resolve(ctx context.Context) (net.IP, error) {
 
 	ips, err := net.DefaultResolver.LookupIP(ctx, netw, p.addr)
 	if err != nil || len(ips) == 0 {
-		return nil, errAddrFamily
+		return nil, 0, errAddrFamily
 	}
 
-	return ips[0], nil
+	return ips[0], 0, nil
+}
+
+// literalAddr resolves an IP literal, enforcing the resolve_family pin and extracting an
+// IPv6 zone (scope) if present.
+func (p *icmpPinger) literalAddr(a netip.Addr) (net.IP, int, error) {
+	a = a.Unmap()
+
+	if p.network == networkIPv4 && a.Is6() {
+		return nil, 0, errAddrFamily
+	}
+
+	if p.network == networkIPv6 && a.Is4() {
+		return nil, 0, errAddrFamily
+	}
+
+	zone := 0
+	if a.Is6() && a.Zone() != "" {
+		zone = zoneIndex(a.Zone())
+	}
+
+	return net.IP(a.AsSlice()), zone, nil
+}
+
+// zoneIndex resolves an IPv6 zone (scope) to an interface index, accepting both a numeric
+// scope id (fe80::1%2) and an interface name (fe80::1%eth0); 0 means "no zone".
+func zoneIndex(zone string) int {
+	idx, err := strconv.Atoi(zone)
+	if err == nil {
+		return idx
+	}
+
+	ifi, err := net.InterfaceByName(zone)
+	if err == nil {
+		return ifi.Index
+	}
+
+	return 0
 }
 
 // icmpFamily captures the address-family-specific socket and parsing parameters, so the
@@ -200,47 +241,119 @@ func familyOf(ip net.IP) icmpFamily {
 	}
 }
 
-// openICMPSocket opens the ICMP socket for fam, with the given socket type (raw or
-// datagram), enabling the kernel RX timestamp and the reply TTL cmsg. The recv timeout
-// is armed per-read from the absolute deadline in recv, not here.
-func openICMPSocket(fam icmpFamily, sockType int, source string) (int, error) {
-	fd, err := unix.Socket(fam.domain, sockType|unix.SOCK_CLOEXEC, fam.proto)
+// egressControl returns the per-send control message that pins the outgoing interface to
+// ifIndex (IP_PKTINFO / IPV6_PKTINFO). This is privilege-free on every kernel, matching
+// pro-bing's ControlMessage{IfIndex} — unlike SO_BINDTODEVICE, which the kernel gated on
+// CAP_NET_RAW before 5.7. The source IP is left zero so the kernel auto-picks it to match
+// the destination scope (README: "送信元 IP は宛先のスコープに合わせて自動選択").
+func (fam icmpFamily) egressControl(ifIndex int) []byte {
+	if fam.domain == unix.AF_INET {
+		return (&netipv4.ControlMessage{IfIndex: ifIndex}).Marshal()
+	}
+
+	return (&netipv6.ControlMessage{IfIndex: ifIndex}).Marshal()
+}
+
+// icmpConn is the poller-registered socket a probe sends and receives on: the os.File
+// (the caller closes it), its RawConn, and the per-send egress control message.
+type icmpConn struct {
+	f         *os.File
+	rc        syscall.RawConn
+	egressOOB []byte // IP_PKTINFO for an interface source; nil otherwise.
+}
+
+// dialICMP opens the poller-registered ICMP socket for fam and applies source=.
+func dialICMP(fam icmpFamily, sockType int, source string) (icmpConn, error) {
+	fd, err := openICMPSocket(fam, sockType)
+	if err != nil {
+		return icmpConn{}, err
+	}
+
+	egressOOB, err := applySource(fd, source, fam)
+	if err != nil {
+		_ = unix.Close(fd)
+
+		return icmpConn{}, err
+	}
+
+	// os.NewFile registers the nonblocking socket with the runtime poller and takes
+	// ownership of the fd, so from here it is closed via f.Close(), never unix.Close.
+	f := os.NewFile(uintptr(fd), "icmp")
+
+	rc, err := f.SyscallConn()
+	if err != nil {
+		_ = f.Close()
+
+		return icmpConn{}, err
+	}
+
+	return icmpConn{f: f, rc: rc, egressOOB: egressOOB}, nil
+}
+
+// openICMPSocket opens a nonblocking ICMP socket for fam, with the given socket type (raw
+// or datagram), enabling the kernel RX timestamp and the reply TTL cmsg. The recv timeout
+// is armed via the os.File read deadline in Send, not here.
+func openICMPSocket(fam icmpFamily, sockType int) (int, error) {
+	fd, err := unix.Socket(fam.domain, sockType|unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK, fam.proto)
 	if err != nil {
 		return -1, err
 	}
 
 	// RX kernel timestamp (software, CLOCK_REALTIME). Best-effort: if it cannot be set
-	// the receive falls back to a userspace instant, degrading to synchronous accuracy.
+	// the receive falls back to the monotonic span, degrading to synchronous accuracy.
 	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_TIMESTAMPNS, 1)
 
 	// Reply TTL/hop-limit as a control message (captured, not displayed).
 	_ = unix.SetsockoptInt(fd, fam.ttlLevel, fam.ttlRecvOpt, 1)
 
-	if source != "" {
-		err = bindSource(fd, source)
-		if err != nil {
-			_ = unix.Close(fd)
-
-			return -1, err
-		}
-	}
-
 	return fd, nil
 }
 
-// bindSource honors source= : a source IP binds the socket address; anything else is
-// treated as an interface name (SO_BINDTODEVICE), matching the portable path's split.
-func bindSource(fd int, source string) error {
-	if srcIP := net.ParseIP(source); srcIP != nil {
-		sa, err := ipSockaddr(srcIP)
-		if err != nil {
-			return err
-		}
-
-		return unix.Bind(fd, sa)
+// applySource honors source= : a source IP binds the socket (privilege-free for a local
+// address); an interface name yields a per-send IP_PKTINFO egress control message. The
+// returned oob is nil unless an interface name was given.
+func applySource(fd int, source string, fam icmpFamily) ([]byte, error) {
+	if source == "" {
+		return nil, nil
 	}
 
-	return unix.BindToDevice(fd, source)
+	if srcIP := net.ParseIP(source); srcIP != nil {
+		sa, err := ipSockaddr(srcIP, 0)
+		if err != nil {
+			return nil, err
+		}
+
+		return nil, unix.Bind(fd, sa)
+	}
+
+	ifi, err := net.InterfaceByName(source)
+	if err != nil {
+		return nil, err
+	}
+
+	return fam.egressControl(ifi.Index), nil
+}
+
+// sendProbe writes the echo through the runtime poller (no OS thread parked on a full send
+// buffer) and returns the instant of the successful send. The send timestamp is taken
+// inside the callback, right before the syscall, so a rare writability wait is excluded.
+func sendProbe(rc syscall.RawConn, wb, oob []byte, dst unix.Sockaddr) (time.Time, error) {
+	var (
+		tSend time.Time
+		serr  error
+	)
+
+	werr := rc.Write(func(fd uintptr) bool {
+		tSend = time.Now()
+		serr = unix.Sendmsg(int(fd), wb, oob, dst, 0)
+
+		return !errors.Is(serr, unix.EAGAIN)
+	})
+	if werr != nil {
+		return time.Time{}, werr
+	}
+
+	return tSend, serr
 }
 
 // icmpProbe bundles a probe's family, privilege, and identity so the build/receive logic
@@ -264,38 +377,30 @@ func (pr icmpProbe) build() ([]byte, error) {
 	return msg.Marshal(nil)
 }
 
-// recv reads until this probe's echo reply arrives or the deadline passes, then computes
-// RTT from the kernel RX timestamp (or a userspace fallback) minus tSend.
-func (pr icmpProbe) recv(fd int, peer net.IP, tSend, deadline time.Time) Result {
+// recv reads through the runtime poller until this probe's echo reply arrives or the
+// os.File read deadline passes, skipping foreign ICMP (raw fan-out). A parked read holds
+// no OS thread, and the absolute deadline bounds the loop even under continuous ICMP.
+func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) Result {
 	buf := make([]byte, recvBufSize)
 	oob := make([]byte, controlBufSize)
 
 	for {
-		// Re-arm the recv timeout from the absolute deadline each iteration. SO_RCVTIMEO is
-		// per-call, and a raw socket's fan-out delivers other hosts' (and other probes')
-		// ICMP that we skip; without re-arming, each skipped packet would restart the full
-		// timeout and the probe could spin past its deadline under continuous ICMP.
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return failedResult
-		}
+		var (
+			n, oobn int
+			from    unix.Sockaddr
+			rerr    error
+		)
 
-		tv := unix.NsecToTimeval(int64(remaining))
+		readErr := rc.Read(func(fd uintptr) bool {
+			n, oobn, _, from, rerr = unix.Recvmsg(int(fd), buf, oob, 0)
 
-		err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
-		if err != nil {
-			return failedResult
-		}
+			return !retryRecv(rerr)
+		})
 
-		n, oobn, _, from, err := unix.Recvmsg(fd, buf, oob, 0)
 		recvUser := time.Now()
 
-		if err != nil {
-			if errors.Is(err, unix.EINTR) {
-				continue // the deadline is re-checked at the top of the loop.
-			}
-
-			return failedResult // SO_RCVTIMEO (EAGAIN) or another error: no reply.
+		if readErr != nil || rerr != nil {
+			return failedResult // deadline exceeded, poller error, or recvmsg error.
 		}
 
 		data, ok := pr.payload(buf[:n])
@@ -307,20 +412,11 @@ func (pr icmpProbe) recv(fd int, peer net.IP, tSend, deadline time.Time) Result 
 	}
 }
 
-// result turns a matched reply's ancillary data into a success Result: RTT from the
-// kernel RX timestamp (or the userspace recvUser fallback) minus tSend, plus the TTL.
-func (pr icmpProbe) result(oob []byte, recvUser, tSend time.Time) Result {
-	rxTime, haveRx, ttl := pr.fam.parseControl(oob)
-	if !haveRx {
-		rxTime = recvUser
-	}
-
-	rtt := float64(rxTime.Sub(tSend).Microseconds()) / usPerMs
-	if rtt < 0 {
-		rtt = 0 // a clock step in the sub-ms window must not yield a negative RTT.
-	}
-
-	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
+// retryRecv reports whether a recvmsg error means "wait for readability and try again"
+// rather than fail: EAGAIN/EWOULDBLOCK (poller will re-arm) or an interrupted syscall.
+func retryRecv(err error) bool {
+	return errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) ||
+		errors.Is(err, unix.EINTR)
 }
 
 // payload returns the ICMP message bytes from a received datagram. A raw IPv4 socket
@@ -369,9 +465,31 @@ func (pr icmpProbe) match(data []byte, from unix.Sockaddr, peer net.IP) bool {
 	return echo.Seq == pr.seq && bytes.Equal(echo.Data, pr.token)
 }
 
+// result turns a matched reply into a success Result. RTT prefers the kernel RX timestamp
+// (precise) but falls back to the monotonic send->recv span when the kernel value is
+// implausible — i.e. a CLOCK_REALTIME step between send and receive moved it outside
+// [0, rttMono]. recvUser carries a monotonic reading, so rttMono is step-immune and is a
+// valid upper bound (the kernel stamps RX before the userspace Recvmsg returns). k==0 is
+// accepted: a genuine sub-microsecond reply truncates to 0 ms.
+func (pr icmpProbe) result(oob []byte, recvUser, tSend time.Time) Result {
+	rttMono := recvUser.Sub(tSend)
+	dur := rttMono
+
+	rxTime, haveRx, ttl := pr.fam.parseControl(oob)
+	if haveRx {
+		if k := rxTime.Sub(tSend); k >= 0 && k <= rttMono {
+			dur = k
+		}
+	}
+
+	rtt := float64(dur.Microseconds()) / usPerMs
+
+	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
+}
+
 // parseControl extracts the kernel RX timestamp (SCM_TIMESTAMPNS) and reply TTL from the
 // ancillary data. An absent/invalid timestamp leaves haveRx false so the caller falls
-// back to a userspace instant; an absent TTL leaves ttl -1.
+// back to the monotonic span; an absent TTL leaves ttl -1.
 func (fam icmpFamily) parseControl(oob []byte) (time.Time, bool, int) {
 	cmsgs, err := unix.ParseSocketControlMessage(oob)
 	if err != nil {
@@ -424,8 +542,9 @@ func timespecToTime(b []byte) (time.Time, bool) {
 	return time.Unix(0, unix.TimespecToNsec(ts)), true
 }
 
-// ipSockaddr builds a unix.Sockaddr for ip, choosing the family from ip itself.
-func ipSockaddr(ip net.IP) (unix.Sockaddr, error) {
+// ipSockaddr builds a unix.Sockaddr for ip, choosing the family from ip itself and setting
+// the IPv6 scope (zone) id when one is given.
+func ipSockaddr(ip net.IP, zoneID int) (unix.Sockaddr, error) {
 	if ip4 := ip.To4(); ip4 != nil {
 		var a [4]byte
 
@@ -443,7 +562,10 @@ func ipSockaddr(ip net.IP) (unix.Sockaddr, error) {
 
 	copy(a[:], ip16)
 
-	return &unix.SockaddrInet6{Addr: a}, nil
+	sa := &unix.SockaddrInet6{Addr: a}
+	sa.ZoneId = uint32(zoneID) //nolint:gosec // ifindex is non-negative.
+
+	return sa, nil
 }
 
 // sockaddrIP extracts the IP from a recvmsg source address, or nil if unknown.

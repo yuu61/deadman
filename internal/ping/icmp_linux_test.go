@@ -5,6 +5,7 @@ package ping
 import (
 	"bytes"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 	"unsafe"
@@ -166,5 +167,119 @@ func TestTimespecToTimeValidation(t *testing.T) {
 
 	if _, ok := timespecToTime([]byte{0x01, 0x02}); ok {
 		t.Fatal("a short buffer must be rejected")
+	}
+}
+
+// scmTimestampOOB packs a SCM_TIMESTAMPNS control message carrying when, as the kernel
+// would deliver it, so result()'s clock-step handling can be tested without a socket.
+func scmTimestampOOB(when time.Time) []byte {
+	ts := unix.NsecToTimespec(when.UnixNano())
+	sz := int(unsafe.Sizeof(ts))
+
+	b := make([]byte, unix.CmsgSpace(sz))
+	h := (*unix.Cmsghdr)(unsafe.Pointer(&b[0])) //nolint:gosec // build a fixed-layout cmsg.
+	h.Level = unix.SOL_SOCKET
+	h.Type = unix.SCM_TIMESTAMPNS
+	h.SetLen(unix.CmsgLen(sz))
+
+	tsp := (*[64]byte)(unsafe.Pointer(&ts)) //nolint:gosec // view the timespec as bytes.
+	copy(b[unix.CmsgLen(0):], tsp[:sz])
+
+	return b
+}
+
+// TestResultClockStepFallback pins F5: the kernel timestamp is used only when plausible
+// (in [0, monotonic span]); a backward or forward CLOCK_REALTIME step falls back to the
+// step-immune monotonic span instead of yielding a negative/huge RTT.
+func TestResultClockStepFallback(t *testing.T) {
+	pr := v4Probe(false, 1, nil)
+
+	tSend := time.Now()
+	recvUser := tSend.Add(10 * time.Millisecond) // monotonic span = 10ms.
+
+	cases := []struct {
+		name   string
+		oob    []byte
+		wantMs float64
+	}{
+		{"plausible kernel ts", scmTimestampOOB(tSend.Add(3 * time.Millisecond)), 3.0},
+		{"forward step (k>span)", scmTimestampOOB(tSend.Add(50 * time.Millisecond)), 10.0},
+		{"backward step (k<0)", scmTimestampOOB(tSend.Add(-5 * time.Millisecond)), 10.0},
+		{"no kernel ts", nil, 10.0},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := pr.result(c.oob, recvUser, tSend)
+			if !res.Success {
+				t.Fatal("result must be a success")
+			}
+
+			if res.RTT < c.wantMs-0.5 || res.RTT > c.wantMs+0.5 {
+				t.Fatalf("RTT=%.3fms, want ~%.1fms", res.RTT, c.wantMs)
+			}
+		})
+	}
+}
+
+// TestZoneIndex pins F3's zone parsing: numeric scope ids and interface names both resolve,
+// and an unknown zone degrades to 0 (no zone) rather than erroring.
+func TestZoneIndex(t *testing.T) {
+	if got := zoneIndex("2"); got != 2 {
+		t.Errorf("numeric zone %q = %d, want 2", "2", got)
+	}
+
+	lo, err := net.InterfaceByName("lo")
+	if err != nil {
+		t.Skip("no lo interface")
+	}
+
+	if got := zoneIndex("lo"); got != lo.Index {
+		t.Errorf("named zone %q = %d, want %d", "lo", got, lo.Index)
+	}
+
+	if got := zoneIndex("nonexistent-if-zzz"); got != 0 {
+		t.Errorf("unknown zone = %d, want 0", got)
+	}
+}
+
+// TestLiteralAddrZone pins F3: a scoped IPv6 literal keeps its zone as an interface index;
+// a plain address has zone 0; the resolve_family pin still rejects the wrong family.
+func TestLiteralAddrZone(t *testing.T) {
+	lo, err := net.InterfaceByName("lo")
+	if err != nil {
+		t.Skip("no lo interface")
+	}
+
+	p := &icmpPinger{}
+
+	ip, zone, err := p.literalAddr(netip.MustParseAddr("fe80::1%lo"))
+	if err != nil || ip == nil || zone != lo.Index {
+		t.Fatalf("fe80::1%%lo -> ip=%v zone=%d err=%v, want zone=%d", ip, zone, err, lo.Index)
+	}
+
+	_, zone, err = p.literalAddr(netip.MustParseAddr("192.0.2.1"))
+	if err != nil || zone != 0 {
+		t.Fatalf("192.0.2.1 -> zone=%d err=%v, want zone=0", zone, err)
+	}
+
+	pinned := &icmpPinger{network: networkIPv4}
+
+	_, _, perr := pinned.literalAddr(netip.MustParseAddr("::1"))
+	if perr == nil {
+		t.Fatal("resolve_family=ipv4 must reject a v6 literal")
+	}
+}
+
+// TestEgressControlNonEmpty pins F1: an interface source produces a non-empty IP_PKTINFO /
+// IPV6_PKTINFO control message (the privilege-free egress selector that replaces
+// SO_BINDTODEVICE).
+func TestEgressControlNonEmpty(t *testing.T) {
+	if oob := familyOf(net.IPv4(127, 0, 0, 1)).egressControl(1); len(oob) == 0 {
+		t.Error("v4 egress control message is empty")
+	}
+
+	if oob := familyOf(net.ParseIP("::1")).egressControl(1); len(oob) == 0 {
+		t.Error("v6 egress control message is empty")
 	}
 }
