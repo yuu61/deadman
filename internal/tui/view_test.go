@@ -255,8 +255,8 @@ func TestParseWarningShown(t *testing.T) {
 	}
 }
 
-// A source= on a mode that ignores it (snmp/routeros/tcp) surfaces a startup warning
-// rather than failing the target, so monitoring keeps running with source ignored.
+// A source= on a mode that ignores it (snmp/routeros/tcp/quic) surfaces a startup
+// warning rather than failing the target, so monitoring keeps running with source ignored.
 func TestSourceUnsupportedWarningShown(t *testing.T) {
 	specs := []config.TargetSpec{{
 		Name:   "snmp-t",
@@ -271,7 +271,7 @@ func TestSourceUnsupportedWarningShown(t *testing.T) {
 	}
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
-	for _, want := range []string{"source=", "ignored in this relay mode"} {
+	for _, want := range []string{"source=", "ignored in this mode", "quic"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view missing source-unsupported warning %q\n---\n%s", want, out)
 		}

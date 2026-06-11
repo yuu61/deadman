@@ -118,6 +118,34 @@ func TestParseConfigResolveFamily(t *testing.T) {
 	}
 }
 
+func TestParseConfigQUIC(t *testing.T) {
+	// The QUIC sub-attributes (port/alpn/sni) are relay keys, so they land in the
+	// relay map verbatim alongside via/verify; none is recorded in Dropped as unknown.
+	cfg, err := ParseConfig(
+		strings.NewReader("h 1.2.3.4 via=quic port=8443 alpn=h3 sni=x verify=on\n"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := cfg.Targets
+	if len(specs) != 1 {
+		t.Fatalf("got %d specs, want 1: %+v", len(specs), specs)
+	}
+
+	for k, want := range map[string]string{
+		"via": "quic", "port": "8443", "alpn": "h3", "sni": "x", "verify": "on",
+	} {
+		if specs[0].Relay[k] != want {
+			t.Errorf("Relay[%q] = %q, want %q", k, specs[0].Relay[k], want)
+		}
+	}
+
+	if len(specs[0].Dropped) != 0 {
+		t.Errorf("Dropped = %v, want empty (quic attrs must not be dropped)", specs[0].Dropped)
+	}
+}
+
 func TestParseConfigDroppedTokens(t *testing.T) {
 	// A name with spaces shifts real tokens past the address slot: this parses to
 	// name="Cloudflare", address="via", with "MGMT" and "1.1.1.1" unroutable and

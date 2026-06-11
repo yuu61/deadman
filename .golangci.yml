@@ -44,6 +44,11 @@ linters:
       ignored-numbers:
         - "2"
 
+    # テストのケース名・期待値はモード名と綴りが重なりがちだが定数化は不自然なので、
+    # goconst はテストファイルを数えない (exclusions の test 除外と方針を合わせる)。
+    goconst:
+      ignore-tests: true
+
     staticcheck:
       checks:
         - all
