@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,13 +14,16 @@ import (
 )
 
 // routerOSPinger pings via the RouterOS REST API (POST /rest/ping). It uses only
-// the standard library. RouterOS returns its fields as strings.
+// the standard library. RouterOS returns its fields as strings. The http.Client is
+// built once and reused across every probe: a fresh client/transport per Send
+// leaks the idle keep-alive connection (and its goroutines) into a discarded
+// transport each round.
 type routerOSPinger struct {
-	url      string
-	user     string
-	pass     string
-	insecure bool
-	addr     string
+	url    string
+	user   string
+	pass   string
+	client *http.Client
+	addr   string
 }
 
 const routerOSTimeout = 5 * time.Second
@@ -41,23 +45,53 @@ func newRouterOSPinger(s Spec) (Pinger, error) {
 		return nil, fmt.Errorf("'relay' is not specified for %s", s.Addr)
 	}
 
+	// A source= is silently ignored here (the RouterOS box originates the probe); the
+	// TUI surfaces a startup warning via ping.SourceUnsupported rather than failing.
 	method := s.Relay["method"]
 	if method == "" {
 		method = "https"
 	}
-	// verify defaults to true (secure). insecure = !verify.
+
+	// verify defaults to true (secure). Only an explicit falsy value (the same
+	// spellings the "columns" directive accepts) disables TLS verification; an absent
+	// or unrecognized value keeps the secure default rather than silently failing open
+	// — the bug the old "anything but the literal true" rule had (verify=yes -> insecure).
 	insecure := false
-	if v, ok := s.Relay["verify"]; ok {
-		insecure = !strings.EqualFold(v, "true")
+
+	switch strings.ToLower(s.Relay["verify"]) {
+	case "off", "false", "no", "0":
+		insecure = true
+	default:
+		// "", "on", "true", "yes", "1", or any unrecognized value: stay secure.
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			// #nosec G402 -- self-signed certs are common on network gear; TLS
+			// verification is opt-out via the per-target "verify" config key.
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure},
+		},
 	}
 
 	return &routerOSPinger{
-		url:      fmt.Sprintf("%s://%s/rest/ping", method, s.Relay["relay"]),
-		user:     s.Relay["username"],
-		pass:     s.Relay["password"],
-		insecure: insecure,
-		addr:     s.Addr,
+		url:    fmt.Sprintf("%s://%s/rest/ping", method, bracketHost(s.Relay["relay"])),
+		user:   s.Relay["username"],
+		pass:   s.Relay["password"],
+		client: client,
+		addr:   s.Addr,
 	}, nil
+}
+
+// bracketHost wraps a bare IPv6 literal in [] so it forms a valid URL authority; a
+// hostname, an IPv4 literal, an already-bracketed literal, or a host:port pass
+// through unchanged. Without this an IPv6 RouterOS management address makes
+// url.Parse fail ("invalid port"), so every probe returns Failed.
+func bracketHost(host string) string {
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return "[" + host + "]"
+	}
+
+	return host
 }
 
 func (p *routerOSPinger) Send(ctx context.Context) Result {
@@ -77,15 +111,7 @@ func (p *routerOSPinger) Send(ctx context.Context) Result {
 	req.SetBasicAuth(p.user, p.pass)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			// #nosec G402 -- self-signed certs are common on network gear; TLS
-			// verification is opt-out via the per-target "verify" config key.
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: p.insecure},
-		},
-	}
-
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return Result{Code: Failed, TTL: -1}
 	}

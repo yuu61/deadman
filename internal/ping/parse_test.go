@@ -2,6 +2,7 @@ package ping
 
 import (
 	"math"
+	"regexp"
 	"testing"
 )
 
@@ -51,6 +52,10 @@ func TestParseRouterOSMinRTT(t *testing.T) {
 		{"500us", 0.5, true},
 		{"2ms0us", 2.0, true},
 		{"10ms250us", 10.25, true},
+		// Whole-ms / seconds shapes the old mandatory-"us" regex dropped to (0,false).
+		{"5ms", 5, true},
+		{"2s", 2000, true},
+		{"1s500ms", 1500, true},
 		{"garbage", 0, false},
 	}
 	for _, c := range cases {
@@ -63,6 +68,28 @@ func TestParseRouterOSMinRTT(t *testing.T) {
 
 		if ok && math.Abs(got-c.want) > 1e-9 {
 			t.Errorf("%q: got %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// The snmp/hping summary regexes must capture a fractional first value, not just an
+// integer, so a sub-millisecond reply reports its real RTT instead of truncating to 0.
+func TestSummaryRTTRegexCapturesFractional(t *testing.T) {
+	cases := []struct {
+		name string
+		re   *regexp.Regexp
+		in   string
+		want string
+	}{
+		{"snmp_fractional", reSNMP, "rtt min/avg/max/stddev = 0.412/0.5/0.6/0.1 ms", "0.412"},
+		{"snmp_integer", reSNMP, "rtt min/avg/max/stddev = 5/5/5/0 ms", "5"},
+		{"hping_fractional", reHping, "round-trip min/avg/max = 0.4/0.4/0.4 ms", "0.4"},
+		{"hping_integer", reHping, "round-trip min/avg/max = 6/6/6 ms", "6"},
+	}
+	for _, c := range cases {
+		m := c.re.FindStringSubmatch(c.in)
+		if len(m) < 2 || m[1] != c.want {
+			t.Errorf("%s: %q -> %v, want capture %q", c.name, c.in, m, c.want)
 		}
 	}
 }

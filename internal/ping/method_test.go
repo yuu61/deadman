@@ -1,6 +1,126 @@
 package ping
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+// The ping binary is chosen by the target's OS, not by probing a local ping6 (which
+// is irrelevant to an ssh remote): macOS uses its separate ping6, everything else
+// uses the unified `ping -6` (modern Linux/FreeBSD may not ship ping6). IPv4 is
+// always plain ping.
+func TestPingCommand(t *testing.T) {
+	cases := []struct {
+		name   string
+		ipv    int
+		osname string
+		want   []string
+	}{
+		{"ipv4_linux", ipv4, osLinux, []string{cmdPing, "-c", "1"}},
+		{"ipv4_darwin", ipv4, osDarwin, []string{cmdPing, "-c", "1"}},
+		{"ipv6_linux", ipv6, osLinux, []string{cmdPing, "-6", "-c", "1"}},
+		{"ipv6_freebsd", ipv6, osFreeBSD, []string{cmdPing, "-6", "-c", "1"}},
+		{"ipv6_darwin", ipv6, osDarwin, []string{cmdPing6, "-c", "1"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := pingCommand(c.ipv, c.osname); !slices.Equal(got, c.want) {
+				t.Errorf("pingCommand(%d, %q) = %v, want %v", c.ipv, c.osname, got, c.want)
+			}
+		})
+	}
+}
+
+// source= is meaningless for the snmp / tcp(hping3) / routeros modes (the probe
+// originates at the relay, or hping3 has no per-probe source), so SourceUnsupported
+// flags them for a TUI warning. The source-capable modes return false.
+func TestSourceUnsupported(t *testing.T) {
+	cases := []struct {
+		name string
+		spec Spec
+		want bool
+	}{
+		{
+			"snmp",
+			Spec{
+				Addr:   "1.2.3.4",
+				Source: "10.0.0.1",
+				Relay:  map[string]string{"via": "snmp", "relay": "h", "community": "c"},
+			},
+			true,
+		},
+		{"tcp", Spec{Addr: "1.2.3.4", Source: "10.0.0.1", TCP: "dstport:80"}, true},
+		{
+			"routeros",
+			Spec{
+				Addr:   "1.2.3.4",
+				Source: "10.0.0.1",
+				Relay: map[string]string{
+					"via":      "routeros_api",
+					"relay":    "h",
+					"username": "u",
+					"password": "p",
+				},
+			},
+			true,
+		},
+		{"direct", Spec{Addr: "1.2.3.4", Source: "10.0.0.1"}, false},
+		{
+			"nexthop",
+			Spec{Addr: "1.2.3.4", Source: "eth0", Relay: map[string]string{"nexthop": "10.0.0.1"}},
+			false,
+		},
+		{
+			"ssh_relay",
+			Spec{Addr: "1.2.3.4", Source: "10.0.0.1", Relay: map[string]string{"relay": "h"}},
+			false,
+		},
+		{
+			"no_source",
+			Spec{
+				Addr:  "1.2.3.4",
+				Relay: map[string]string{"via": "snmp", "relay": "h", "community": "c"},
+			},
+			false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := SourceUnsupported(c.spec); got != c.want {
+				t.Errorf("SourceUnsupported = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A source on snmp/tcp/routeros is ignored (the TUI warns), not rejected, so New
+// still builds a working pinger rather than aborting startup.
+func TestSourceIgnoredNotRejected(t *testing.T) {
+	specs := []Spec{
+		{
+			Addr:   "1.2.3.4",
+			Source: "10.0.0.1",
+			Relay:  map[string]string{"via": "snmp", "relay": "h", "community": "c"},
+		},
+		{Addr: "1.2.3.4", Source: "10.0.0.1", TCP: "dstport:80"},
+		{
+			Addr:   "1.2.3.4",
+			Source: "10.0.0.1",
+			Relay: map[string]string{
+				"via":      "routeros_api",
+				"relay":    "h",
+				"username": "u",
+				"password": "p",
+			},
+		},
+	}
+	for _, s := range specs {
+		_, err := New(s)
+		if err != nil {
+			t.Errorf("New(%v) errored on an ignorable source: %v", s.Relay, err)
+		}
+	}
+}
 
 // selectMethod and Describe must agree with New's dispatch precedence: tcp >
 // via=snmp/netns/vrf/routers_api > relay (ssh) > nexthop > direct.

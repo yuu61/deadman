@@ -95,13 +95,7 @@ var directives = map[string]func(cfg *Config, args []string){
 	},
 }
 
-var (
-	reComment = regexp.MustCompile(`^#.*`)
-	// reSemiComment matches a ";#" trailer and everything after it, so the comment
-	// text is removed rather than left as stray tokens.
-	reSemiComment = regexp.MustCompile(`;\s*#.*`)
-	reSeparator   = regexp.MustCompile(`^-+$`)
-)
+var reSeparator = regexp.MustCompile(`^-+$`)
 
 // relayKeys is the set of attribute keys routed into a target's relay map.
 var relayKeys = map[string]bool{
@@ -118,17 +112,18 @@ func ParseConfig(r io.Reader) (Config, error) {
 
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
-		line := sc.Text()
-		line = strings.ReplaceAll(line, "\t", " ")
-		line = reComment.ReplaceAllString(line, "")
-		line = reSemiComment.ReplaceAllString(line, "")
+		line := strings.ReplaceAll(sc.Text(), "\t", " ")
+		line = stripComment(line)
 
 		fields, terminated := tokenize(line)
 		if len(fields) == 0 {
 			continue
 		}
 
-		if h, ok := directives[fields[0]]; ok {
+		// Directive keywords are matched case-insensitively (like the column on/off
+		// values), so a capitalized "Scale 5" applies the setting instead of silently
+		// becoming a phantom target.
+		if h, ok := directives[strings.ToLower(fields[0])]; ok {
 			h(&cfg, fields[1:])
 
 			continue
@@ -142,6 +137,39 @@ func ParseConfig(r io.Reader) (Config, error) {
 	return cfg, sc.Err()
 }
 
+// stripComment removes a comment from a config line: a whole-line comment (the
+// first non-blank rune is '#', after any indentation) yields "", and a ';#' trailer
+// (a ';' followed by optional spaces and a '#', outside any double-quoted span)
+// truncates the line at the ';'. It is quote-aware, so a '#'/';#' inside a quoted
+// attribute value is preserved — quote a value to keep a literal ';#'. Tabs are
+// already collapsed to spaces by the caller before this runs.
+func stripComment(line string) string {
+	if t := strings.TrimLeft(line, " \t"); t == "" || t[0] == '#' {
+		return "" // blank line or whole-line comment.
+	}
+
+	inQuote := false
+
+	for i, r := range line {
+		switch r {
+		case '"':
+			inQuote = !inQuote
+		case ';':
+			if inQuote {
+				continue
+			}
+
+			if rest := strings.TrimLeft(line[i+1:], " "); strings.HasPrefix(rest, "#") {
+				return line[:i]
+			}
+		default:
+			// Ordinary content rune.
+		}
+	}
+
+	return line
+}
+
 // tokenize splits a config line into whitespace-separated fields, honoring
 // double-quoted spans so a field (typically the name) may contain spaces:
 //
@@ -149,8 +177,8 @@ func ParseConfig(r io.Reader) (Config, error) {
 //
 // The surrounding quotes are removed and whitespace inside them is preserved;
 // quoting works mid-token too (key="/a b" yields key=/a b). It replaces
-// strings.Fields and behaves identically for unquoted input. Comment stripping
-// runs before tokenize, so quotes do not protect a '#'/';#' comment marker. Only
+// strings.Fields and behaves identically for unquoted input. stripComment is
+// quote-aware, so quotes DO protect a '#'/';#' comment marker inside a value. Only
 // the double quote is special; a single quote is a literal character.
 //
 // terminated is false when an opening quote had no closing one: the rest of the

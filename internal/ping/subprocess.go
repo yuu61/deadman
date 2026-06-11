@@ -125,7 +125,7 @@ func (p *subprocessPinger) buildArgs(ctx context.Context) []string {
 		// no wrapper: run ping directly.
 	}
 
-	cmd = append(cmd, pingCommand(ipVersion(ctx, p.addr))...)
+	cmd = append(cmd, pingCommand(ipVersion(ctx, p.addr), p.osname)...)
 	cmd = append(cmd, p.sourceArgs()...)
 
 	return append(cmd, p.addr)

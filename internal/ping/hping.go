@@ -34,6 +34,8 @@ func newHPingPinger(s Spec) (Pinger, error) {
 		return nil, fmt.Errorf("'dstport' is not specified in tcp option for %s", s.Addr)
 	}
 
+	// A source= is silently ignored here (hping3 has no per-probe source); the TUI
+	// surfaces a startup warning via ping.SourceUnsupported rather than failing.
 	return &hpingPinger{addr: s.Addr, port: port}, nil
 }
 

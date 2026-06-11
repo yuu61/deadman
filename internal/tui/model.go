@@ -412,7 +412,7 @@ func (m Model) handlePingResult(msg pingResultMsg) (tea.Model, tea.Cmd) {
 		msg.target.Consume(msg.res)
 
 		if m.opts.LogDir != "" {
-			_ = monitor.AppendLog(m.opts.LogDir, msg.target, time.Now())
+			_ = monitor.AppendLog(m.opts.LogDir, msg.target, msg.res, time.Now())
 		}
 	}
 

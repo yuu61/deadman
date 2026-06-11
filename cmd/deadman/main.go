@@ -99,6 +99,12 @@ func resolveCols(cli, cfg int) int {
 func main() {
 	opts, err := parseArgs(os.Args[1:])
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			// -h/--help: the flag package already printed usage; exit success like
+			// flag.ExitOnError would, rather than reporting "flag: help requested".
+			os.Exit(0)
+		}
+
 		fmt.Fprintln(os.Stderr, "usage: deadman [options] configfile")
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)

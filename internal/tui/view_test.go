@@ -255,6 +255,29 @@ func TestParseWarningShown(t *testing.T) {
 	}
 }
 
+// A source= on a mode that ignores it (snmp/routeros/tcp) surfaces a startup warning
+// rather than failing the target, so monitoring keeps running with source ignored.
+func TestSourceUnsupportedWarningShown(t *testing.T) {
+	specs := []config.TargetSpec{{
+		Name:   "snmp-t",
+		Addr:   "1.2.3.4",
+		Source: "10.0.0.1",
+		Relay:  map[string]string{"via": "snmp", "relay": "h", "community": "c"},
+	}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	for _, want := range []string{"source=", "ignored in this relay mode"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("view missing source-unsupported warning %q\n---\n%s", want, out)
+		}
+	}
+}
+
 func TestUnterminatedQuoteWarningShown(t *testing.T) {
 	specs := []config.TargetSpec{{
 		Name:              "host",
@@ -347,6 +370,28 @@ func TestColumnsConfigHidesAtStart(t *testing.T) {
 	for _, want := range []string{"LOSS", "RTT", "AVG", "JIT", "SNT", "FAIL"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+// Below fixedHeaderLines the header alone would overflow the terminal. View must
+// clamp its output to the height and keep the title (line 0) on screen rather than
+// let Bubble Tea's top-drop eat it.
+func TestViewClampsTinyTerminal(t *testing.T) {
+	m, err := New(manySpecs(5), Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, height := range []int{1, 2, 3, 4} {
+		_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: height})
+
+		if lines := strings.Count(out, "\n") + 1; lines > height {
+			t.Errorf("height %d: rendered %d lines (overflow)\n---\n%s", height, lines, out)
+		}
+
+		if !strings.Contains(out, "Dead Man") {
+			t.Errorf("height %d: title must survive the clamp\n---\n%s", height, out)
 		}
 	}
 }
