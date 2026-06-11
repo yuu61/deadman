@@ -30,9 +30,10 @@ func TestPingCommand(t *testing.T) {
 	}
 }
 
-// source= is meaningless for the snmp / tcp(hping3) / routeros modes (the probe
-// originates at the relay, or hping3 has no per-probe source), so SourceUnsupported
-// flags them for a TUI warning. The source-capable modes return false.
+// source= is meaningless for the snmp / tcp(hping3) / routeros / quic modes (the
+// probe originates at the relay, hping3 has no per-probe source, or the QUIC dial
+// binds [::]:0), so SourceUnsupported flags them for a TUI warning. The
+// source-capable modes return false.
 func TestSourceUnsupported(t *testing.T) {
 	cases := []struct {
 		name string
@@ -60,6 +61,15 @@ func TestSourceUnsupported(t *testing.T) {
 					"username": "u",
 					"password": "p",
 				},
+			},
+			true,
+		},
+		{
+			"quic",
+			Spec{
+				Addr:   "1.2.3.4",
+				Source: "10.0.0.1",
+				Relay:  map[string]string{"via": "quic"},
 			},
 			true,
 		},
@@ -112,6 +122,7 @@ func TestSourceIgnoredNotRejected(t *testing.T) {
 				"password": "p",
 			},
 		},
+		{Addr: "1.2.3.4", Source: "10.0.0.1", Relay: map[string]string{"via": "quic"}},
 	}
 	for _, s := range specs {
 		_, err := New(s)
@@ -122,7 +133,7 @@ func TestSourceIgnoredNotRejected(t *testing.T) {
 }
 
 // selectMethod and Describe must agree with New's dispatch precedence: tcp >
-// via=snmp/netns/vrf/routers_api > relay (ssh) > nexthop > direct.
+// via=snmp/netns/vrf/routers_api/quic > relay (ssh) > nexthop > direct.
 func TestSelectMethodAndDescribe(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -199,6 +210,22 @@ func TestSelectMethodAndDescribe(t *testing.T) {
 			},
 			method:   MethodRouterOS,
 			describe: "routeros r",
+		},
+		{
+			name:     "quic",
+			spec:     Spec{Addr: "1.1.1.1", Relay: map[string]string{"via": "quic"}},
+			method:   MethodQUIC,
+			describe: "quic 443",
+		},
+		{
+			// A non-default port= is reflected in the VIA label.
+			name: "quic_port",
+			spec: Spec{
+				Addr:  "1.1.1.1",
+				Relay: map[string]string{"via": "quic", "port": "8443"},
+			},
+			method:   MethodQUIC,
+			describe: "quic 8443",
 		},
 		{
 			name:     "tcp",

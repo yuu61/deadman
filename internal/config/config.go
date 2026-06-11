@@ -101,11 +101,15 @@ var reSeparator = regexp.MustCompile(`^-+$`)
 // deliberately absent: the netns mode is selected by via=netns and reads the namespace
 // name from relay=, so a `netns=` token is a typo that should surface as an ignored
 // stray token (the warning every other unknown key gets), not be silently swallowed.
+// "port"/"alpn"/"sni" are QUIC (via=quic) sub-attributes; like "method"/"verify" they
+// are meaningful only to their mode and harmlessly ignored by the others.
 var relayKeys = map[string]bool{
+	//nolint:goconst // "via" else recurs only in excluded tests; a one-off key constant adds no clarity.
 	"os": true, "relay": true, "via": true, "community": true,
 	"user": true, "key": true, "method": true,
 	"username": true, "password": true, "verify": true,
 	"nexthop": true, "resolve_family": true,
+	"port": true, "alpn": true, "sni": true,
 }
 
 // ParseConfig reads a deadman config from r and returns the parsed targets plus

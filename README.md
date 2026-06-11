@@ -83,12 +83,16 @@ kame6           2001:200:dff:fff1:216:3eff:feb1:44d7
 | netns | `name ADDR relay=NETNSNAME via=netns`（Linux・root） |
 | vrf | `name ADDR relay=VRFNAME via=vrf`（Linux・root） |
 | routeros | `name ADDR relay=ROS via=routeros_api username=U password=P method=https verify=false` |
+| quic | `name ADDR via=quic [port=443] [sni=NAME] [verify=on]`（OS 非依存・外部コマンド不要） |
 | tcp/hping3 | `name ADDR tcp=dstport:80`（Linux・root） |
 | nexthop 強制 | `name ADDR nexthop=GWIP [source=eth0]`（直接 ICMP・Linux・root・IPv4/IPv6） |
 
 ssh 中継の例 `google-via-ssh 173.194.117.176 relay=X.X.X.X os=Linux` は、リモートサーバ X.X.X.X 経由で対象へ ping します。
 `user=USER` / `key=KEYPATH` で ssh のユーザ名と鍵を指定でき、`os` を省略すると deadman を実行している OS 名が使われます。
 `os=` は中継先（Unix 系）の OS を表し、リモートで使う `ping`/`ping6` の選択や送信元フラグ（`-I`/`-S`）に影響します。Windows の中継先（`ping -n`）は未対応です。
+
+`quic` モード（`via=quic`）は対象に QUIC（TLS1.3）ハンドシェイクを毎回張り、その**確立完了までの時間**を RTT として測ります（既定ポート 443・ALPN `h3`）。ICMP のような「任意 IP の死活」ではなく、QUIC/h3 を話すエンドポイント（ポート）の到達性を測る点で `tcp=` 接続プローブの仲間です。RTT は両端の TLS1.3 暗号処理を含むため ICMP よりやや高めに出ます。`port=` / `alpn=` / `sni=` / `verify=` で挙動を調整できます（「[属性](#属性)」参照）。外部コマンド不要・OS 非依存で、raw ソケット権限も要りません。
+
 各モードの記述例は `deadman.conf` にもコメントとして含まれています。
 中継モードが必要とする外部コマンドや権限は「[権限とプラットフォームに関する注意](#権限とプラットフォームに関する注意)」を参照してください。
 
@@ -98,11 +102,17 @@ ssh 中継の例 `google-via-ssh 173.194.117.176 relay=X.X.X.X os=Linux` は、�
   値は送信元 IP アドレス、または `source=eth0` のようなネットワークインターフェース名です。
   インターフェース名を指定できるのは直接 ICMP・`nexthop`（Linux）と **Linux 上**の ssh/netns/vrf 中継に限ります。
   macOS/BSD の中継先では `ping -S` が送信元**アドレス**のみを受け付けるため、ソースには IP アドレスを指定してください（インターフェース名は構築時に拒否され、起動時に警告が表示されます）。
-  snmp / routeros / tcp(hping3) モードは `source` を使いません（プローブは中継先で生成されるか hping3 が未対応のため）。指定しても無視され、起動時に警告が表示されます（対象の監視は継続します）。
+  snmp / routeros / tcp(hping3) / quic モードは `source` を使いません（プローブは中継先で生成されるか、hping3 が未対応か、QUIC のダイヤルが `[::]:0` を bind するため）。指定しても無視され、起動時に警告が表示されます（対象の監視は継続します）。
 
-- **`verify=on|off`**（routeros モード）… RouterOS REST API の TLS 証明書検証の有無を指定します。
-  既定は**有効**で、`off` / `false` / `no` / `0`（大文字小文字を問わない）でのみ無効化できます（自己署名証明書のネットワーク機器向け）。
-  `on` / `true` / `yes` / `1` や認識できない値は安全側（検証有効）として扱います。
+- **`verify=on|off`**（routeros / quic モード）… TLS 証明書検証の有無を指定します。
+  綴りは両モード共通で、`on` / `true` / `yes` / `1` が検証あり、`off` / `false` / `no` / `0` が検証なし（大文字小文字を問わない）。
+  ただし**既定値はモードで逆**です。
+  - routeros … 既定**有効**（安全側）。`off` 等でのみ無効化でき（自己署名証明書のネットワーク機器向け）、認識できない値は検証有効として扱います。
+  - quic … 既定**無効**（`InsecureSkipVerify`）。QUIC プローブは IP アドレスを直接対象にすることが多く、証明書/SAN 検査ではほぼ毎回失敗するためです。`on` 等で検証を有効化できます（認識できない値は無効のまま）。
+
+- **`port=` / `alpn=` / `sni=`**（quic モード）… QUIC プローブのダイヤル先ポート（既定 `443`）、ALPN（既定 `h3`）、TLS の SNI（`ServerName`）を指定します。
+  `sni` を省略するとホスト名のアドレスがそのまま使われ、IP アドレスリテラルの場合は空になります。
+  `InsecureSkipVerify`（検証無効）でも SNI は送出されるため、実在の h3 フロント（Cloudflare / Google など）を IP アドレスで対象にするときは `sni=` の指定が必要になることがあります。
 
 - **`resolve_family=ipv4|ipv6`** … ホスト名の解決をそのアドレスファミリーに固定します（`ipv4` は A レコード、`ipv6` は AAAA レコード）。
   dual-stack なホスト名を IPv4 と IPv6 で別々に監視したいときに使います。
@@ -198,7 +208,7 @@ columns ADDRESS=off MIN=off MAX=off VIA=on
 指定できるキーは`HOSTNAME ADDRESS VIA LOSS RTT AVG MIN MAX JIT SNT FAIL` です。
 `RESULT`（結果バー）は deadman の看板のため常に表示され、隠せません。
 
-`VIA` 列は各対象の**取得方法**を表示します（`direct` / `nexthop GWIP` / `ssh HOST` / `snmp HOST` / `netns NAME` / `vrf NAME` / `routeros HOST` / `tcp dstport:PORT`）。
+`VIA` 列は各対象の**取得方法**を表示します（`direct` / `nexthop GWIP` / `ssh HOST` / `snmp HOST` / `netns NAME` / `vrf NAME` / `routeros HOST` / `tcp dstport:PORT` / `quic PORT`）。
 同じアドレスを別経路で監視している場合などに、一目で区別できます。
 表示は設定上の意図ではなく**実際に使われる経路**を反映するため、relay/via/tcp が優先されて nexthop が無視される対象では、その実際のモード（`ssh` など）が表示されます。
 
@@ -242,6 +252,7 @@ precision ms.1      統計値の表示精度（ms / ms.1 / ms.2 / ms.3 のいず
 `ssh`（ssh 中継）、`snmpping`（snmp）、`ip`（netns/vrf）、`hping3`（tcp）が該当します。
 netns・vrf・hping3 は Linux + root が前提です。
 RouterOS API モードは HTTP を使うためOS 非依存です。
+`quic` モード（`via=quic`）も in-process（quic-go による UDP ダイヤル）で動作し、外部コマンド不要・OS 非依存で、raw ソケット権限（root / `CAP_NET_RAW`）も要りません。
 必要なコマンドが存在しない環境（たとえば Windows）では、その対象はクラッシュせず失敗（`X`）として表示されます。
 
 `nexthop` 強制は AF_PACKET で L2 フレームを送り、ゲートウェイの MAC を IPv4 は ARP（`/proc/net/arp`）、IPv6 は NDP（netlink）で解決するため Linux + root/CAP_NET_RAW が必須で、他 OS のビルドではその対象は失敗（`X`）として表示されます。
