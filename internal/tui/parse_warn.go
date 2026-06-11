@@ -36,7 +36,7 @@ func parseWarnings(specs []config.TargetSpec) []string {
 
 		if ping.SourceUnsupported(specToPingSpec(s)) {
 			warns = append(warns, fmt.Sprintf(
-				"%q: source=%q is ignored in this relay mode (snmp/routeros/tcp have no local "+
+				"%q: source=%q is ignored in this mode (snmp/routeros/tcp/quic have no local "+
 					"source) — remove it, or use a source-capable mode (direct/nexthop/ssh/netns/vrf)",
 				s.Name, s.Source,
 			))
