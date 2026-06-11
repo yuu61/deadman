@@ -159,6 +159,13 @@ func main() {
 	tui.InstallReloadSignal(p)
 
 	_, err = p.Run()
+
+	// Drain any queued log lines before exit. The TUI has stopped, so no Log call races
+	// this Close. os.Exit skips defers, so close explicitly before the error exit too.
+	if opts.LogWriter != nil {
+		opts.LogWriter.Close()
+	}
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

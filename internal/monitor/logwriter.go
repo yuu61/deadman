@@ -11,6 +11,11 @@ import (
 // when the backing store stalls.
 const logQueueDepth = 256
 
+// closeDrainTimeout caps how long Close waits for buffered lines to flush. A responsive
+// store drains well within it; a stalled one would otherwise hang shutdown, so Close
+// gives up after this and lets the process exit.
+const closeDrainTimeout = 2 * time.Second
+
 // logEntry is one already-snapshotted log line. It carries values, not a *Target, so the
 // writer goroutine never reads live target state (only Update may touch it).
 type logEntry struct {
@@ -57,11 +62,18 @@ func (w *LogWriter) Log(name string, res ping.Result, avg float64, snt int, now 
 	}
 }
 
-// Close stops the writer, draining any buffered lines first. It is used for a clean
-// shutdown and to make writes observable in tests; the process can also just exit.
+// Close stops the writer, draining any buffered lines first so a clean shutdown
+// (q/Ctrl-C) does not silently lose queued log entries. It must be called only after the
+// last Log (no concurrent send on the closed channel). If the backing store is stalled,
+// it gives up after closeDrainTimeout rather than hang the process exit.
 func (w *LogWriter) Close() {
 	close(w.ch)
-	<-w.done
+
+	select {
+	case <-w.done:
+	case <-time.After(closeDrainTimeout):
+		// stalled store: stop waiting so shutdown isn't blocked; remaining lines are lost.
+	}
 }
 
 func (w *LogWriter) run() {
