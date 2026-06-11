@@ -33,6 +33,7 @@ type Options struct {
 	Scale      int
 	Precision  string // initial stat-precision label (config "precision"); "" = ms.
 	LogDir     string
+	LogWriter  *monitor.LogWriter // serializes -l log writes off the Update loop; nil = no logging.
 	ConfigPath string
 	Version    string          // build version label shown in the title bar (Makefile -ldflags); "" = "dev".
 	Columns    map[string]bool // per-column visibility overrides (config file).
@@ -105,7 +106,9 @@ func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, []string) {
 	index := map[string]*monitor.Target{}
 
 	for _, r := range existing {
-		if r.Target != nil {
+		// Skip failed placeholders: a fixed config that reloads to a real target with the
+		// same Key() must build fresh, not inherit the always-fail placeholder.
+		if r.Target != nil && !r.Target.IsFailed() {
 			index[r.Target.Key()] = r.Target
 		}
 	}
@@ -254,7 +257,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		return m, nil
+		// Refresh resets the counters to 0, so the stat columns may shrink back; the
+		// per-probe growStatWidths only widens, so recompute the layout here.
+		return m.recalcWidths(), nil
 	case "R":
 		return m, func() tea.Msg { return reloadMsg{} }
 	}
@@ -437,21 +442,28 @@ func (m Model) handlePingResult(msg pingResultMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	var logCmd tea.Cmd
-
 	if msg.target != nil {
 		msg.target.Consume(msg.res)
 		// A counter crossing a digit boundary (e.g. SNT reaching 10000) widens its stat
-		// column, so re-size the layout to keep the result bar aligned.
-		m = m.recalcWidths()
+		// column; grow it incrementally (O(1)) rather than re-scanning every target each
+		// probe, which would be O(N^2) per round on a large config.
+		m = m.growStatWidths(msg.target)
 
-		if m.opts.LogDir != "" {
-			logCmd = logCommand(m.opts.LogDir, msg.target, msg.res)
+		if m.opts.LogWriter != nil {
+			// Snapshot the logged fields on this (Update) goroutine; the LogWriter writes
+			// them off it without blocking and with a bounded queue.
+			m.opts.LogWriter.Log(
+				msg.target.Name,
+				msg.res,
+				msg.target.Avg,
+				msg.target.Snt,
+				time.Now(),
+			)
 		}
 	}
 
 	if !m.opts.Async {
-		return m, tea.Batch(logCmd, m.advanceSync(msg.idx))
+		return m, m.advanceSync(msg.idx)
 	}
 
 	if msg.idx >= 0 && msg.idx < len(m.inflight) {
@@ -462,25 +474,10 @@ func (m Model) handlePingResult(msg pingResultMsg) (tea.Model, tea.Cmd) {
 	if m.pending <= 0 {
 		m.tick++ // second spinner step per round.
 
-		return m, tea.Batch(logCmd, m.scheduleNextRound())
+		return m, m.scheduleNextRound()
 	}
 
-	return m, logCmd
-}
-
-// logCommand snapshots the fields AppendLogLine writes — on the Update goroutine — and
-// returns a tea.Cmd that performs the blocking disk write off the Update loop, so a
-// stalled log filesystem (NFS hang, full disk) cannot freeze input, rendering, or quit.
-// The snapshot is essential: the command goroutine must not read the live *Target, since
-// only Update may touch its stats (the no-locks invariant).
-func logCommand(dir string, t *monitor.Target, res ping.Result) tea.Cmd {
-	name, avg, snt, now := t.Name, t.Avg, t.Snt, time.Now()
-
-	return func() tea.Msg {
-		_ = monitor.AppendLogLine(dir, name, res, avg, snt, now)
-
-		return nil
-	}
+	return m, nil
 }
 
 // recalcWidths recomputes the dynamic column widths and returns the updated model,

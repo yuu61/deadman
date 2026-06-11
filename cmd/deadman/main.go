@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/yuu61/deadman/internal/config"
+	"github.com/yuu61/deadman/internal/monitor"
 	"github.com/yuu61/deadman/internal/tui"
 )
 
@@ -143,6 +144,10 @@ func main() {
 	opts.Precision = cfg.Precision
 	opts.Cols = resolveCols(opts.Cols, cfg.Cols)
 	opts.Version = version
+
+	if opts.LogDir != "" {
+		opts.LogWriter = monitor.NewLogWriter(opts.LogDir)
+	}
 
 	m, err := tui.New(cfg.Targets, opts)
 	if err != nil {

@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/yuu61/deadman/internal/config"
-	"github.com/yuu61/deadman/internal/monitor"
 	"github.com/yuu61/deadman/internal/ping"
 )
 
@@ -94,34 +93,28 @@ func TestBadTargetDegradesToPlaceholder(t *testing.T) {
 	}
 }
 
-// logCommand runs the (blocking) log write off the Update goroutine, so it must not read
-// the live *Target there — only Update may touch target stats. This snapshots the logged
-// fields up front; under -race, concurrently mutating the target while the command runs
-// proves the command never reads it.
-func TestLogCommandSnapshotsTargetNoRace(t *testing.T) {
-	dir := t.TempDir()
-
-	tg, err := monitor.NewTarget("h", ping.Spec{Addr: "1.2.3.4", Relay: map[string]string{}})
-	if err != nil {
-		t.Fatal(err)
+// Fixing a broken target's config and reloading must replace the always-fail
+// placeholder, not reuse it. A placeholder's Key() is just name+addr, which collides
+// with a same-named/addressed valid target, so without excluding placeholders from the
+// reuse index the fixed target would inherit the placeholder and stay permanently down.
+func TestReloadReplacesFixedPlaceholder(t *testing.T) {
+	// tcp= without dstport fails to construct -> a placeholder row.
+	bad := []config.TargetSpec{
+		{Name: "web", Addr: "1.1.1.1", Relay: map[string]string{}, TCP: "noport"},
 	}
 
-	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 1})
-
-	cmd := logCommand(dir, tg, ping.Result{Success: true, Code: ping.Success, RTT: 2})
-
-	done := make(chan struct{})
-
-	go func() {
-		_ = cmd() // writes the log from the snapshot, off the "Update" goroutine.
-
-		close(done)
-	}()
-
-	// Concurrently mutate the live target; the snapshot must mean cmd never reads it.
-	for range 1000 {
-		tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 3})
+	rows1, _ := buildRows(bad, nil)
+	if !rows1[0].Target.IsFailed() {
+		t.Fatalf("expected a failed placeholder for the bad target, got %+v", rows1[0].Target)
 	}
 
-	<-done
+	// Reload with the fixed config: same name+addr, now a valid direct-ICMP target.
+	good := []config.TargetSpec{{Name: "web", Addr: "1.1.1.1", Relay: map[string]string{}}}
+
+	rows2, _ := buildRows(good, rows1)
+	if rows2[0].Target.IsFailed() {
+		t.Error(
+			"fixed target reused the always-fail placeholder across reload; want a fresh valid target",
+		)
+	}
 }

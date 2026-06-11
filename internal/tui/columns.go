@@ -222,6 +222,35 @@ func (m Model) computeStatWidths() map[string]int {
 	return w
 }
 
+// growStatWidths widens the stat columns for the just-updated target if its cells now
+// exceed the current width (e.g. a counter crossed a digit boundary), recomputing the
+// result bar only when a width actually grew. Stat widths only grow within a session
+// (counters increase until a reload/refresh recomputes from scratch), so this O(1) path
+// replaces a full per-probe recalcWidths that would be O(N) per result. A nil statW
+// (before the first recalcWidths) is left for that pass to seed.
+func (m Model) growStatWidths(t *monitor.Target) Model {
+	if m.statW == nil || t == nil {
+		return m
+	}
+
+	mode := m.precMode()
+	grew := false
+
+	for _, c := range statColumns {
+		if w := len(c.cell(t, mode)); w > m.statW[c.Key] {
+			m.statW[c.Key] = w
+			grew = true
+		}
+	}
+
+	if grew {
+		used := m.rowFixedWidth()
+		m.resW = max(m.colContentWidth()-used, minResultWidth)
+	}
+
+	return m
+}
+
 // padStat left-pads a stat header/cell to its column's computed width (statW), keeping
 // the value right-aligned. A nil statW (a Model not built through recalcWidths) or a
 // width not exceeding the rendered string is a no-op, so the fixed-width formatters

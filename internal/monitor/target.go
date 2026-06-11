@@ -59,6 +59,12 @@ type Target struct {
 
 	history []ping.Result // raw probe results (newest first); rendered to glyphs at view time.
 	prevRTT float64       // previous successful RTT, for the jitter delta.
+
+	// failed marks a placeholder built by NewFailedTarget (a target whose config could
+	// not be constructed). It is excluded from reload history-reuse so that fixing the
+	// config and reloading replaces the placeholder with the real target, rather than
+	// the new target inheriting the always-fail placeholder via a matching Key().
+	failed bool
 }
 
 // NewTarget builds a Target and its Pinger from a Spec.
@@ -92,8 +98,13 @@ func NewFailedTarget(name, addr string) *Target {
 		Via:    "error",
 		Pinger: ping.AlwaysFail(),
 		State:  Unknown,
+		failed: true,
 	}
 }
+
+// IsFailed reports whether this is a NewFailedTarget placeholder. buildRows uses it to
+// keep placeholders out of the reload history-reuse index.
+func (t *Target) IsFailed() bool { return t.failed }
 
 // Consume folds a probe result into the running statistics.
 func (t *Target) Consume(res ping.Result) {

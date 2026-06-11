@@ -15,6 +15,12 @@ const (
 	logFilePerm os.FileMode = 0o600
 )
 
+// Per-probe log status words: a failed probe is "down" (no RTT), a reply is "up".
+const (
+	statusUp   = "up"
+	statusDown = "down"
+)
+
 // AppendLog appends one probe line for target t. It snapshots the fields it logs and
 // delegates to AppendLogLine. Callers that must run the (blocking) disk write off the
 // Bubble Tea Update goroutine should snapshot t themselves on the Update goroutine and
@@ -48,11 +54,11 @@ func AppendLogLine(dir, name string, res ping.Result, avg float64, snt int, now 
 	}
 	defer func() { _ = f.Close() }()
 
-	status := "down"
+	status := statusDown
 	rtt := 0.0 // a failed probe has no RTT; log 0, not the stale last-success RTT.
 
 	if res.Success {
-		status = "up"
+		status = statusUp
 		rtt = res.RTT
 	}
 
