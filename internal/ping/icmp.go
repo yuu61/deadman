@@ -1,13 +1,11 @@
 package ping
 
 import (
-	"context"
 	"net"
 	"runtime"
 	"sync"
 	"time"
 
-	probing "github.com/prometheus-community/pro-bing"
 	"golang.org/x/net/icmp"
 )
 
@@ -46,7 +44,7 @@ var useICMPPrivileged = sync.OnceValue(func() bool {
 
 // directICMPAvailable reports, once per process, whether any native direct-ICMP
 // path can open a socket on this host: the privileged raw path (root/CAP_NET_RAW)
-// or the unprivileged datagram path pro-bing uses with SetPrivileged(false). The
+// or the unprivileged datagram path (SOCK_DGRAM ICMP) used when not privileged. The
 // datagram path needs the caller's gid inside net.ipv4.ping_group_range. When both
 // fail — the common non-root case where that range is empty or excludes the user
 // (e.g. WSL2's "1 0" default) — every direct and next-hop probe fails with no packet
@@ -80,72 +78,3 @@ func DirectICMPAvailable() bool { return directICMPAvailable() }
 // AF_PACKET, for which the unprivileged datagram path cannot substitute — so the TUI
 // checks it independently of DirectICMPAvailable.
 func RawICMPAvailable() bool { return useICMPPrivileged() }
-
-// icmpPinger sends a native ICMP echo using pro-bing. Native ICMP is portable
-// (Windows/Linux/macOS) and avoids shelling out to `ping -c 1` and parsing
-// OS-specific output.
-type icmpPinger struct {
-	addr       string
-	source     string
-	network    string // "ip4"/"ip6" to pin the resolve family (resolve_family=), "" for auto.
-	privileged bool
-}
-
-func newICMPPinger(s Spec) (Pinger, error) {
-	return &icmpPinger{
-		addr:       s.Addr,
-		source:     s.Source,
-		network:    resolveNetwork(s),
-		privileged: useICMPPrivileged(),
-	}, nil
-}
-
-func (p *icmpPinger) Send(ctx context.Context) Result {
-	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
-	defer cancel()
-
-	// New defers resolution; SetNetwork pins the family so RunWithContext resolves
-	// v4/v6 as configured. A resolve failure (no record in the pinned family, or an
-	// IP literal of the other family) surfaces from RunWithContext below as Failed.
-	pinger := probing.New(p.addr)
-	if p.network != "" {
-		pinger.SetNetwork(p.network)
-	}
-
-	pinger.SetPrivileged(p.privileged)
-	pinger.Count = 1
-	pinger.Timeout = icmpTimeout
-	pinger.RecordTTLs = true
-
-	if p.source != "" {
-		// A source may be a source IP or (on Linux) an interface name:
-		// pro-bing's Source binds by IP, InterfaceName by name.
-		if net.ParseIP(p.source) != nil {
-			pinger.Source = p.source
-		} else {
-			pinger.InterfaceName = p.source
-		}
-	}
-
-	err := pinger.RunWithContext(ctx)
-	if err != nil {
-		return Result{Code: Failed, TTL: -1}
-	}
-
-	st := pinger.Statistics()
-	if st.PacketsRecv > 0 {
-		ttl := -1
-		if len(st.TTLs) > 0 {
-			ttl = int(st.TTLs[0])
-		}
-
-		return Result{
-			Success: true,
-			Code:    Success,
-			RTT:     float64(st.AvgRtt.Microseconds()) / usPerMs,
-			TTL:     ttl,
-		}
-	}
-
-	return Result{Code: Failed, TTL: -1}
-}
