@@ -13,12 +13,14 @@ Go で実装されており、クロスプラットフォーム対応（Windows 
 
 ## ビルド
 
-Go 1.25 以上が必要です（`go.mod` の宣言と一致）。
+Go 1.25 以上が必要です
 
 ```sh
 git clone https://github.com/yuu61/deadman
 cd deadman
 go build -o deadman ./cmd/deadman      # Windows: go build -o deadman.exe ./cmd/deadman
+# or
+make build
 ```
 
 直接実行・インストールも可能です。
@@ -31,7 +33,7 @@ go install github.com/yuu61/deadman/cmd/deadman@latest
 ## 使い方
 
 ```sh
-./deadman deadman.conf                 # Windows: deadman.exe deadman.conf
+./bin/deadman deadman.conf                 # Windows: ./bin/deadman.exe deadman.conf
 ```
 
 監視対象は設定ファイルで指定します。
