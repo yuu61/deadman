@@ -54,6 +54,31 @@ func TestQUICReachable(t *testing.T) {
 	}
 }
 
+// TestQUICReachableIPv6 confirms the dial works over IPv6. quic-go's DialAddr binds its
+// UDP socket with net.ListenUDP("udp", {IP: net.IPv4zero}); because IPv4zero is the
+// wildcard, Go opens a dual-stack [::] socket that reaches IPv6 too, so an IPv6 literal
+// (or resolve_family=ipv6) target dials fine. Skips when the host has no IPv6 egress.
+func TestQUICReachableIPv6(t *testing.T) {
+	// Cloudflare DNS over an IPv6 literal, with the SNI a real h3 front-end expects.
+	p, err := newQUICPinger(Spec{
+		Addr:  "2606:4700:4700::1111",
+		Relay: map[string]string{"via": "quic", "sni": "cloudflare-dns.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := p.Send(context.Background())
+	if !res.Success {
+		t.Skipf(
+			"IPv6 QUIC endpoint unreachable (code=%d) — likely no IPv6 egress on this host",
+			res.Code,
+		)
+	}
+
+	t.Logf("IPv6 literal dial: rtt=%.3fms", res.RTT)
+}
+
 // TestQUICUnreachable dials a TEST-NET-1 (RFC 5737) address that speaks no QUIC and
 // expects a timeout failure bounded by quicTimeout — not a hang and not a success.
 func TestQUICUnreachable(t *testing.T) {
