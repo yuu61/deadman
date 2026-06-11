@@ -28,6 +28,11 @@ type routerOSPinger struct {
 
 const routerOSTimeout = 5 * time.Second
 
+// maxRouterOSBody caps the REST response body we read, so a hostile or MITM'd endpoint
+// (verify=off disables TLS verification) cannot stream an unbounded body into memory. A
+// RouterOS ping response is a few hundred bytes; 1 MiB is generous.
+const maxRouterOSBody = 1 << 20 // 1 MiB.
+
 // routerOSResp mirrors the RouterOS REST API ping response. The API returns
 // kebab-case JSON keys, so the tags must match them verbatim.
 type routerOSResp struct {
@@ -123,13 +128,16 @@ func (p *routerOSPinger) Send(ctx context.Context) Result {
 
 	var arr []routerOSResp
 
-	err = json.NewDecoder(resp.Body).Decode(&arr)
+	err = json.NewDecoder(http.MaxBytesReader(nil, resp.Body, maxRouterOSBody)).Decode(&arr)
 	if err != nil || len(arr) == 0 {
 		return Result{Code: Failed, TTL: -1}
 	}
 
 	r := arr[0]
-	if pl, _ := strconv.Atoi(r.PacketLoss); pl > 0 {
+	// Fail closed: treat an absent/empty/non-numeric packet-loss as a failure rather
+	// than reporting the host up on a malformed response.
+	pl, perr := strconv.Atoi(r.PacketLoss)
+	if perr != nil || pl > 0 {
 		return Result{Code: Failed, TTL: -1}
 	}
 

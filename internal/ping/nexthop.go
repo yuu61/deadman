@@ -149,9 +149,11 @@ func newNexthopPinger(s Spec) (Pinger, error) {
 }
 
 func (p *nexthopPinger) Send(ctx context.Context) Result {
-	// Bound the whole probe (DNS + ARP + echo) to icmpTimeout: the TUI passes
-	// context.Background(), so without this an unresolvable name could block a
-	// round far past the intended timeout.
+	// Bound the DNS and echo phases to icmpTimeout: the TUI passes context.Background(),
+	// so without this an unresolvable name could block a round far past the intended
+	// timeout. Neighbor (ARP/NDP) resolution polls against its own neighborResolveTimeout
+	// and is not covered by this deadline, so a probe that must resolve an uncached
+	// gateway MAC can overshoot icmpTimeout by up to that bound.
 	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
 	defer cancel()
 

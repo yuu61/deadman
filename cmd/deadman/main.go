@@ -18,6 +18,11 @@ import (
 // defaultScale is the default RTT bar gap in milliseconds.
 const defaultScale = 10
 
+// version is the build version shown in the TUI title bar. It is overridden at build
+// time via -ldflags "-X main.version=..." (see the Makefile, which derives it from git
+// describe); a plain `go install`/`go build` leaves it at "dev".
+var version = "dev"
+
 // resolveScale picks the effective RTT-bar scale: an explicit CLI -s wins, else a
 // config "scale" directive, else defaultScale. 0 means "unset" for both inputs (the
 // -s flag defaults to 0, and a missing or invalid "scale" directive leaves cfg.Scale
@@ -72,6 +77,15 @@ func parseArgs(args []string) (tui.Options, error) {
 
 	if len(positional) < 1 {
 		return tui.Options{}, errors.New("configfile is required")
+	}
+	// Exactly one configfile is accepted. Erroring on extras (rather than silently
+	// using the first) also closes a `--` foot-gun: `deadman -- -a cfg.conf` previously
+	// dropped cfg.conf and ran the nonexistent file "-a".
+	if len(positional) > 1 {
+		return tui.Options{}, fmt.Errorf(
+			"only one configfile may be given, got %d: %v",
+			len(positional), positional,
+		)
 	}
 
 	return tui.Options{
@@ -128,6 +142,7 @@ func main() {
 	opts.Scale = resolveScale(opts.Scale, cfg.Scale)
 	opts.Precision = cfg.Precision
 	opts.Cols = resolveCols(opts.Cols, cfg.Cols)
+	opts.Version = version
 
 	m, err := tui.New(cfg.Targets, opts)
 	if err != nil {

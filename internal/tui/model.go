@@ -34,6 +34,7 @@ type Options struct {
 	Precision  string // initial stat-precision label (config "precision"); "" = ms.
 	LogDir     string
 	ConfigPath string
+	Version    string          // build version label shown in the title bar (Makefile -ldflags); "" = "dev".
 	Columns    map[string]bool // per-column visibility overrides (config file).
 	Cols       int             // requested newspaper-column count (CLI -c/--split, config "split"); <=1 = single.
 }
@@ -47,6 +48,12 @@ type Model struct {
 
 	// column layout, recomputed on resize.
 	hostW, addrW, viaW, resW int
+
+	// statW is the rendered width of each stat column (keyed by column key), sized to
+	// the widest header/cell across targets so a long-uptime SNT/FAIL count (or a
+	// >=10000 ms stat) widens its column instead of overflowing the fixed header and
+	// shifting the result bar. Recomputed in recalcWidths.
+	statW map[string]int
 
 	visible map[string]bool // per-column visibility (config defaults + 'm' toggle).
 
@@ -70,12 +77,11 @@ type Model struct {
 	warnings []string // startup warnings (e.g. rp_filter, IPv6 nexthop ignored).
 }
 
-// New builds the initial model from parsed specs and options.
+// New builds the initial model from parsed specs and options. The error return is
+// retained for call-site stability; New currently never fails (a target whose config
+// cannot be built degrades to a permanent-failure row rather than aborting).
 func New(specs []config.TargetSpec, opts Options) (Model, error) {
-	rows, err := buildRows(specs, nil)
-	if err != nil {
-		return Model{}, err
-	}
+	rows, buildWarns := buildRows(specs, nil)
 
 	return Model{
 		rows:     rows,
@@ -84,14 +90,18 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 		precIdx:  precisionIndex(opts.Precision),
 		hostInfo: hostInfo(),
 		visible:  buildVisible(opts.Columns),
-		warnings: startupWarnings(specs),
+		warnings: append(startupWarnings(specs), buildWarns...),
 		cols:     max(opts.Cols, 1),
 	}, nil
 }
 
-// buildRows turns specs into rows. Targets present in existing (matched by Key)
-// are reused so their history/stats survive a reload.
-func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, error) {
+// buildRows turns specs into rows, returning any per-target construction warnings.
+// Targets present in existing (matched by Key) are reused so their history/stats
+// survive a reload. A target whose config cannot be built (e.g. a missing required
+// relay attribute or an option-like operand) is NOT fatal: it becomes a placeholder row
+// that always shows X, and the reason is collected as a startup warning, so one bad
+// target no longer aborts monitoring of all the others.
+func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, []string) {
 	index := map[string]*monitor.Target{}
 
 	for _, r := range existing {
@@ -99,6 +109,8 @@ func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, error) {
 			index[r.Target.Key()] = r.Target
 		}
 	}
+
+	var warns []string
 
 	rows := make([]Row, 0, len(specs))
 	for _, s := range specs {
@@ -110,7 +122,14 @@ func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, error) {
 
 		t, err := monitor.NewTarget(s.Name, specToPingSpec(s))
 		if err != nil {
-			return nil, err
+			warns = append(warns, fmt.Sprintf(
+				"%q (address=%q): %v — this target shows a permanent failure; "+
+					"fix the config and reload (R)",
+				s.Name, s.Addr, err,
+			))
+			rows = append(rows, Row{Target: monitor.NewFailedTarget(s.Name, s.Addr)})
+
+			continue
 		}
 
 		if old, ok := index[t.Key()]; ok {
@@ -120,7 +139,7 @@ func buildRows(specs []config.TargetSpec, existing []Row) ([]Row, error) {
 		}
 	}
 
-	return rows, nil
+	return rows, warns
 }
 
 // specToPingSpec maps a parsed config target to the ping.Spec the probe layer
@@ -160,13 +179,20 @@ func loadRows(path string, existing []Row) (reload, bool) {
 		return reload{}, false
 	}
 
-	rows, err := buildRows(cfg.Targets, existing)
-	if err != nil {
-		return reload{}, false
-	}
+	rows, buildWarns := buildRows(cfg.Targets, existing)
 
-	return reload{rows: rows, columns: cfg.Columns, warnings: startupWarnings(cfg.Targets)}, true
+	return reload{
+		rows:     rows,
+		columns:  cfg.Columns,
+		warnings: append(startupWarnings(cfg.Targets), buildWarns...),
+	}, true
 }
+
+// hostLookupTimeout bounds the startup hostname lookup. It runs synchronously before
+// the alt-screen is entered, so without a deadline a slow/unreachable resolver would
+// hang startup on a blank screen; the looked-up address is only cosmetic (the header's
+// "From:" line), which falls back gracefully to the bare hostname.
+const hostLookupTimeout = 1 * time.Second
 
 func hostInfo() string {
 	host, err := os.Hostname()
@@ -174,7 +200,10 @@ func hostInfo() string {
 		host = "unknown"
 	}
 
-	addrs, err := net.DefaultResolver.LookupHost(context.Background(), host)
+	ctx, cancel := context.WithTimeout(context.Background(), hostLookupTimeout)
+	defer cancel()
+
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
 	if err == nil && len(addrs) > 0 {
 		return fmt.Sprintf("From: %s (%s)", host, addrs[0])
 	}
@@ -408,16 +437,21 @@ func (m Model) handlePingResult(msg pingResultMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	var logCmd tea.Cmd
+
 	if msg.target != nil {
 		msg.target.Consume(msg.res)
+		// A counter crossing a digit boundary (e.g. SNT reaching 10000) widens its stat
+		// column, so re-size the layout to keep the result bar aligned.
+		m = m.recalcWidths()
 
 		if m.opts.LogDir != "" {
-			_ = monitor.AppendLog(m.opts.LogDir, msg.target, msg.res, time.Now())
+			logCmd = logCommand(m.opts.LogDir, msg.target, msg.res)
 		}
 	}
 
 	if !m.opts.Async {
-		return m, m.advanceSync(msg.idx)
+		return m, tea.Batch(logCmd, m.advanceSync(msg.idx))
 	}
 
 	if msg.idx >= 0 && msg.idx < len(m.inflight) {
@@ -428,10 +462,25 @@ func (m Model) handlePingResult(msg pingResultMsg) (tea.Model, tea.Cmd) {
 	if m.pending <= 0 {
 		m.tick++ // second spinner step per round.
 
-		return m, m.scheduleNextRound()
+		return m, tea.Batch(logCmd, m.scheduleNextRound())
 	}
 
-	return m, nil
+	return m, logCmd
+}
+
+// logCommand snapshots the fields AppendLogLine writes — on the Update goroutine — and
+// returns a tea.Cmd that performs the blocking disk write off the Update loop, so a
+// stalled log filesystem (NFS hang, full disk) cannot freeze input, rendering, or quit.
+// The snapshot is essential: the command goroutine must not read the live *Target, since
+// only Update may touch its stats (the no-locks invariant).
+func logCommand(dir string, t *monitor.Target, res ping.Result) tea.Cmd {
+	name, avg, snt, now := t.Name, t.Avg, t.Snt, time.Now()
+
+	return func() tea.Msg {
+		_ = monitor.AppendLogLine(dir, name, res, avg, snt, now)
+
+		return nil
+	}
 }
 
 // recalcWidths recomputes the dynamic column widths and returns the updated model,
@@ -478,6 +527,10 @@ func (m Model) recalcWidths() Model {
 	m.addrW = alen
 
 	m.viaW = m.viaWidth()
+
+	// Size the stat columns before the fixed width: rowFixedWidth measures statsHeader,
+	// which now pads each stat column to statW.
+	m.statW = m.computeStatWidths()
 
 	// The terminal width is split across effectiveCols newspaper columns; resW
 	// absorbs the leftover within one column's content width. With a single column

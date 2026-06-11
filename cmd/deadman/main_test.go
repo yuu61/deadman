@@ -92,6 +92,21 @@ func TestParseArgsMissingConfig(t *testing.T) {
 	}
 }
 
+// Exactly one configfile is accepted; extra positionals are an error rather than a
+// silent drop. This also makes `--` foot-guns explicit instead of losing a config path.
+func TestParseArgsRejectsMultipleConfigs(t *testing.T) {
+	cases := [][]string{
+		{"a.conf", "b.conf"},
+		{"--", "-a", "cfg.conf"}, // previously dropped cfg.conf and ran "-a".
+	}
+	for _, args := range cases {
+		_, err := parseArgs(args)
+		if err == nil {
+			t.Errorf("parseArgs(%v) = nil error, want rejection of multiple configfiles", args)
+		}
+	}
+}
+
 func TestResolveScale(t *testing.T) {
 	cases := []struct {
 		name     string

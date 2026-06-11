@@ -9,7 +9,11 @@ import (
 // Layout constants for the TUI screen.
 const (
 	titleProgName = "Dead Man"
-	titleVersion  = "[ver 1.0.0]"
+
+	// defaultVersion labels the build when no version was injected via -ldflags (e.g. a
+	// `go install`/`go run` build). Release builds set Options.Version from the Makefile
+	// (git describe), which titleLine renders instead.
+	defaultVersion = "dev"
 
 	arrow = " > "
 	rear  = "   "

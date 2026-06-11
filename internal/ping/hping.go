@@ -1,7 +1,6 @@
 package ping
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -34,6 +33,13 @@ func newHPingPinger(s Spec) (Pinger, error) {
 		return nil, fmt.Errorf("'dstport' is not specified in tcp option for %s", s.Addr)
 	}
 
+	// addr is a bare destination operand in the hping3 argv, so a leading '-' would be
+	// parsed as a flag (argument injection); reject it.
+	err := validateOperands(s.Addr)
+	if err != nil {
+		return nil, err
+	}
+
 	// A source= is silently ignored here (hping3 has no per-probe source); the TUI
 	// surfaces a startup warning via ping.SourceUnsupported rather than failing.
 	return &hpingPinger{addr: s.Addr, port: port}, nil
@@ -47,20 +53,35 @@ func (p *hpingPinger) Send(ctx context.Context) Result {
 	// hping3 against them is this prober's purpose.
 	cmd := exec.CommandContext(ctx, "hping3", "-S", p.addr, "-p", p.port, "-c", "1")
 
-	var out bytes.Buffer
-
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	out := &capWriter{limit: maxProbeOutput}
+	cmd.Stdout = out
+	cmd.Stderr = out
 
 	err := cmd.Run()
 	if errors.Is(err, exec.ErrNotFound) {
 		return Result{Code: Failed, TTL: -1}
 	}
 
-	if m := reHping.FindStringSubmatch(out.String()); m != nil {
-		rtt, _ := strconv.ParseFloat(m[1], 64)
+	return parseHpingResult(out.String())
+}
 
-		return Result{Success: true, Code: Success, RTT: rtt, TTL: -1}
+// parseHpingResult derives liveness from hping3's output. hping3 prints its
+// "round-trip min/avg/max = ..." summary even on 100% loss (a down/filtered host), so
+// a reply is recognized only when the received-packet count is > 0; the summary then
+// carries the RTT. Gating on the summary alone would report every down tcp target as
+// up — the exact case this mode exists to detect.
+func parseHpingResult(out string) Result {
+	m := reHpingRecv.FindStringSubmatch(out)
+	if m == nil {
+		return Result{Code: Failed, TTL: -1}
+	}
+
+	if recv, _ := strconv.Atoi(m[1]); recv > 0 {
+		if rm := reHping.FindStringSubmatch(out); rm != nil {
+			rtt, _ := strconv.ParseFloat(rm[1], 64)
+
+			return Result{Success: true, Code: Success, RTT: rtt, TTL: -1}
+		}
 	}
 
 	return Result{Code: Failed, TTL: -1}

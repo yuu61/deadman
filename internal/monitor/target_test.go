@@ -147,6 +147,28 @@ func TestKeyResolveFamilySeparates(t *testing.T) {
 	}
 }
 
+// TestKeyDelimiterCollision guards the escaping: two structurally different targets
+// must not produce the same Key just because a field value contains the ':'/'=' that
+// Key uses as delimiters. Without quoting, {user:"bob", via:"ssh"} and
+// {user:"bob:via=ssh"} both flatten to "...:user=bob:via=ssh" and would alias each
+// other's history across a reload.
+func TestKeyDelimiterCollision(t *testing.T) {
+	twoKeys := &Target{
+		Name:  "web",
+		Addr:  "1.1.1.1",
+		Relay: map[string]string{"user": "bob", "via": "ssh"},
+	}
+	oneKey := &Target{
+		Name:  "web",
+		Addr:  "1.1.1.1",
+		Relay: map[string]string{"user": "bob:via=ssh"},
+	}
+
+	if twoKeys.Key() == oneKey.Key() {
+		t.Errorf("Key collision across a forged delimiter:\n %q\n %q", twoKeys.Key(), oneKey.Key())
+	}
+}
+
 // TestResultsRescale shows the result bar re-buckets when the scale changes: the
 // same stored result renders to a different glyph at a different scale. This is what
 // lets the up/down keys re-scale bars already on screen.
