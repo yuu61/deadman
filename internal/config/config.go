@@ -10,6 +10,7 @@ package config
 import (
 	"bufio"
 	"io"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -42,7 +43,7 @@ type TargetSpec struct {
 type Config struct {
 	Targets   []TargetSpec
 	Columns   map[string]bool // column key (upper-case) -> shown.
-	Scale     int             // RTT-bar ms-per-step from a "scale" directive; 0 = unset.
+	Scale     float64         // RTT-bar ms-per-step from a "scale" directive; 0 = unset.
 	Precision string          // stat-precision label from a "precision" directive; "" = unset.
 	Cols      int             // newspaper-column count from a "split" directive; 0 = unset.
 }
@@ -73,8 +74,8 @@ var directives = map[string]func(cfg *Config, args []string){
 			return
 		}
 
-		n, err := strconv.Atoi(args[0])
-		if err == nil && n > 0 {
+		n, err := strconv.ParseFloat(args[0], 64)
+		if err == nil && n > 0 && !math.IsInf(n, 0) {
 			cfg.Scale = n
 		}
 	},

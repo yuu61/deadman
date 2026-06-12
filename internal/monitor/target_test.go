@@ -26,7 +26,7 @@ func TestGlyph(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := Glyph(c.res, scale); got != c.want {
+			if got := Glyph(c.res, scale, 0); got != c.want {
 				t.Errorf("Glyph(%+v) = %q, want %q", c.res, got, c.want)
 			}
 		})
@@ -69,7 +69,7 @@ func TestConsume(t *testing.T) {
 		t.Errorf("Jit = %v, want 1.25", tg.Jit)
 	}
 	// History is newest-first: the last result was RTT 30, which renders ▄ at scale 10.
-	if got := tg.Results(1); len(got) != 1 || Glyph(got[0], 10) != "▄" {
+	if got := tg.Results(1); len(got) != 1 || Glyph(got[0], 10, 0) != "▄" {
 		t.Errorf("Results(1) rendered at scale 10 = %v, want [▄]", got)
 	}
 
@@ -179,11 +179,120 @@ func TestResultsRescale(t *testing.T) {
 	res := tg.Results(1)[0]
 	// RTT 15: at scale 10 it lands in the 2nd bucket (10..20 -> ▂); at scale 5 it is
 	// in the 4th (15 == 5*3, < 5*4 -> ▄).
-	if got := Glyph(res, 10); got != "▂" {
+	if got := Glyph(res, 10, 0); got != "▂" {
 		t.Errorf("Glyph(RTT 15, scale 10) = %q, want ▂", got)
 	}
 
-	if got := Glyph(res, 5); got != "▄" {
+	if got := Glyph(res, 5, 0); got != "▄" {
 		t.Errorf("Glyph(RTT 15, scale 5) = %q, want ▄", got)
+	}
+}
+
+// TestRttGlyphLog verifies logarithmic bucketing (logK > 0): band i covers
+// [floor*aⁱ, floor*a^(i+1)) with a = e^logK and floor = scale, so an RTT exactly on
+// a band boundary (floor*e^(logK*i)) lands in band i (glyph rttBars[i]) and one past
+// the last band overflows to "█". Boundary inputs are generated with math.Exp so the
+// floating-point edges (which boundaryEpsilon repairs) are exercised.
+func TestRttGlyphLog(t *testing.T) {
+	exp := math.Exp
+
+	cases := []struct {
+		name  string
+		rtt   float64
+		scale float64
+		logK  int
+		want  string
+	}{
+		// logK=1 (base e), floor 1.0 — exact band boundaries.
+		{"k1_below_floor", 0.5, 1.0, 1, "▁"},
+		{"k1_at_floor", 1.0, 1.0, 1, "▁"},
+		{"k1_e1", exp(1), 1.0, 1, "▂"},
+		{"k1_e2", exp(2), 1.0, 1, "▃"},
+		{"k1_e3", exp(3), 1.0, 1, "▄"},
+		{"k1_e4", exp(4), 1.0, 1, "▅"},
+		{"k1_e5", exp(5), 1.0, 1, "▆"},
+		{"k1_e6", exp(6), 1.0, 1, "▇"},
+		{"k1_e7", exp(7), 1.0, 1, "█"},
+		{"k1_huge", 1e9, 1.0, 1, "█"},
+		// Mid-band (not on a boundary) lands in the lower band: floor(2.5) = 2.
+		{"k1_mid_2_3", exp(2.5), 1.0, 1, "▃"},
+
+		// logK=2 (base e²), floor 1.0.
+		{"k2_at_floor", 1.0, 1.0, 2, "▁"},
+		{"k2_e2", exp(2), 1.0, 2, "▂"},
+		{"k2_e4", exp(4), 1.0, 2, "▃"},
+		{"k2_e6", exp(6), 1.0, 2, "▄"},
+		{"k2_e8", exp(8), 1.0, 2, "▅"},
+		{"k2_e10", exp(10), 1.0, 2, "▆"},
+		{"k2_e12", exp(12), 1.0, 2, "▇"},
+		{"k2_e14", exp(14), 1.0, 2, "█"},
+
+		// Non-unit floors: the exact-boundary inputs the epsilon guard repairs.
+		{"floor03_e2", 0.3 * exp(2), 0.3, 1, "▃"},
+		{"floor25_e4", 2.5 * exp(4), 2.5, 1, "▅"},
+		{"subms_floor_e3", 0.001 * exp(3), 0.001, 1, "▄"},
+
+		// Guards: zero/negative RTT and a degenerate floor fall back to ▁.
+		{"zero_rtt", 0.0, 1.0, 1, "▁"},
+		{"neg_floor", exp(3), -1.0, 1, "▁"},
+
+		// logK=0 stays linear even through this table.
+		{"k0_linear_9_scale10", 9.0, 10.0, 0, "▁"},
+		{"k0_linear_70_scale10", 70.0, 10.0, 0, "█"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := ping.Result{Success: true, Code: ping.Success, RTT: c.rtt}
+			if got := Glyph(res, c.scale, c.logK); got != c.want {
+				t.Errorf("Glyph(RTT %v, scale %v, logK %d) = %q, want %q",
+					c.rtt, c.scale, c.logK, got, c.want)
+			}
+		})
+	}
+}
+
+// TestRttGlyphLogBoundaryStability is the regression guard for boundaryEpsilon:
+// across non-unit floors and both factors, an RTT exactly on band boundary i
+// (floor*e^(logK*i)) must land in band i (rttBars[i]) for i in 0..len(rttBars)-1 and
+// overflow to "█" at i == len(rttBars). Without the epsilon nudge, exact boundaries
+// such as floor=0.3,i=2 and floor=2.5,i=4 truncate one band too low.
+func TestRttGlyphLogBoundaryStability(t *testing.T) {
+	floors := []float64{0.3, 1.0, 2.5, 7.0, 0.001}
+	for _, floor := range floors {
+		for _, logK := range []int{1, 2} {
+			for i := 0; i <= len(rttBars); i++ {
+				rtt := floor * math.Exp(float64(logK*i))
+
+				want := "█"
+				if i < len(rttBars) {
+					want = rttBars[i]
+				}
+
+				res := ping.Result{Success: true, Code: ping.Success, RTT: rtt}
+				if got := Glyph(res, floor, logK); got != want {
+					t.Errorf("floor=%v logK=%d band=%d (rtt=%v): Glyph = %q, want %q",
+						floor, logK, i, rtt, got, want)
+				}
+			}
+		}
+	}
+}
+
+// TestGlyphFailureCodesLogMode confirms log mode does not disturb the failure-code
+// mapping: a failed probe is still X (and SSH timeout/failure t/s) whatever the log
+// factor, since the switch routes before any RTT bucketing.
+func TestGlyphFailureCodesLogMode(t *testing.T) {
+	cases := []struct {
+		res  ping.Result
+		want string
+	}{
+		{ping.Result{Code: ping.Failed}, "X"},
+		{ping.Result{Code: ping.SSHTimeout}, "t"},
+		{ping.Result{Code: ping.SSHFailed}, "s"},
+	}
+	for _, c := range cases {
+		if got := Glyph(c.res, 1.0, 1); got != c.want {
+			t.Errorf("Glyph(%+v, logK=1) = %q, want %q", c.res, got, c.want)
+		}
 	}
 }

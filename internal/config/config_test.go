@@ -218,7 +218,7 @@ func TestParseConfigDirectiveCaseInsensitive(t *testing.T) {
 	}
 
 	if cfg.Scale != 5 {
-		t.Errorf("Scale = %d, want 5", cfg.Scale)
+		t.Errorf("Scale = %g, want 5", cfg.Scale)
 	}
 
 	if cfg.Cols != 2 {
@@ -403,7 +403,7 @@ func TestParseConfigScaleAndPrecision(t *testing.T) {
 	}
 
 	if cfg.Scale != 5 {
-		t.Errorf("Scale = %d, want 5", cfg.Scale)
+		t.Errorf("Scale = %g, want 5", cfg.Scale)
 	}
 
 	// The precision label is stored verbatim; the TUI validates it against its mode
@@ -458,8 +458,21 @@ func TestParseConfigScaleLenient(t *testing.T) {
 		}
 
 		if cfg.Scale != 0 {
-			t.Errorf("ParseConfig(%q): Scale = %d, want 0 (unset)", in, cfg.Scale)
+			t.Errorf("ParseConfig(%q): Scale = %g, want 0 (unset)", in, cfg.Scale)
 		}
+	}
+}
+
+func TestParseConfigScaleFractional(t *testing.T) {
+	// A fractional scale is accepted (sub-ms resolution); the value is stored verbatim
+	// as a float so the result bar can bucket sub-millisecond RTTs.
+	cfg, err := ParseConfig(strings.NewReader("scale 0.5\nhost 1.2.3.4\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Scale != 0.5 {
+		t.Errorf("Scale = %g, want 0.5", cfg.Scale)
 	}
 }
 

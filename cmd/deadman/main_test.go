@@ -73,7 +73,7 @@ func TestParseArgsScaleBlinkLog(t *testing.T) {
 	}
 
 	if opts.Scale != 20 {
-		t.Errorf("Scale = %d, want 20", opts.Scale)
+		t.Errorf("Scale = %g, want 20", opts.Scale)
 	}
 
 	if !opts.Blink {
@@ -82,6 +82,18 @@ func TestParseArgsScaleBlinkLog(t *testing.T) {
 
 	if opts.LogDir != "logs" {
 		t.Errorf("LogDir = %q, want logs", opts.LogDir)
+	}
+}
+
+func TestParseArgsScaleFractional(t *testing.T) {
+	// A fractional -s is accepted (sub-ms scale); the flag parses as float64.
+	opts, err := parseArgs([]string{"deadman.conf", "-s", "0.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if opts.Scale != 0.5 {
+		t.Errorf("Scale = %g, want 0.5", opts.Scale)
 	}
 }
 
@@ -110,18 +122,19 @@ func TestParseArgsRejectsMultipleConfigs(t *testing.T) {
 func TestResolveScale(t *testing.T) {
 	cases := []struct {
 		name     string
-		cli, cfg int
-		want     int
+		cli, cfg float64
+		want     float64
 	}{
 		{"cli explicit wins over config", 20, 5, 20},
 		{"config used when cli unset", 0, 5, 5},
 		{"cli used when config unset", 7, 0, 7},
+		{"sub-ms cli is honored", 0.5, 0, 0.5},
 		{"default when both unset", 0, 0, defaultScale},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := resolveScale(c.cli, c.cfg); got != c.want {
-				t.Errorf("resolveScale(%d, %d) = %d, want %d", c.cli, c.cfg, got, c.want)
+				t.Errorf("resolveScale(%g, %g) = %g, want %g", c.cli, c.cfg, got, c.want)
 			}
 		})
 	}

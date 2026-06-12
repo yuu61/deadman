@@ -593,13 +593,23 @@ func TestScaleStepKeys(t *testing.T) {
 		t.Errorf("after up,up: want scale 20\n---\n%s", out)
 	}
 
-	// down past the bottom rung clamps at 1ms.
-	_, out = drive(t, m,
+	// down past the bottom clamps at the sub-ms floor (0.01ms). From 20ms the ladder
+	// descends 20→10→5→2→1→0.5→0.2→0.1→0.05→0.02→0.01; press well past the bottom.
+	m, out = drive(t, m,
+		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
+		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
+		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
 		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
 		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
 		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown})
-	if !strings.Contains(out, "RTT Scale 1ms") {
-		t.Errorf("down past the bottom should clamp at 1ms\n---\n%s", out)
+	if !strings.Contains(out, "RTT Scale 0.01ms") {
+		t.Errorf("down past the bottom should clamp at 0.01ms\n---\n%s", out)
+	}
+
+	// further down past the floor stays clamped at 0.01ms.
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if !strings.Contains(out, "RTT Scale 0.01ms") {
+		t.Errorf("further down past the floor must stay at 0.01ms\n---\n%s", out)
 	}
 }
 
@@ -610,25 +620,27 @@ func TestScaleStepKeys(t *testing.T) {
 func TestScaleLadderBounds(t *testing.T) {
 	cases := []struct {
 		name           string
-		cur            int
-		wantUp, wantDn int
+		cur            float64
+		wantUp, wantDn float64
 	}{
 		{"within ladder", 10, 20, 5},
 		{"off-ladder below top", 7, 10, 5},
 		{"at top rung", 100, 100, 50},
 		{"above top rung stays put on up", 1000, 1000, 100}, // the Bug-1 regression guard.
-		{"at bottom rung", 1, 2, 1},
+		{"at bottom rung", 0.01, 0.02, 0.01},
 		{"off-ladder near bottom", 3, 5, 2},
+		{"sub-ms mid", 0.1, 0.2, 0.05},
+		{"below bottom clamps", 0.005, 0.01, 0.01},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := scaleUp(c.cur); got != c.wantUp {
-				t.Errorf("scaleUp(%d) = %d, want %d", c.cur, got, c.wantUp)
+				t.Errorf("scaleUp(%g) = %g, want %g", c.cur, got, c.wantUp)
 			}
 
 			if got := scaleDown(c.cur); got != c.wantDn {
-				t.Errorf("scaleDown(%d) = %d, want %d", c.cur, got, c.wantDn)
+				t.Errorf("scaleDown(%g) = %g, want %g", c.cur, got, c.wantDn)
 			}
 		})
 	}

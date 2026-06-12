@@ -15,7 +15,7 @@ func TestParseConfigStripsBOM(t *testing.T) {
 	}
 
 	if cfg.Scale != 5 {
-		t.Errorf("Scale = %d, want 5 (BOM must not block the first-line directive)", cfg.Scale)
+		t.Errorf("Scale = %g, want 5 (BOM must not block the first-line directive)", cfg.Scale)
 	}
 
 	if len(cfg.Targets) != 1 {

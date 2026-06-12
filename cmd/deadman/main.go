@@ -17,7 +17,7 @@ import (
 )
 
 // defaultScale is the default RTT bar gap in milliseconds.
-const defaultScale = 10
+const defaultScale = 10.0
 
 // version is the build version shown in the TUI title bar. It is overridden at build
 // time via -ldflags "-X main.version=..." (see the Makefile, which derives it from git
@@ -29,7 +29,7 @@ var version = "dev"
 // -s flag defaults to 0, and a missing or invalid "scale" directive leaves cfg.Scale
 // at 0), so passing -s is never indistinguishable from its own default and a config
 // scale can take effect.
-func resolveScale(cli, cfg int) int {
+func resolveScale(cli, cfg float64) float64 {
 	if cli > 0 {
 		return cli
 	}
@@ -47,8 +47,8 @@ func resolveScale(cli, cfg int) int {
 // configfile intermix.
 func parseArgs(args []string) (tui.Options, error) {
 	fs := flag.NewFlagSet("deadman", flag.ContinueOnError)
-	scale := fs.Int("s", 0, "scale of ping RTT bar gap (ms, default 10)")
-	fs.IntVar(scale, "scale", 0, "scale of ping RTT bar gap (ms, default 10)")
+	scale := fs.Float64("s", 0, "scale of ping RTT bar gap (ms, default 10, decimals allowed)")
+	fs.Float64Var(scale, "scale", 0, "scale of ping RTT bar gap (ms, default 10, decimals allowed)")
 	async := fs.Bool("a", false, "send ping asynchronously")
 	fs.BoolVar(async, "async-mode", false, "send ping asynchronously")
 	blink := fs.Bool("b", false, "blink arrow in async mode")

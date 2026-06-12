@@ -81,7 +81,7 @@ func (m Model) View() string {
 // keysLine is the scale + key-legend line (line 2), factored into a method to sit
 // alongside the other fixed-line builders (centerTitle/titleLine/headerLine).
 func (m Model) keysLine() string {
-	s := rear + fmt.Sprintf("RTT Scale %dms.", m.scale)
+	s := rear + fmt.Sprintf("RTT Scale %gms.", m.scale)
 
 	// The effective-vs-requested column count sits near the front, before the long
 	// key legend, so the renderer's width truncation (it clips lines, not wraps)
@@ -92,11 +92,25 @@ func (m Model) keysLine() string {
 	}
 
 	s += fmt.Sprintf(
-		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s] ([/])cols",
+		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (l)og[%s] (p)recision[%s] ([/])cols",
+		logLabel(m.logK),
 		m.precMode().Label,
 	)
 
 	return s
+}
+
+// logLabel renders the current RTT-scale log factor for the key legend: "lin" when
+// linear (logK 0), "×e" for base e, and "×e²" for base e².
+func logLabel(k int) string {
+	switch k {
+	case 1:
+		return "×e"
+	case 2:
+		return "×e²"
+	default:
+		return "lin"
+	}
 }
 
 // scrollStatus is the one-line position indicator shown below the row window when
@@ -215,7 +229,7 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 	var g strings.Builder
 
 	for _, res := range t.Results(m.resW) {
-		ch := monitor.Glyph(res, m.scale)
+		ch := monitor.Glyph(res, m.scale, m.logK)
 		if monitor.IsFailGlyph(ch) {
 			g.WriteString(styleDown.Render(ch))
 		} else {
