@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"math"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,9 +31,9 @@ var version = "dev"
 // scale can take effect.
 func resolveScale(cli, cfg float64) float64 {
 	// A non-finite CLI value (e.g. -s Inf, which flag.Float64 accepts) would flatten
-	// every bar, so reject it here just as the config "scale" directive rejects it; the
-	// fallback to a config scale or the default then applies.
-	if cli > 0 && !math.IsInf(cli, 0) {
+	// every bar, so it is rejected by the same config.ValidScale predicate the "scale"
+	// directive uses; the fallback to a config scale or the default then applies.
+	if config.ValidScale(cli) {
 		return cli
 	}
 

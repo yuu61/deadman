@@ -131,6 +131,7 @@ func TestResolveScale(t *testing.T) {
 		{"cli used when config unset", 7, 0, 7},
 		{"sub-ms cli is honored", 0.5, 0, 0.5},
 		{"non-finite cli falls back to config", math.Inf(1), 5, 5},
+		{"nan cli falls back to config", math.NaN(), 5, 5},
 		{"default when both unset", 0, 0, defaultScale},
 	}
 	for _, c := range cases {

@@ -43,7 +43,7 @@ type TargetSpec struct {
 type Config struct {
 	Targets   []TargetSpec
 	Columns   map[string]bool // column key (upper-case) -> shown.
-	Scale     float64         // RTT-bar ms-per-step from a "scale" directive; 0 = unset.
+	Scale     float64         // RTT-bar ms-per-step (or log-mode floor) from a "scale" directive; 0 = unset.
 	Precision string          // stat-precision label from a "precision" directive; "" = unset.
 	Cols      int             // newspaper-column count from a "split" directive; 0 = unset.
 }
@@ -75,7 +75,7 @@ var directives = map[string]func(cfg *Config, args []string){
 		}
 
 		n, err := strconv.ParseFloat(args[0], 64)
-		if err == nil && n > 0 && !math.IsInf(n, 0) {
+		if err == nil && ValidScale(n) {
 			cfg.Scale = n
 		}
 	},
@@ -94,6 +94,14 @@ var directives = map[string]func(cfg *Config, args []string){
 			cfg.Cols = n
 		}
 	},
+}
+
+// ValidScale reports whether v is a usable RTT-bar scale: strictly positive and finite.
+// It is the single predicate shared by the "scale" directive, the CLI -s resolver
+// (cmd/deadman) and the TUI's startup normalization, so inf/nan/non-positive rejection
+// cannot drift between them.
+func ValidScale(v float64) bool {
+	return v > 0 && !math.IsInf(v, 0)
 }
 
 var reSeparator = regexp.MustCompile(`^-+$`)

@@ -30,8 +30,8 @@ type Row struct {
 type Options struct {
 	Async      bool
 	Blink      bool
-	Scale      float64
-	Precision  string // initial stat-precision label (config "precision"); "" = ms.
+	Scale      float64 // RTT-bar ms-per-step (the window floor in log mode); 0 lets New fall back.
+	Precision  string  // initial stat-precision label (config "precision"); "" = ms.
 	LogDir     string
 	LogWriter  *monitor.LogWriter // serializes -l log writes off the Update loop; nil = no logging.
 	ConfigPath string
@@ -58,7 +58,7 @@ type Model struct {
 
 	visible map[string]bool // per-column visibility (config defaults + 'm' toggle).
 
-	scale   float64 // RTT-bar ms-per-step; adjusted live with up/down, applied when rendering glyphs.
+	scale   float64 // RTT-bar ms-per-step (the window floor in log mode); adjusted live with up/down.
 	logK    int     // RTT-scale log factor: 0 = linear, 1 = base e, 2 = base e²; cycled with 'l'.
 	precIdx int     // index into precisionModes for the stat columns; cycled with 'p'.
 
@@ -79,16 +79,28 @@ type Model struct {
 	warnings []string // startup warnings (e.g. rp_filter, IPv6 nexthop ignored).
 }
 
+// fallbackScale is the RTT-bar scale New uses when Options.Scale is unset or degenerate
+// (a caller bypassing resolveScale); it matches the CLI default so behavior is uniform.
+const fallbackScale = 10
+
 // New builds the initial model from parsed specs and options. The error return is
 // retained for call-site stability; New currently never fails (a target whose config
 // cannot be built degrades to a permanent-failure row rather than aborting).
 func New(specs []config.TargetSpec, opts Options) (Model, error) {
 	rows, buildWarns := buildRows(specs, nil)
 
+	// Normalize the scale like Cols: a caller bypassing resolveScale (a test or an
+	// embedding) may pass a zero/degenerate Options.Scale, which would otherwise make
+	// rttGlyph's scale<=0 guard flatten every bar to ▁.
+	scale := opts.Scale
+	if !config.ValidScale(scale) {
+		scale = fallbackScale
+	}
+
 	return Model{
 		rows:     rows,
 		opts:     opts,
-		scale:    opts.Scale,
+		scale:    scale,
 		precIdx:  precisionIndex(opts.Precision),
 		hostInfo: hostInfo(),
 		visible:  buildVisible(opts.Columns),
@@ -374,13 +386,16 @@ func (m Model) adjustCols(key string) Model {
 }
 
 // logFactors is the single source of the 'l'-key cycle order and the legend labels for
-// the RTT-scale log factor: linear (no log), then base e and base e². Adding a factor
-// (e³, …) is one entry here; len(logFactors) bounds the cycle and the slice index is
-// the logK value.
+// the RTT-scale log factor: linear (no log), then base e and base e². The slice index
+// IS the logK value handed to monitor.Glyph (the ln divisor, so bars bucket on
+// e^index), so a new entry must preserve that index==exponent contract — a non-e^n
+// factor (e.g. base 10) needs a matching rttGlyph change, not just a label. Labels stay
+// ASCII (narrow): "×"/"²" are East-Asian-ambiguous and render 2 cells on CJK terminals,
+// desyncing the keys-line width from the renderer's measure.
 var logFactors = []struct{ Label string }{
 	{"lin"},
-	{"×e"},
-	{"×e²"},
+	{"xe"},
+	{"xe2"},
 }
 
 // scaleSteps is the ladder the up/down keys move the RTT-bar scale through (ms); it

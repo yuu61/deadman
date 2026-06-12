@@ -692,16 +692,16 @@ func TestLogModeKey(t *testing.T) {
 		t.Errorf("linear start should show 'RTT Scale 10ms'\n---\n%s", out)
 	}
 
-	// 'l' -> base e: the footer switches to floor wording and the ×e factor.
+	// 'l' -> base e: the footer switches to floor wording and the xe factor.
 	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if !strings.Contains(out, "RTT floor 10ms ×e.") {
-		t.Errorf("after l: want 'RTT floor 10ms ×e'\n---\n%s", out)
+	if !strings.Contains(out, "RTT floor 10ms xe.") {
+		t.Errorf("after l: want 'RTT floor 10ms xe'\n---\n%s", out)
 	}
 
-	// 'l' -> base e².
+	// 'l' -> base e²: the xe2 factor (the trailing '.' keeps this from matching xe).
 	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if !strings.Contains(out, "RTT floor 10ms ×e².") {
-		t.Errorf("after l,l: want ×e²\n---\n%s", out)
+	if !strings.Contains(out, "RTT floor 10ms xe2.") {
+		t.Errorf("after l,l: want xe2\n---\n%s", out)
 	}
 
 	// 'l' wraps back to linear.
@@ -794,7 +794,8 @@ func TestReloadPreservesScaleAndPrecision(t *testing.T) {
 	// scale/precision/log-factor are preserved (the documented, intentional asymmetry).
 	_, out := drive(t, m, reloadMsg{})
 
-	if !strings.Contains(out, "RTT floor 5ms ×e") || !strings.Contains(out, "(p)recision[ms.1]") {
+	// The trailing '.' makes this fail if a reload bug advances logK 1->2 (xe -> xe2).
+	if !strings.Contains(out, "RTT floor 5ms xe.") || !strings.Contains(out, "(p)recision[ms.1]") {
 		t.Errorf("reload should preserve the live scale/precision/log-factor\n---\n%s", out)
 	}
 

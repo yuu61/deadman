@@ -108,7 +108,7 @@ func (m Model) keysLine() string {
 }
 
 // logLabel renders the RTT-scale log factor for logK as its short legend label
-// ("lin", "×e", "×e²"), reading the single logFactors table.
+// ("lin", "xe", "xe2"), reading the single logFactors table.
 func logLabel(k int) string {
 	if k < 0 || k >= len(logFactors) {
 		return logFactors[0].Label
