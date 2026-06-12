@@ -233,11 +233,12 @@ func (t *Target) foldSuccessRTT(rtt float64) {
 // renders for anything at or above the last band in either mode.
 var rttBars = []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇"}
 
-// boundaryEpsilon nudges the log segment index up before truncation so a value
-// landing exactly on a band boundary (floor*aⁱ) is not pushed into the band below
-// by floating-point error (e.g. floor=0.3, rtt=floor*e² yields 1.9999999998 rather
-// than 2.0). True band boundaries are a full 1.0 apart in index space, so this can
-// never promote a genuine non-boundary value into the next band.
+// boundaryEpsilon nudges the bucket index up before truncation so an RTT exactly on a
+// band boundary — where the true step value is a whole number that float rounding can
+// render a hair below it (rtt/scale for rtt=0.3, scale=0.1 is 2.9999999999999996, not
+// 3.0) — lands in the band it opens rather than the one below. The trade-off is
+// deliberate: an RTT within ~1e-9 in step space just under a boundary rounds up too, a
+// sliver far below display resolution.
 const boundaryEpsilon = 1e-9
 
 // Glyph maps a result to its result-bar character. Failures map to X/t/s; a
@@ -262,45 +263,38 @@ func Glyph(res ping.Result, scale float64, logK int) string {
 	}
 }
 
-// rttGlyph picks the block element for a successful probe's RTT. With logK == 0 it
-// buckets linearly: bar i covers [scale*i, scale*(i+1)), and "█" sits above the
-// last bucket. With logK > 0 it delegates to logIndexGlyph, which buckets on a
-// logarithmic window whose floor is scale and whose factor is e^logK.
+// rttGlyph picks the block element for a successful probe's RTT. The bucket index is
+// computed in "step space" — rtt/scale for the linear scale (logK == 0) or
+// log_{e^logK}(rtt/scale) for the logarithmic scale — then nudged by boundaryEpsilon
+// and clamped by barForStep. Both regimes share the half-open, left-closed band
+// inclusion: band i covers [scale*i, scale*(i+1)) linearly, [scale*aⁱ, scale*a^(i+1))
+// logarithmically (a = e^logK). A degenerate scale or a non-positive RTT (where the
+// ratio/log is undefined) falls back to the lowest bar.
 func rttGlyph(rtt, scale float64, logK int) string {
+	if scale <= 0 || rtt <= 0 {
+		return rttBars[0]
+	}
+
+	step := rtt / scale
 	if logK > 0 {
-		return logIndexGlyph(rtt, scale, logK)
+		step = math.Log(step) / float64(logK)
 	}
 
-	for i, bar := range rttBars {
-		if rtt < scale*float64(i+1) {
-			return bar
-		}
-	}
-
-	return "█"
+	return barForStep(step + boundaryEpsilon)
 }
 
-// logIndexGlyph buckets rtt on a logarithmic scale: the segment index is
-// floor(ln(rtt/floor)/logK) = log_{e^logK}(rtt/floor), clamped to [0, len(rttBars)].
-// Band i covers [floor*aⁱ, floor*a^(i+1)) with a = e^logK, mirroring the linear
-// half-open, left-closed inclusion; an index at or above len(rttBars) overflows to
-// "█" and a sub-floor RTT clamps to the lowest bar. A degenerate floor or a
-// non-positive RTT (where ln is undefined) also falls back to the lowest bar.
-func logIndexGlyph(rtt, floor float64, logK int) string {
-	if floor <= 0 || rtt <= 0 {
-		return rttBars[0]
-	}
-
-	raw := math.Log(rtt/floor)/float64(logK) + boundaryEpsilon
-
+// barForStep maps a bucket index (already nudged by boundaryEpsilon) to a bar glyph,
+// clamping to [0, len(rttBars)]: a negative index (RTT below the first band) or NaN
+// yields the lowest bar, and an index at or above len(rttBars) overflows to "█".
+func barForStep(step float64) string {
 	switch {
-	case math.IsNaN(raw) || raw < 0:
+	case math.IsNaN(step) || step < 0:
 		return rttBars[0]
-	case raw >= float64(len(rttBars)):
+	case step >= float64(len(rttBars)):
 		return "█"
 	default:
-		// raw is in [0, len(rttBars)) here, so the truncation is a valid bar index.
-		return rttBars[int(raw)]
+		// step is in [0, len(rttBars)) here, so the truncation is a valid bar index.
+		return rttBars[int(step)]
 	}
 }
 

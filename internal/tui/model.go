@@ -329,7 +329,7 @@ func (m Model) adjustRTTScale(key string) Model {
 	case "down":
 		m.scale = scaleDown(m.scale)
 	case "l":
-		m.logK = (m.logK + 1) % logModes
+		m.logK = (m.logK + 1) % len(logFactors)
 	default:
 		// Unreachable: handleViewKey routes only up/down/l here.
 	}
@@ -373,9 +373,15 @@ func (m Model) adjustCols(key string) Model {
 	return m
 }
 
-// logModes is the number of RTT-scale log factors the 'l' key cycles through:
-// linear (0), base e (1), and base e² (2).
-const logModes = 3
+// logFactors is the single source of the 'l'-key cycle order and the legend labels for
+// the RTT-scale log factor: linear (no log), then base e and base e². Adding a factor
+// (e³, …) is one entry here; len(logFactors) bounds the cycle and the slice index is
+// the logK value.
+var logFactors = []struct{ Label string }{
+	{"lin"},
+	{"×e"},
+	{"×e²"},
+}
 
 // scaleSteps is the ladder the up/down keys move the RTT-bar scale through (ms); it
 // extends below 1ms so sub-millisecond LAN RTTs can be resolved.
@@ -396,7 +402,10 @@ func scaleUp(cur float64) float64 {
 	return cur
 }
 
-// scaleDown returns the next finer (smaller-ms) rung below cur, clamped at the bottom.
+// scaleDown returns the next finer (smaller-ms) rung below cur. At or below the bottom
+// rung cur is preserved: Down means finer, so it must never increase the scale — the
+// mirror of scaleUp's top guard, so a free-form -s 0.005 stays 0.005 rather than being
+// snapped up to the ladder bottom.
 func scaleDown(cur float64) float64 {
 	for _, s := range slices.Backward(scaleSteps) {
 		if s < cur {
@@ -404,7 +413,7 @@ func scaleDown(cur float64) float64 {
 		}
 	}
 
-	return scaleSteps[0]
+	return cur
 }
 
 // handleReload reparses the config and starts a fresh generation, so stale

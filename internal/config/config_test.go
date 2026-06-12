@@ -449,9 +449,13 @@ func TestParseConfigSplitLenient(t *testing.T) {
 }
 
 func TestParseConfigScaleLenient(t *testing.T) {
-	// A non-numeric or non-positive scale is ignored, leaving Scale unset (0) so the
-	// caller falls back to the CLI/default rather than aborting the parse.
-	for _, in := range []string{"scale abc\n", "scale -3\n", "scale 0\n", "scale\n"} {
+	// A non-numeric, non-positive, or non-finite scale is ignored, leaving Scale unset
+	// (0) so the caller falls back to the CLI/default rather than aborting the parse.
+	// "scale inf" is the case the math.IsInf guard catches (ParseFloat accepts it and
+	// +Inf > 0); "scale nan" is caught by the n > 0 check (NaN > 0 is false).
+	for _, in := range []string{
+		"scale abc\n", "scale -3\n", "scale 0\n", "scale\n", "scale inf\n", "scale nan\n",
+	} {
 		cfg, err := ParseConfig(strings.NewReader(in))
 		if err != nil {
 			t.Fatalf("ParseConfig(%q) error: %v", in, err)

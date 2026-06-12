@@ -630,7 +630,7 @@ func TestScaleLadderBounds(t *testing.T) {
 		{"at bottom rung", 0.01, 0.02, 0.01},
 		{"off-ladder near bottom", 3, 5, 2},
 		{"sub-ms mid", 0.1, 0.2, 0.05},
-		{"below bottom clamps", 0.005, 0.01, 0.01},
+		{"below bottom holds", 0.005, 0.01, 0.005},
 	}
 
 	for _, c := range cases {
@@ -676,6 +676,71 @@ func TestScaleRebucketsExistingBar(t *testing.T) {
 	}
 }
 
+// TestLogModeKey cycles the 'l' key (linear -> base e -> base e² -> linear), asserting
+// the footer relabels to floor mode and surfaces the factor up front (×e / ×e²) and
+// wraps back. This is the regression guard for the 'l' wiring and logLabel.
+func TestLogModeKey(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 40})
+	if !strings.Contains(out, "RTT Scale 10ms") {
+		t.Errorf("linear start should show 'RTT Scale 10ms'\n---\n%s", out)
+	}
+
+	// 'l' -> base e: the footer switches to floor wording and the ×e factor.
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !strings.Contains(out, "RTT floor 10ms ×e.") {
+		t.Errorf("after l: want 'RTT floor 10ms ×e'\n---\n%s", out)
+	}
+
+	// 'l' -> base e².
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !strings.Contains(out, "RTT floor 10ms ×e².") {
+		t.Errorf("after l,l: want ×e²\n---\n%s", out)
+	}
+
+	// 'l' wraps back to linear.
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !strings.Contains(out, "RTT Scale 10ms") {
+		t.Errorf("after l×3: should wrap back to linear\n---\n%s", out)
+	}
+}
+
+// TestLogModeRebucketsBar confirms 'l' re-buckets the on-screen bar through the View
+// path (targetLine passing logK to monitor.Glyph): the same stored RTT 50 renders ▆ on
+// the linear scale 10 but ▂ in log ×e (ln(50/10)≈1.6, band 1).
+func TestLogModeRebucketsBar(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m,
+		tea.WindowSizeMsg{Width: 200, Height: 40},
+		pingResultMsg{
+			idx:    0,
+			target: m.rows[0].Target,
+			res:    ping.Result{Success: true, Code: ping.Success, RTT: 50},
+		},
+	)
+	if !strings.Contains(out, "▆") {
+		t.Errorf("RTT 50 at linear scale 10 should render ▆\n---\n%s", out)
+	}
+
+	// switch to log ×e: 50ms re-buckets from ▆ to ▂.
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !strings.Contains(out, "▂") || strings.Contains(out, "▆") {
+		t.Errorf("in log ×e, RTT 50 should re-bucket to ▂ not ▆\n---\n%s", out)
+	}
+}
+
 func TestPrecisionFromConfigAtStartup(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
@@ -717,19 +782,20 @@ func TestReloadPreservesScaleAndPrecision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Live: step the scale to 5 and cycle precision to ms.1.
+	// Live: step the scale to 5, cycle precision to ms.1, and switch to log mode.
 	m, _ = drive(t, m,
 		tea.WindowSizeMsg{Width: 120, Height: 40},
 		tea.KeyMsg{Type: tea.KeyDown},
 		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}},
 	)
 
 	// Reload reparses the file: columns reset to it (MIN hidden), but the live
-	// scale/precision are preserved (the documented, intentional asymmetry).
+	// scale/precision/log-factor are preserved (the documented, intentional asymmetry).
 	_, out := drive(t, m, reloadMsg{})
 
-	if !strings.Contains(out, "RTT Scale 5ms") || !strings.Contains(out, "(p)recision[ms.1]") {
-		t.Errorf("reload should preserve the live scale/precision\n---\n%s", out)
+	if !strings.Contains(out, "RTT floor 5ms ×e") || !strings.Contains(out, "(p)recision[ms.1]") {
+		t.Errorf("reload should preserve the live scale/precision/log-factor\n---\n%s", out)
 	}
 
 	if strings.Contains(out, "MIN") {

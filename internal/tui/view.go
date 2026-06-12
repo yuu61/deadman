@@ -81,7 +81,15 @@ func (m Model) View() string {
 // keysLine is the scale + key-legend line (line 2), factored into a method to sit
 // alongside the other fixed-line builders (centerTitle/titleLine/headerLine).
 func (m Model) keysLine() string {
-	s := rear + fmt.Sprintf("RTT Scale %gms.", m.scale)
+	// In log mode the scale value is the window floor (not ms-per-step) and the factor
+	// sets the width, so relabel and surface the factor up front (clipped last, like the
+	// cols count below).
+	var s string
+	if m.logK > 0 {
+		s = rear + fmt.Sprintf("RTT floor %gms %s.", m.scale, logLabel(m.logK))
+	} else {
+		s = rear + fmt.Sprintf("RTT Scale %gms.", m.scale)
+	}
 
 	// The effective-vs-requested column count sits near the front, before the long
 	// key legend, so the renderer's width truncation (it clips lines, not wraps)
@@ -92,25 +100,21 @@ func (m Model) keysLine() string {
 	}
 
 	s += fmt.Sprintf(
-		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (l)og[%s] (p)recision[%s] ([/])cols",
-		logLabel(m.logK),
+		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (l)og (p)recision[%s] ([/])cols",
 		m.precMode().Label,
 	)
 
 	return s
 }
 
-// logLabel renders the current RTT-scale log factor for the key legend: "lin" when
-// linear (logK 0), "×e" for base e, and "×e²" for base e².
+// logLabel renders the RTT-scale log factor for logK as its short legend label
+// ("lin", "×e", "×e²"), reading the single logFactors table.
 func logLabel(k int) string {
-	switch k {
-	case 1:
-		return "×e"
-	case 2:
-		return "×e²"
-	default:
-		return "lin"
+	if k < 0 || k >= len(logFactors) {
+		return logFactors[0].Label
 	}
+
+	return logFactors[k].Label
 }
 
 // scrollStatus is the one-line position indicator shown below the row window when

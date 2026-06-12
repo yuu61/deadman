@@ -188,6 +188,29 @@ func TestResultsRescale(t *testing.T) {
 	}
 }
 
+// TestRttGlyphLinearBoundary is the regression guard for boundaryEpsilon: with a
+// fractional linear scale, an RTT exactly on a band boundary like rtt=0.3, scale=0.1
+// (where 0.1*3 rounds to 0.30000000000000004 and rtt/scale to 2.9999999999999996)
+// must land in the band it opens (▄), not the one below (▃). Removing boundaryEpsilon
+// fails these — unlike the log boundary tests, whose floors hit exact integer steps.
+func TestRttGlyphLinearBoundary(t *testing.T) {
+	cases := []struct {
+		rtt, scale float64
+		want       string
+	}{
+		{0.3, 0.1, "▄"}, // 0.1*3 = 0.30000000000000004; 0.3 opens band 3.
+		{0.7, 0.1, "█"}, // 0.1*7 = 0.7000000000000001; 0.7 overflows the last band.
+		{0.2, 0.1, "▃"}, // band 2, no boundary artifact.
+		{0.05, 0.05, "▂"},
+	}
+	for _, c := range cases {
+		res := ping.Result{Success: true, Code: ping.Success, RTT: c.rtt}
+		if got := Glyph(res, c.scale, 0); got != c.want {
+			t.Errorf("Glyph(RTT %v, scale %v, linear) = %q, want %q", c.rtt, c.scale, got, c.want)
+		}
+	}
+}
+
 // TestRttGlyphLog verifies logarithmic bucketing (logK > 0): band i covers
 // [floor*aⁱ, floor*a^(i+1)) with a = e^logK and floor = scale, so an RTT exactly on
 // a band boundary (floor*e^(logK*i)) lands in band i (glyph rttBars[i]) and one past
@@ -227,7 +250,7 @@ func TestRttGlyphLog(t *testing.T) {
 		{"k2_e12", exp(12), 1.0, 2, "▇"},
 		{"k2_e14", exp(14), 1.0, 2, "█"},
 
-		// Non-unit floors: the exact-boundary inputs the epsilon guard repairs.
+		// Non-unit floors on exact band boundaries (these land on integer steps).
 		{"floor03_e2", 0.3 * exp(2), 0.3, 1, "▃"},
 		{"floor25_e4", 2.5 * exp(4), 2.5, 1, "▅"},
 		{"subms_floor_e3", 0.001 * exp(3), 0.001, 1, "▄"},
@@ -251,11 +274,12 @@ func TestRttGlyphLog(t *testing.T) {
 	}
 }
 
-// TestRttGlyphLogBoundaryStability is the regression guard for boundaryEpsilon:
-// across non-unit floors and both factors, an RTT exactly on band boundary i
-// (floor*e^(logK*i)) must land in band i (rttBars[i]) for i in 0..len(rttBars)-1 and
-// overflow to "█" at i == len(rttBars). Without the epsilon nudge, exact boundaries
-// such as floor=0.3,i=2 and floor=2.5,i=4 truncate one band too low.
+// TestRttGlyphLogBoundaryStability checks the log boundary contract across non-unit
+// floors and both factors: an RTT exactly on band boundary i (floor*e^(logK*i)) lands
+// in band i (rttBars[i]) for i in 0..len(rttBars)-1 and overflows to "█" at
+// i == len(rttBars). These particular floors land on exact integer steps (so the
+// boundaryEpsilon regression itself is guarded by TestRttGlyphLinearBoundary, where
+// float rounding actually bites), but they pin the band semantics.
 func TestRttGlyphLogBoundaryStability(t *testing.T) {
 	floors := []float64{0.3, 1.0, 2.5, 7.0, 0.001}
 	for _, floor := range floors {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,7 +31,10 @@ var version = "dev"
 // at 0), so passing -s is never indistinguishable from its own default and a config
 // scale can take effect.
 func resolveScale(cli, cfg float64) float64 {
-	if cli > 0 {
+	// A non-finite CLI value (e.g. -s Inf, which flag.Float64 accepts) would flatten
+	// every bar, so reject it here just as the config "scale" directive rejects it; the
+	// fallback to a config scale or the default then applies.
+	if cli > 0 && !math.IsInf(cli, 0) {
 		return cli
 	}
 
