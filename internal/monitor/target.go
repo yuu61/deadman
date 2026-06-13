@@ -229,7 +229,7 @@ func (t *Target) foldSuccessRTT(rtt float64) {
 
 // rttBars are the block elements for ascending RTT buckets. In linear mode bar i
 // covers [scale*i, scale*(i+1)); in log mode it covers the geometric band
-// [floor*aⁱ, floor*a^(i+1)) with a = e^logK and floor = scale. The full block "█"
+// [floor*aⁱ, floor*a^(i+1)) with a = e^lnBase and floor = scale. The full block "█"
 // renders for anything at or above the last band in either mode.
 var rttBars = []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇"}
 
@@ -238,14 +238,15 @@ var rttBars = []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇"}
 // render a hair below it (rtt/scale for rtt=0.3, scale=0.1 is 2.9999999999999996, not
 // 3.0) — lands in the band it opens rather than the one below. The trade-off is
 // deliberate: an RTT within ~1e-9 in step space just under a boundary rounds up too, a
-// sliver far below display resolution.
+// sliver far below display resolution. barForStep applies it, so every caller shares
+// the nudge-then-truncate protocol without re-adding it.
 const boundaryEpsilon = 1e-9
 
 // Glyph maps a result to its result-bar character. Failures map to X/t/s; a
-// success maps to a block element bucketed by rttGlyph (linear when logK is 0,
-// logarithmic otherwise). The TUI calls this at render time, so the bar re-buckets
+// success maps to a block element bucketed by rttGlyph (logarithmic when lnBase is
+// positive, linear otherwise). The TUI calls this at render time, so the bar re-buckets
 // when the scale or log factor changes.
-func Glyph(res ping.Result, scale float64, logK int) string {
+func Glyph(res ping.Result, scale, lnBase float64) string {
 	switch res.Code {
 	case ping.SSHTimeout:
 		return "t"
@@ -256,7 +257,7 @@ func Glyph(res ping.Result, scale float64, logK int) string {
 			return "X"
 		}
 
-		return rttGlyph(res.RTT, scale, logK)
+		return rttGlyph(res.RTT, scale, lnBase)
 	default:
 		// unknown code: treat as a plain failure.
 		return "X"
@@ -264,29 +265,31 @@ func Glyph(res ping.Result, scale float64, logK int) string {
 }
 
 // rttGlyph picks the block element for a successful probe's RTT. The bucket index is
-// computed in "step space" — rtt/scale for the linear scale (logK == 0) or
-// log_{e^logK}(rtt/scale) for the logarithmic scale — then nudged by boundaryEpsilon
-// and clamped by barForStep. Both regimes share the half-open, left-closed band
-// inclusion: band i covers [scale*i, scale*(i+1)) linearly, [scale*aⁱ, scale*a^(i+1))
-// logarithmically (a = e^logK). A degenerate scale or a non-positive RTT (where the
-// ratio/log is undefined) falls back to the lowest bar.
-func rttGlyph(rtt, scale float64, logK int) string {
+// computed in "step space" — rtt/scale for the linear scale (lnBase <= 0) or
+// ln(rtt/scale)/lnBase for the logarithmic scale (a base-e^lnBase log) — then clamped by
+// barForStep. Both regimes share the half-open, left-closed band inclusion: band i
+// covers [scale*i, scale*(i+1)) linearly, [scale*aⁱ, scale*a^(i+1)) logarithmically
+// (a = e^lnBase). A degenerate scale or a non-positive RTT (where the ratio/log is
+// undefined) falls back to the lowest bar.
+func rttGlyph(rtt, scale, lnBase float64) string {
 	if scale <= 0 || rtt <= 0 {
 		return rttBars[0]
 	}
 
 	step := rtt / scale
-	if logK > 0 {
-		step = math.Log(step) / float64(logK)
+	if lnBase > 0 {
+		step = math.Log(step) / lnBase
 	}
 
-	return barForStep(step + boundaryEpsilon)
+	return barForStep(step)
 }
 
-// barForStep maps a bucket index (already nudged by boundaryEpsilon) to a bar glyph,
-// clamping to [0, len(rttBars)]: a negative index (RTT below the first band) or NaN
-// yields the lowest bar, and an index at or above len(rttBars) overflows to "█".
+// barForStep maps a bucket index to a bar glyph, clamping to [0, len(rttBars)]: a
+// negative index (RTT below the first band) or NaN yields the lowest bar, and an index
+// at or above len(rttBars) overflows to "█". It applies boundaryEpsilon itself so the
+// nudge-then-truncate protocol lives in one place rather than across the call boundary.
 func barForStep(step float64) string {
+	step += boundaryEpsilon
 	switch {
 	case math.IsNaN(step) || step < 0:
 		return rttBars[0]

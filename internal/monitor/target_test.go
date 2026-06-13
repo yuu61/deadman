@@ -211,22 +211,22 @@ func TestRttGlyphLinearBoundary(t *testing.T) {
 	}
 }
 
-// TestRttGlyphLog verifies logarithmic bucketing (logK > 0): band i covers
-// [floor*aⁱ, floor*a^(i+1)) with a = e^logK and floor = scale, so an RTT exactly on
-// a band boundary (floor*e^(logK*i)) lands in band i (glyph rttBars[i]) and one past
+// TestRttGlyphLog verifies logarithmic bucketing (lnBase > 0): band i covers
+// [floor*aⁱ, floor*a^(i+1)) with a = e^lnBase and floor = scale, so an RTT exactly on
+// a band boundary (floor*e^(lnBase*i)) lands in band i (glyph rttBars[i]) and one past
 // the last band overflows to "█". Boundary inputs are generated with math.Exp so the
 // floating-point edges (which boundaryEpsilon repairs) are exercised.
 func TestRttGlyphLog(t *testing.T) {
 	exp := math.Exp
 
 	cases := []struct {
-		name  string
-		rtt   float64
-		scale float64
-		logK  int
-		want  string
+		name   string
+		rtt    float64
+		scale  float64
+		lnBase float64
+		want   string
 	}{
-		// logK=1 (base e), floor 1.0 — exact band boundaries.
+		// lnBase=1 (base e), floor 1.0 — exact band boundaries.
 		{"k1_below_floor", 0.5, 1.0, 1, "▁"},
 		{"k1_at_floor", 1.0, 1.0, 1, "▁"},
 		{"k1_e1", exp(1), 1.0, 1, "▂"},
@@ -240,7 +240,7 @@ func TestRttGlyphLog(t *testing.T) {
 		// Mid-band (not on a boundary) lands in the lower band: floor(2.5) = 2.
 		{"k1_mid_2_3", exp(2.5), 1.0, 1, "▃"},
 
-		// logK=2 (base e²), floor 1.0.
+		// lnBase=2 (base e²), floor 1.0.
 		{"k2_at_floor", 1.0, 1.0, 2, "▁"},
 		{"k2_e2", exp(2), 1.0, 2, "▂"},
 		{"k2_e4", exp(4), 1.0, 2, "▃"},
@@ -259,23 +259,23 @@ func TestRttGlyphLog(t *testing.T) {
 		{"zero_rtt", 0.0, 1.0, 1, "▁"},
 		{"neg_floor", exp(3), -1.0, 1, "▁"},
 
-		// logK=0 stays linear even through this table.
+		// lnBase=0 stays linear even through this table.
 		{"k0_linear_9_scale10", 9.0, 10.0, 0, "▁"},
 		{"k0_linear_70_scale10", 70.0, 10.0, 0, "█"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			res := ping.Result{Success: true, Code: ping.Success, RTT: c.rtt}
-			if got := Glyph(res, c.scale, c.logK); got != c.want {
-				t.Errorf("Glyph(RTT %v, scale %v, logK %d) = %q, want %q",
-					c.rtt, c.scale, c.logK, got, c.want)
+			if got := Glyph(res, c.scale, c.lnBase); got != c.want {
+				t.Errorf("Glyph(RTT %v, scale %v, lnBase %g) = %q, want %q",
+					c.rtt, c.scale, c.lnBase, got, c.want)
 			}
 		})
 	}
 }
 
 // TestRttGlyphLogBoundaryStability checks the log boundary contract across non-unit
-// floors and both factors: an RTT exactly on band boundary i (floor*e^(logK*i)) lands
+// floors and both factors: an RTT exactly on band boundary i (floor*e^(lnBase*i)) lands
 // in band i (rttBars[i]) for i in 0..len(rttBars)-1 and overflows to "█" at
 // i == len(rttBars). These particular floors land on exact integer steps (so the
 // boundaryEpsilon regression itself is guarded by TestRttGlyphLinearBoundary, where
@@ -283,9 +283,9 @@ func TestRttGlyphLog(t *testing.T) {
 func TestRttGlyphLogBoundaryStability(t *testing.T) {
 	floors := []float64{0.3, 1.0, 2.5, 7.0, 0.001}
 	for _, floor := range floors {
-		for _, logK := range []int{1, 2} {
+		for _, lnBase := range []float64{1, 2} {
 			for i := 0; i <= len(rttBars); i++ {
-				rtt := floor * math.Exp(float64(logK*i))
+				rtt := floor * math.Exp(lnBase*float64(i))
 
 				want := "█"
 				if i < len(rttBars) {
@@ -293,9 +293,9 @@ func TestRttGlyphLogBoundaryStability(t *testing.T) {
 				}
 
 				res := ping.Result{Success: true, Code: ping.Success, RTT: rtt}
-				if got := Glyph(res, floor, logK); got != want {
-					t.Errorf("floor=%v logK=%d band=%d (rtt=%v): Glyph = %q, want %q",
-						floor, logK, i, rtt, got, want)
+				if got := Glyph(res, floor, lnBase); got != want {
+					t.Errorf("floor=%v lnBase=%g band=%d (rtt=%v): Glyph = %q, want %q",
+						floor, lnBase, i, rtt, got, want)
 				}
 			}
 		}
@@ -316,7 +316,7 @@ func TestGlyphFailureCodesLogMode(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := Glyph(c.res, 1.0, 1); got != c.want {
-			t.Errorf("Glyph(%+v, logK=1) = %q, want %q", c.res, got, c.want)
+			t.Errorf("Glyph(%+v, lnBase=1) = %q, want %q", c.res, got, c.want)
 		}
 	}
 }

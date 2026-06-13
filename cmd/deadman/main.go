@@ -16,32 +16,30 @@ import (
 	"github.com/yuu61/deadman/internal/tui"
 )
 
-// defaultScale is the default RTT bar gap in milliseconds.
-const defaultScale = 10.0
-
 // version is the build version shown in the TUI title bar. It is overridden at build
 // time via -ldflags "-X main.version=..." (see the Makefile, which derives it from git
 // describe); a plain `go install`/`go build` leaves it at "dev".
 var version = "dev"
 
 // resolveScale picks the effective RTT-bar scale: an explicit CLI -s wins, else a
-// config "scale" directive, else defaultScale. 0 means "unset" for both inputs (the
-// -s flag defaults to 0, and a missing or invalid "scale" directive leaves cfg.Scale
-// at 0), so passing -s is never indistinguishable from its own default and a config
-// scale can take effect.
+// config "scale" directive, else config.DefaultScale. 0 means "unset" for both inputs
+// (the -s flag defaults to 0, and a missing or invalid "scale" directive leaves
+// cfg.Scale at 0), so passing -s is never indistinguishable from its own default and a
+// config scale can take effect.
 func resolveScale(cli, cfg float64) float64 {
-	// A non-finite CLI value (e.g. -s Inf, which flag.Float64 accepts) would flatten
-	// every bar, so it is rejected by the same config.ValidScale predicate the "scale"
-	// directive uses; the fallback to a config scale or the default then applies.
+	// Both inputs go through the same config.ValidScale predicate the "scale" directive
+	// uses, so a non-finite value (e.g. -s Inf, which flag.Float64 accepts, or a cfg
+	// built outside the directive parser) is rejected rather than flattening every bar;
+	// the fallback to the next source then applies.
 	if config.ValidScale(cli) {
 		return cli
 	}
 
-	if cfg > 0 {
+	if config.ValidScale(cfg) {
 		return cfg
 	}
 
-	return defaultScale
+	return config.DefaultScale
 }
 
 // parseArgs parses the command line into TUI options. Flags may appear before or

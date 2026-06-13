@@ -677,8 +677,8 @@ func TestScaleRebucketsExistingBar(t *testing.T) {
 }
 
 // TestLogModeKey cycles the 'l' key (linear -> base e -> base e² -> linear), asserting
-// the footer relabels to floor mode and surfaces the factor up front (×e / ×e²) and
-// wraps back. This is the regression guard for the 'l' wiring and logLabel.
+// the footer relabels to floor mode and surfaces the factor up front (xe / xe2) and
+// wraps back. This is the regression guard for the 'l' wiring and the logFactors lookup.
 func TestLogModeKey(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
@@ -712,7 +712,7 @@ func TestLogModeKey(t *testing.T) {
 }
 
 // TestLogModeRebucketsBar confirms 'l' re-buckets the on-screen bar through the View
-// path (targetLine passing logK to monitor.Glyph): the same stored RTT 50 renders ▆ on
+// path (targetLine passing the selected LnBase to monitor.Glyph): the same stored RTT 50 renders ▆ on
 // the linear scale 10 but ▂ in log ×e (ln(50/10)≈1.6, band 1).
 func TestLogModeRebucketsBar(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
@@ -794,7 +794,7 @@ func TestReloadPreservesScaleAndPrecision(t *testing.T) {
 	// scale/precision/log-factor are preserved (the documented, intentional asymmetry).
 	_, out := drive(t, m, reloadMsg{})
 
-	// The trailing '.' makes this fail if a reload bug advances logK 1->2 (xe -> xe2).
+	// The trailing '.' makes this fail if a reload bug advances logIdx 1->2 (xe -> xe2).
 	if !strings.Contains(out, "RTT floor 5ms xe.") || !strings.Contains(out, "(p)recision[ms.1]") {
 		t.Errorf("reload should preserve the live scale/precision/log-factor\n---\n%s", out)
 	}

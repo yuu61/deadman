@@ -59,7 +59,7 @@ type Model struct {
 	visible map[string]bool // per-column visibility (config defaults + 'm' toggle).
 
 	scale   float64 // RTT-bar ms-per-step (the window floor in log mode); adjusted live with up/down.
-	logK    int     // RTT-scale log factor: 0 = linear, 1 = base e, 2 = base e²; cycled with 'l'.
+	logIdx  int     // index into logFactors (0 = linear); cycled with 'l'. The selected LnBase drives Glyph.
 	precIdx int     // index into precisionModes for the stat columns; cycled with 'p'.
 
 	scrollTop int // first visible row when the list exceeds the viewport; moved with j/k/g/G/PgUp/PgDn.
@@ -79,10 +79,6 @@ type Model struct {
 	warnings []string // startup warnings (e.g. rp_filter, IPv6 nexthop ignored).
 }
 
-// fallbackScale is the RTT-bar scale New uses when Options.Scale is unset or degenerate
-// (a caller bypassing resolveScale); it matches the CLI default so behavior is uniform.
-const fallbackScale = 10
-
 // New builds the initial model from parsed specs and options. The error return is
 // retained for call-site stability; New currently never fails (a target whose config
 // cannot be built degrades to a permanent-failure row rather than aborting).
@@ -91,10 +87,11 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 
 	// Normalize the scale like Cols: a caller bypassing resolveScale (a test or an
 	// embedding) may pass a zero/degenerate Options.Scale, which would otherwise make
-	// rttGlyph's scale<=0 guard flatten every bar to ▁.
+	// rttGlyph's scale<=0 guard flatten every bar to ▁. config.DefaultScale is the same
+	// fallback the CLI resolver uses, so behavior is uniform.
 	scale := opts.Scale
 	if !config.ValidScale(scale) {
-		scale = fallbackScale
+		scale = config.DefaultScale
 	}
 
 	return Model{
@@ -341,7 +338,7 @@ func (m Model) adjustRTTScale(key string) Model {
 	case "down":
 		m.scale = scaleDown(m.scale)
 	case "l":
-		m.logK = (m.logK + 1) % len(logFactors)
+		m.logIdx = (m.logIdx + 1) % len(logFactors)
 	default:
 		// Unreachable: handleViewKey routes only up/down/l here.
 	}
@@ -385,17 +382,26 @@ func (m Model) adjustCols(key string) Model {
 	return m
 }
 
-// logFactors is the single source of the 'l'-key cycle order and the legend labels for
-// the RTT-scale log factor: linear (no log), then base e and base e². The slice index
-// IS the logK value handed to monitor.Glyph (the ln divisor, so bars bucket on
-// e^index), so a new entry must preserve that index==exponent contract — a non-e^n
-// factor (e.g. base 10) needs a matching rttGlyph change, not just a label. Labels stay
-// ASCII (narrow): "×"/"²" are East-Asian-ambiguous and render 2 cells on CJK terminals,
-// desyncing the keys-line width from the renderer's measure.
-var logFactors = []struct{ Label string }{
-	{"lin"},
-	{"xe"},
-	{"xe2"},
+// logFactor is one entry in the 'l'-key cycle: a legend label paired with LnBase, the
+// log base carried as a value rather than implied by the slice index. Mirrors
+// precisionMode (label + behavior in one row).
+type logFactor struct {
+	Label string
+	// LnBase is the ln of the per-step bucket base, i.e. the divisor in
+	// ln(rtt/scale)/LnBase handed to monitor.Glyph: 0 = linear (no log), 1 = base e,
+	// 2 = base e². Because it is data, not the index, a new factor is just a row — base
+	// 10 would be {"x10", math.Log(10)} — with no rttGlyph change. Labels stay ASCII
+	// (narrow): "×"/"²" are East-Asian-ambiguous and render 2 cells on CJK terminals,
+	// desyncing the keys-line width from the renderer's measure.
+	LnBase float64
+}
+
+// logFactors is the single source of the 'l'-key cycle order, its legend labels and the
+// log base each selects: linear (no log), then base e and base e².
+var logFactors = []logFactor{
+	{"lin", 0},
+	{"xe", 1},
+	{"xe2", 2},
 }
 
 // scaleSteps is the ladder the up/down keys move the RTT-bar scale through (ms); it

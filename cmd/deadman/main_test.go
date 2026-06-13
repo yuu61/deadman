@@ -6,6 +6,8 @@ import (
 	"math"
 	"os"
 	"testing"
+
+	"github.com/yuu61/deadman/internal/config"
 )
 
 // -h/--help must surface flag.ErrHelp so main can exit 0 (success) rather than the
@@ -132,7 +134,9 @@ func TestResolveScale(t *testing.T) {
 		{"sub-ms cli is honored", 0.5, 0, 0.5},
 		{"non-finite cli falls back to config", math.Inf(1), 5, 5},
 		{"nan cli falls back to config", math.NaN(), 5, 5},
-		{"default when both unset", 0, 0, defaultScale},
+		{"non-finite cfg falls back to default", 0, math.Inf(1), config.DefaultScale},
+		{"nan cfg falls back to default", 0, math.NaN(), config.DefaultScale},
+		{"default when both unset", 0, 0, config.DefaultScale},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

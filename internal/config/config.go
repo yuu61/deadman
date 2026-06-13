@@ -104,6 +104,12 @@ func ValidScale(v float64) bool {
 	return v > 0 && !math.IsInf(v, 0)
 }
 
+// DefaultScale is the RTT-bar scale used when neither the CLI -s flag nor a "scale"
+// directive supplies a valid value. It sits beside ValidScale so the CLI resolver
+// (cmd/deadman) and the TUI's startup normalization share one default rather than each
+// hardcoding it — the same single-source rationale as ValidScale.
+const DefaultScale = 10.0
+
 var reSeparator = regexp.MustCompile(`^-+$`)
 
 // relayKeys is the set of attribute keys routed into a target's relay map. "netns" is

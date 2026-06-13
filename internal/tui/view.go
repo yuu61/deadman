@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -83,12 +84,15 @@ func (m Model) View() string {
 func (m Model) keysLine() string {
 	// In log mode the scale value is the window floor (not ms-per-step) and the factor
 	// sets the width, so relabel and surface the factor up front (clipped last, like the
-	// cols count below).
+	// cols count below). The mode is read from the selected factor's LnBase, not the
+	// index, so the linear/log split stays tied to the table.
+	f := activeLogFactor(m.logIdx)
+
 	var s string
-	if m.logK > 0 {
-		s = rear + fmt.Sprintf("RTT floor %gms %s.", m.scale, logLabel(m.logK))
+	if f.LnBase > 0 {
+		s = rear + fmt.Sprintf("RTT floor %sms %s.", scaleLabel(m.scale), f.Label)
 	} else {
-		s = rear + fmt.Sprintf("RTT Scale %gms.", m.scale)
+		s = rear + fmt.Sprintf("RTT Scale %sms.", scaleLabel(m.scale))
 	}
 
 	// The effective-vs-requested column count sits near the front, before the long
@@ -107,14 +111,22 @@ func (m Model) keysLine() string {
 	return s
 }
 
-// logLabel renders the RTT-scale log factor for logK as its short legend label
-// ("lin", "xe", "xe2"), reading the single logFactors table.
-func logLabel(k int) string {
-	if k < 0 || k >= len(logFactors) {
-		return logFactors[0].Label
+// activeLogFactor returns the RTT-scale log factor at index i from the single
+// logFactors table, clamping a stray index to the linear entry so a corrupt logIdx can
+// never panic the render. Callers read both its Label (legend) and LnBase (mode/base).
+func activeLogFactor(i int) logFactor {
+	if i < 0 || i >= len(logFactors) {
+		return logFactors[0]
 	}
 
-	return logFactors[k].Label
+	return logFactors[i]
+}
+
+// scaleLabel formats an RTT-bar scale for the keys line. FormatFloat with 'f' avoids
+// %g's exponent switch (an explicit -s 1000000 would otherwise read "1e+06ms") while
+// the shortest-precision (-1) keeps ladder values byte-identical: "0.01", "10", "100".
+func scaleLabel(scale float64) string {
+	return strconv.FormatFloat(scale, 'f', -1, 64)
 }
 
 // scrollStatus is the one-line position indicator shown below the row window when
@@ -233,7 +245,7 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 	var g strings.Builder
 
 	for _, res := range t.Results(m.resW) {
-		ch := monitor.Glyph(res, m.scale, m.logK)
+		ch := monitor.Glyph(res, m.scale, activeLogFactor(m.logIdx).LnBase)
 		if monitor.IsFailGlyph(ch) {
 			g.WriteString(styleDown.Render(ch))
 		} else {
