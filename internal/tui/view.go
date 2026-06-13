@@ -86,7 +86,7 @@ func (m Model) keysLine() string {
 	// sets the width, so relabel and surface the factor up front (clipped last, like the
 	// cols count below). The mode is read from the selected factor's LnBase, not the
 	// index, so the linear/log split stays tied to the table.
-	f := activeLogFactor(m.logIdx)
+	f := m.logFactor()
 
 	var s string
 	if f.LnBase > 0 {
@@ -111,15 +111,15 @@ func (m Model) keysLine() string {
 	return s
 }
 
-// activeLogFactor returns the RTT-scale log factor at index i from the single
-// logFactors table, clamping a stray index to the linear entry so a corrupt logIdx can
-// never panic the render. Callers read both its Label (legend) and LnBase (mode/base).
-func activeLogFactor(i int) logFactor {
-	if i < 0 || i >= len(logFactors) {
+// logFactor returns the active RTT-scale log factor for the model, clamping an out-of-
+// range logIdx to the linear entry so a Model not built through New can never panic the
+// render (mirrors precMode). Callers read both its Label (legend) and LnBase (mode/base).
+func (m Model) logFactor() logFactor {
+	if m.logIdx < 0 || m.logIdx >= len(logFactors) {
 		return logFactors[0]
 	}
 
-	return logFactors[i]
+	return logFactors[m.logIdx]
 }
 
 // scaleLabel formats an RTT-bar scale for the keys line. FormatFloat with 'f' avoids
@@ -244,8 +244,11 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 
 	var g strings.Builder
 
+	// logIdx is loop-invariant, so resolve the log base once rather than per glyph
+	// (this loop runs resultWidth times per row, every frame).
+	lnBase := m.logFactor().LnBase
 	for _, res := range t.Results(m.resW) {
-		ch := monitor.Glyph(res, m.scale, activeLogFactor(m.logIdx).LnBase)
+		ch := monitor.Glyph(res, m.scale, lnBase)
 		if monitor.IsFailGlyph(ch) {
 			g.WriteString(styleDown.Render(ch))
 		} else {

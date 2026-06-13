@@ -28,18 +28,32 @@ var version = "dev"
 // config scale can take effect.
 func resolveScale(cli, cfg float64) float64 {
 	// Both inputs go through the same config.ValidScale predicate the "scale" directive
-	// uses, so a non-finite value (e.g. -s Inf, which flag.Float64 accepts, or a cfg
-	// built outside the directive parser) is rejected rather than flattening every bar;
-	// the fallback to the next source then applies.
+	// uses, so a non-finite or out-of-range value (e.g. -s Inf, which flag.Float64
+	// accepts, or a cfg built outside the directive parser) is rejected rather than
+	// flattening every bar. An explicit CLI -s wins; otherwise config.ScaleOrDefault
+	// applies the shared "invalid → default" fallback to the config value.
 	if config.ValidScale(cli) {
 		return cli
 	}
 
-	if config.ValidScale(cfg) {
-		return cfg
+	return config.ScaleOrDefault(cfg)
+}
+
+// scaleWarning returns an operator-facing warning when an explicit -s value was rejected
+// as unusable, or "" when the CLI scale was unset (0) or usable. resolved is the scale
+// resolveScale chose, so the message names what is actually in effect — a valid config
+// "scale" or the default — rather than assuming the default. The probe still runs (the
+// invalid value is dropped, not fatal); this only surfaces the silently-ignored input.
+func scaleWarning(cli, resolved float64) string {
+	if cli == 0 || config.ValidScale(cli) {
+		return ""
 	}
 
-	return config.DefaultScale
+	return fmt.Sprintf(
+		"-s %g ignored: not a usable RTT-bar scale (finite, ~0.0001..1000000 ms); using %gms instead",
+		cli,
+		resolved,
+	)
 }
 
 // parseArgs parses the command line into TUI options. Flags may appear before or
@@ -48,8 +62,12 @@ func resolveScale(cli, cfg float64) float64 {
 // configfile intermix.
 func parseArgs(args []string) (tui.Options, error) {
 	fs := flag.NewFlagSet("deadman", flag.ContinueOnError)
-	scale := fs.Float64("s", 0, "scale of ping RTT bar gap (ms, default 10, decimals allowed)")
-	fs.Float64Var(scale, "scale", 0, "scale of ping RTT bar gap (ms, default 10, decimals allowed)")
+	scaleUsage := fmt.Sprintf(
+		"scale of ping RTT bar gap (ms, default %g, decimals allowed)",
+		config.DefaultScale,
+	)
+	scale := fs.Float64("s", 0, scaleUsage)
+	fs.Float64Var(scale, "scale", 0, scaleUsage)
 	async := fs.Bool("a", false, "send ping asynchronously")
 	fs.BoolVar(async, "async-mode", false, "send ping asynchronously")
 	blink := fs.Bool("b", false, "blink arrow in async mode")
@@ -141,7 +159,13 @@ func main() {
 	}
 
 	opts.Columns = cfg.Columns
+	rawScale := opts.Scale
 	opts.Scale = resolveScale(opts.Scale, cfg.Scale)
+
+	if w := scaleWarning(rawScale, opts.Scale); w != "" {
+		opts.Warnings = append(opts.Warnings, w)
+	}
+
 	opts.Precision = cfg.Precision
 	opts.Cols = resolveCols(opts.Cols, cfg.Cols)
 	opts.Version = version

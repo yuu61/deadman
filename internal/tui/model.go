@@ -38,6 +38,7 @@ type Options struct {
 	Version    string          // build version label shown in the title bar (Makefile -ldflags); "" = "dev".
 	Columns    map[string]bool // per-column visibility overrides (config file).
 	Cols       int             // requested newspaper-column count (CLI -c/--split, config "split"); <=1 = single.
+	Warnings   []string        // CLI-level startup warnings (e.g. an invalid -s value), shown above the rows.
 }
 
 // Model is the Bubble Tea model.
@@ -87,12 +88,14 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 
 	// Normalize the scale like Cols: a caller bypassing resolveScale (a test or an
 	// embedding) may pass a zero/degenerate Options.Scale, which would otherwise make
-	// rttGlyph's scale<=0 guard flatten every bar to ▁. config.DefaultScale is the same
-	// fallback the CLI resolver uses, so behavior is uniform.
-	scale := opts.Scale
-	if !config.ValidScale(scale) {
-		scale = config.DefaultScale
-	}
+	// rttGlyph's scale<=0 guard flatten every bar to ▁. config.ScaleOrDefault is the same
+	// "invalid → default" helper the CLI resolver's fallback uses, so behavior is uniform.
+	scale := config.ScaleOrDefault(opts.Scale)
+
+	// CLI-level warnings (e.g. an invalid -s) lead, then the per-target startup and build
+	// warnings. Clone so appending never mutates the caller's slice.
+	warnings := append(slices.Clone(opts.Warnings), startupWarnings(specs)...)
+	warnings = append(warnings, buildWarns...)
 
 	return Model{
 		rows:     rows,
@@ -101,7 +104,7 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 		precIdx:  precisionIndex(opts.Precision),
 		hostInfo: hostInfo(),
 		visible:  buildVisible(opts.Columns),
-		warnings: append(startupWarnings(specs), buildWarns...),
+		warnings: warnings,
 		cols:     max(opts.Cols, 1),
 	}, nil
 }
@@ -396,8 +399,12 @@ type logFactor struct {
 	LnBase float64
 }
 
-// logFactors is the single source of the 'l'-key cycle order, its legend labels and the
-// log base each selects: linear (no log), then base e and base e².
+// logFactors is the single source of the 'l'-key cycle order, the log base each entry
+// selects, and the floor-mode legend labels for the log factors: linear (no log), then
+// base e and base e². Index 0's "lin" label is a cycle-slot placeholder, not rendered:
+// keysLine labels linear mode with its own "RTT Scale" wording (vs "RTT floor … xe"),
+// since linear shows ms-per-step while a log factor shows the window floor. So the table
+// is the single source of the log-factor labels (index > 0); the linear row is self-named.
 var logFactors = []logFactor{
 	{"lin", 0},
 	{"xe", 1},

@@ -191,3 +191,33 @@ func TestResolveCols(t *testing.T) {
 		})
 	}
 }
+
+// TestScaleWarning checks that an explicitly-passed, unusable -s value yields a warning
+// (the value is still dropped and the probe runs), while an unset or usable -s is silent.
+func TestScaleWarning(t *testing.T) {
+	cases := []struct {
+		name          string
+		cli, resolved float64
+		wantWarn      bool
+	}{
+		{"unset cli is silent", 0, 10, false},
+		{"valid cli is silent", 5, 5, false},
+		{"inf cli warns", math.Inf(1), 10, true},
+		{"nan cli warns", math.NaN(), 10, true},
+		{"negative cli warns", -5, 10, true},
+		{"out-of-range cli warns", 1e-300, 10, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := scaleWarning(c.cli, c.resolved); (got != "") != c.wantWarn {
+				t.Errorf(
+					"scaleWarning(%g, %g) = %q, wantWarn=%v",
+					c.cli,
+					c.resolved,
+					got,
+					c.wantWarn,
+				)
+			}
+		})
+	}
+}

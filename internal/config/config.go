@@ -10,7 +10,6 @@ package config
 import (
 	"bufio"
 	"io"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -96,12 +95,23 @@ var directives = map[string]func(cfg *Config, args []string){
 	},
 }
 
-// ValidScale reports whether v is a usable RTT-bar scale: strictly positive and finite.
-// It is the single predicate shared by the "scale" directive, the CLI -s resolver
-// (cmd/deadman) and the TUI's startup normalization, so inf/nan/non-positive rejection
-// cannot drift between them.
+// Scale bounds. A scale outside [minScale, maxScale] is unusable, not merely degenerate:
+// below minScale every real RTT overflows the top band (the bar is uniformly "█") and the
+// shortest-decimal footer label balloons toward hundreds of characters (FormatFloat 'f'
+// of 1e-300 is ~300 digits), shoving the key legend off-screen; above maxScale every bar
+// collapses to the floor. minScale (0.1 µs) is far finer and maxScale (1000 s) far coarser
+// than any real network bar, so the usable window stays generous while nonsense is rejected.
+const (
+	minScale = 1e-4
+	maxScale = 1e6
+)
+
+// ValidScale reports whether v is a usable RTT-bar scale: within [minScale, maxScale],
+// which also excludes NaN, ±Inf, zero and negatives. It is the single predicate shared by
+// the "scale" directive, the CLI -s resolver (cmd/deadman) and the TUI's startup
+// normalization, so the accept/reject boundary cannot drift between them.
 func ValidScale(v float64) bool {
-	return v > 0 && !math.IsInf(v, 0)
+	return v >= minScale && v <= maxScale
 }
 
 // DefaultScale is the RTT-bar scale used when neither the CLI -s flag nor a "scale"
@@ -109,6 +119,17 @@ func ValidScale(v float64) bool {
 // (cmd/deadman) and the TUI's startup normalization share one default rather than each
 // hardcoding it — the same single-source rationale as ValidScale.
 const DefaultScale = 10.0
+
+// ScaleOrDefault returns v when it is a usable scale and DefaultScale otherwise, so the
+// "invalid → default" normalization lives in one place rather than being repeated by the
+// CLI resolver (resolveScale) and the TUI's New.
+func ScaleOrDefault(v float64) float64 {
+	if ValidScale(v) {
+		return v
+	}
+
+	return DefaultScale
+}
 
 var reSeparator = regexp.MustCompile(`^-+$`)
 

@@ -593,23 +593,25 @@ func TestScaleStepKeys(t *testing.T) {
 		t.Errorf("after up,up: want scale 20\n---\n%s", out)
 	}
 
-	// down past the bottom clamps at the sub-ms floor (0.01ms). From 20ms the ladder
-	// descends 20→10→5→2→1→0.5→0.2→0.1→0.05→0.02→0.01; press well past the bottom.
-	m, out = drive(t, m,
-		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
-		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
-		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
-		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
-		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
-		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown})
-	if !strings.Contains(out, "RTT Scale 0.01ms") {
-		t.Errorf("down past the bottom should clamp at 0.01ms\n---\n%s", out)
+	// down past the bottom clamps at the sub-ms floor (scaleSteps[0]). Pressing Down
+	// len(scaleSteps) times reaches the floor from any rung, so the count and the
+	// expected floor label both track the ladder instead of hardcoded literals.
+	floor := scaleLabel(scaleSteps[0])
+
+	downs := make([]tea.Msg, len(scaleSteps))
+	for i := range downs {
+		downs[i] = tea.KeyMsg{Type: tea.KeyDown}
 	}
 
-	// further down past the floor stays clamped at 0.01ms.
+	m, out = drive(t, m, downs...)
+	if !strings.Contains(out, "RTT Scale "+floor+"ms") {
+		t.Errorf("down past the bottom should clamp at %sms\n---\n%s", floor, out)
+	}
+
+	// further down past the floor stays clamped at the floor.
 	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if !strings.Contains(out, "RTT Scale 0.01ms") {
-		t.Errorf("further down past the floor must stay at 0.01ms\n---\n%s", out)
+	if !strings.Contains(out, "RTT Scale "+floor+"ms") {
+		t.Errorf("further down past the floor must stay at %sms\n---\n%s", floor, out)
 	}
 }
 
@@ -1202,4 +1204,20 @@ func TestViewFitsTerminalHeight(t *testing.T) {
 	// Eyeball sample for `go test -v`: the fixed header plus a scrolled window.
 	_, sample := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
 	t.Logf("sample render (120x20, 50 targets):\n%s", sample)
+}
+
+// TestOptionsWarningsSurface confirms a CLI-level warning passed via Options.Warnings is
+// rendered (with the "! " prefix) ahead of the rows, like the per-target startup warnings.
+func TestOptionsWarningsSurface(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10, Warnings: []string{"cli warn xyz"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !strings.Contains(out, "! cli warn xyz") {
+		t.Errorf("Options.Warnings should render with a '! ' prefix\n---\n%s", out)
+	}
 }

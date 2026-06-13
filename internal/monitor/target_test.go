@@ -211,11 +211,11 @@ func TestRttGlyphLinearBoundary(t *testing.T) {
 	}
 }
 
-// TestRttGlyphLog verifies logarithmic bucketing (lnBase > 0): band i covers
-// [floor*aⁱ, floor*a^(i+1)) with a = e^lnBase and floor = scale, so an RTT exactly on
-// a band boundary (floor*e^(lnBase*i)) lands in band i (glyph rttBars[i]) and one past
-// the last band overflows to "█". Boundary inputs are generated with math.Exp so the
-// floating-point edges (which boundaryEpsilon repairs) are exercised.
+// TestRttGlyphLog covers the log-mode cases that TestRttGlyphLogBoundaryStability's
+// exhaustive boundary sweep does not: an RTT below the floor, a mid-band value (not on a
+// boundary), a far overflow, the zero/negative guards, and the lnBase==0 linear
+// passthrough. The exact band boundaries (floor*e^(lnBase*i) → rttBars[i]) are pinned by
+// the sweep across several floors and both factors, so they are not duplicated here.
 func TestRttGlyphLog(t *testing.T) {
 	exp := math.Exp
 
@@ -226,42 +226,20 @@ func TestRttGlyphLog(t *testing.T) {
 		lnBase float64
 		want   string
 	}{
-		// lnBase=1 (base e), floor 1.0 — exact band boundaries.
-		{"k1_below_floor", 0.5, 1.0, 1, "▁"},
-		{"k1_at_floor", 1.0, 1.0, 1, "▁"},
-		{"k1_e1", exp(1), 1.0, 1, "▂"},
-		{"k1_e2", exp(2), 1.0, 1, "▃"},
-		{"k1_e3", exp(3), 1.0, 1, "▄"},
-		{"k1_e4", exp(4), 1.0, 1, "▅"},
-		{"k1_e5", exp(5), 1.0, 1, "▆"},
-		{"k1_e6", exp(6), 1.0, 1, "▇"},
-		{"k1_e7", exp(7), 1.0, 1, "█"},
-		{"k1_huge", 1e9, 1.0, 1, "█"},
-		// Mid-band (not on a boundary) lands in the lower band: floor(2.5) = 2.
-		{"k1_mid_2_3", exp(2.5), 1.0, 1, "▃"},
-
-		// lnBase=2 (base e²), floor 1.0.
-		{"k2_at_floor", 1.0, 1.0, 2, "▁"},
-		{"k2_e2", exp(2), 1.0, 2, "▂"},
-		{"k2_e4", exp(4), 1.0, 2, "▃"},
-		{"k2_e6", exp(6), 1.0, 2, "▄"},
-		{"k2_e8", exp(8), 1.0, 2, "▅"},
-		{"k2_e10", exp(10), 1.0, 2, "▆"},
-		{"k2_e12", exp(12), 1.0, 2, "▇"},
-		{"k2_e14", exp(14), 1.0, 2, "█"},
-
-		// Non-unit floors on exact band boundaries (these land on integer steps).
-		{"floor03_e2", 0.3 * exp(2), 0.3, 1, "▃"},
-		{"floor25_e4", 2.5 * exp(4), 2.5, 1, "▅"},
-		{"subms_floor_e3", 0.001 * exp(3), 0.001, 1, "▄"},
+		// Below the floor (step < 0 in log space) clamps to the lowest bar.
+		{"below_floor", 0.5, 1.0, 1, "▁"},
+		// Mid-band (not on a boundary) lands in the lower band: floor(2.5) = band 2.
+		{"mid_band_2_3", exp(2.5), 1.0, 1, "▃"},
+		// Far past the last boundary still overflows to the full block.
+		{"far_overflow", 1e9, 1.0, 1, "█"},
 
 		// Guards: zero/negative RTT and a degenerate floor fall back to ▁.
 		{"zero_rtt", 0.0, 1.0, 1, "▁"},
 		{"neg_floor", exp(3), -1.0, 1, "▁"},
 
 		// lnBase=0 stays linear even through this table.
-		{"k0_linear_9_scale10", 9.0, 10.0, 0, "▁"},
-		{"k0_linear_70_scale10", 70.0, 10.0, 0, "█"},
+		{"linear_9_scale10", 9.0, 10.0, 0, "▁"},
+		{"linear_70_scale10", 70.0, 10.0, 0, "█"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
