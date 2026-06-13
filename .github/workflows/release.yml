@@ -1,0 +1,68 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "再リリースする既存タグ (例 v0.1.0)"
+        required: true
+
+# 既定はトークンを read のみに絞り、リリースジョブだけ write に昇格する。
+permissions:
+  contents: read
+
+# 同一タグへの連続 push / 手動再実行で公開ジョブが多重起動し、Release 作成や
+# アセット添付が競合しないよう直列化する (実行中のジョブはキャンセルしない)。
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish release archives
+    runs-on: ubuntu-latest
+    permissions:
+      # GitHub Release の作成・アセット添付に必要 (最小権限)。
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # git describe --tags のタグ解決と SOURCE_DATE_EPOCH (git log %ct) の双方に
+          # 全履歴・タグが必要。浅いチェックアウトだとバージョンがハッシュへフォール
+          # バックし、アーカイブの mtime も不定になる。
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          # バージョンの単一情報源は go.mod。最新パッチで stdlib のセキュリティ修正を取り込む。
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Run tests
+        # 公開前にタグのコミットでテストを通し、壊れたバイナリの出荷を防ぐ。
+        run: make test
+
+      - name: Build cross-platform archives and checksums
+        # ビルド・アーカイブ・チェックサムは Makefile が単一の情報源 (CLAUDE.md)。
+        run: make package
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          # 自動生成ノートはタグ push 時のみ。手動再実行で手書きのリリースノートを上書きしない。
+          generate_release_notes: ${{ github.event_name == 'push' }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+        # GITHUB_TOKEN は自動注入。上の contents:write で fork (yuu61/deadman) へ公開できる。
+        # 注意: fork からの pull_request では token が read-only になり Release 作成に失敗するため、
+        # この workflow に pull_request trigger を足さないこと。

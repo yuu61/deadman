@@ -31,6 +31,32 @@ go run ./cmd/deadman deadman.conf
 go install github.com/yuu61/deadman/cmd/deadman@latest
 ```
 
+## インストール（リリース版バイナリ）
+
+[Releases](https://github.com/yuu61/deadman/releases) から OS / アーキテクチャに合ったアーカイブをダウンロードして展開します。
+linux / macOS は `.tar.gz`、Windows は `.zip` で、ファイル名は `deadman-<version>-<os>-<arch>` 形式です（中の実行ファイル名は常に `deadman` / `deadman.exe`）。
+展開すると `deadman-<version>-<os>-<arch>/` という単一ディレクトリになり、実行ファイル・設定例 `deadman.conf`・README・LICENSE が入っています。
+
+```sh
+tar xzf deadman-v0.1.0-linux-amd64.tar.gz   # Windows: deadman-v0.1.0-windows-amd64.zip を展開
+cd deadman-v0.1.0-linux-amd64
+./deadman deadman.conf                       # Windows: .\deadman.exe deadman.conf
+```
+
+同梱の `deadman.conf` は監視対象の**例**です。実際の監視先に書き換えて使ってください（既存の設定ファイルがある場合は上書きに注意）。設定の文法は「[設定ファイル](#設定ファイル)」を参照してください。
+
+完全性は Releases に併載の `SHA256SUMS`で検証できます。アーカイブと一緒にダウンロードしてください。
+
+```sh
+# ダウンロードしたアーカイブと SHA256SUMS を同じディレクトリに置いて実行
+sha256sum --ignore-missing -c SHA256SUMS
+# macOS: shasum -a 256 -c SHA256SUMS  (全アーカイブを置くか、対象 1 件を手動照合)
+```
+
+Linux で raw ソケットや権限が必要な場合は「[権限とプラットフォームに関する注意](#権限とプラットフォームに関する注意)」を参照してください。
+
+> **メンテナ向け**: 配布アーカイブは `make package` で `dist/` に生成されます（`.tar.gz` / `.zip` と `SHA256SUMS`、要 `zip` / GNU `tar`）。`git tag -a vX.Y.Z` を付けて `git push origin vX.Y.Z` すると `release` ワークフローが全プラットフォーム分をビルドして GitHub Release へ公開します。
+
 ## 使い方
 
 ```sh
