@@ -41,7 +41,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          # バージョンの単一情報源は go.mod。最新パッチで stdlib のセキュリティ修正を取り込む。
+          # バージョンの単一情報源は go.mod。check-latest で go.mod が指すバージョンを
+          # 確実に取得する (ランナー同梱の Go に依存しない)。新しい Go の取り込みは go.mod の更新で行う。
           go-version-file: go.mod
           check-latest: true
 
@@ -51,7 +52,9 @@ jobs:
 
       - name: Build cross-platform archives and checksums
         # ビルド・アーカイブ・チェックサムは Makefile が単一の情報源 (CLAUDE.md)。
-        run: make package
+        # 同一コミットに複数タグがある場合に git describe が別タグを拾わないよう、
+        # 公開する tag を VERSION として明示的に渡し tag_name と一致させる。
+        run: make package VERSION=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3

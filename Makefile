@@ -98,7 +98,8 @@ package: ## リリース用アーカイブ(.tar.gz/.zip)と SHA256SUMS を dist/
 			$(TAR) --sort=name --mtime="@$(SOURCE_DATE_EPOCH)" \
 				--owner=0 --group=0 --numeric-owner \
 				--pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
-				-C $(DIST_DIR) -cf - $$name | gzip -n > $(DIST_DIR)/$$name.tar.gz || exit 1; \
+				-C $(DIST_DIR) -cf $(DIST_DIR)/$$name.tar $$name || exit 1; \
+			gzip -nf $(DIST_DIR)/$$name.tar || exit 1; \
 		fi; \
 		rm -rf $$stage; \
 	done
