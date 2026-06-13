@@ -498,12 +498,18 @@ func TestParseConfigSplitLenient(t *testing.T) {
 }
 
 func TestParseConfigScaleLenient(t *testing.T) {
-	// A non-numeric, non-positive, or non-finite scale is ignored, leaving Scale unset
-	// (0) so the caller falls back to the CLI/default rather than aborting the parse.
-	// All of these fall to the single ValidScale range predicate: ParseFloat accepts
-	// "inf"/"nan", but +Inf fails v <= MaxScale and NaN fails both range comparisons.
+	// A non-numeric, non-positive, non-finite, or out-of-range finite scale is ignored,
+	// leaving Scale unset (0) so the caller falls back to the CLI/default rather than
+	// aborting the parse. All of these fall to the single ValidScale range predicate:
+	// ParseFloat accepts "inf"/"nan", but +Inf fails v <= MaxScale and NaN fails both
+	// range comparisons. The "1e-300"/"1e300" cases pin the directive's finite range
+	// bounds (MinScale/MaxScale) specifically: they are finite and positive, so a
+	// regression that rejected only the non-finite inputs but kept a bare n>0 (e.g. an
+	// explicit IsInf/IsNaN guard plus n>0) would accept them and flatten every bar — the
+	// nan case alone can't catch that, and inf only catches it by sign, not by magnitude.
 	for _, in := range []string{
 		"scale abc\n", "scale -3\n", "scale 0\n", "scale\n", "scale inf\n", "scale nan\n",
+		"scale 1e-300\n", "scale 1e300\n",
 	} {
 		cfg, err := ParseConfig(strings.NewReader(in))
 		if err != nil {

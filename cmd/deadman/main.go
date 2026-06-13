@@ -46,6 +46,12 @@ func resolveScale(cli, cfg float64) float64 {
 // persistently in the header while the live scale can still change (↑/↓), so embedding
 // "using Nms" would go stale. The footer's "RTT Scale" line always shows the value in
 // effect, so the operator can read the real scale there.
+//
+// The rejected value uses %g while the bounds use FormatFloat 'f' on purpose, not by
+// oversight: the value is arbitrary operator input that may be extreme, and %g keeps
+// -s 1e-300 a compact "1e-300" rather than the ~300-digit decimal 'f' would emit (the
+// very label ballooning MinScale exists to reject); the bounds are known round numbers
+// that read cleanest in plain 'f' (0.0001..1000000, no "1e+06").
 func scaleWarning(cli float64) string {
 	return fmt.Sprintf(
 		"-s %g ignored: not a usable RTT-bar scale (%s..%s ms); using the configured or default scale",
