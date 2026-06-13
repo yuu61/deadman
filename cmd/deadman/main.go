@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -21,38 +22,36 @@ import (
 // describe); a plain `go install`/`go build` leaves it at "dev".
 var version = "dev"
 
-// resolveScale picks the effective RTT-bar scale: an explicit CLI -s wins, else a
-// config "scale" directive, else config.DefaultScale. 0 means "unset" for both inputs
-// (the -s flag defaults to 0, and a missing or invalid "scale" directive leaves
-// cfg.Scale at 0), so passing -s is never indistinguishable from its own default and a
-// config scale can take effect.
-func resolveScale(cli, cfg float64) float64 {
-	// Both inputs go through the same config.ValidScale predicate the "scale" directive
-	// uses, so a non-finite or out-of-range value (e.g. -s Inf, which flag.Float64
-	// accepts, or a cfg built outside the directive parser) is rejected rather than
-	// flattening every bar. An explicit CLI -s wins; otherwise config.ScaleOrDefault
-	// applies the shared "invalid → default" fallback to the config value.
+// resolveScale picks the effective RTT-bar scale and, when an explicit -s value was
+// rejected as unusable, an operator-facing warning ("" otherwise): an explicit CLI -s
+// wins, else a config "scale" directive, else config.DefaultScale. 0 means "unset" for
+// both inputs (the -s flag defaults to 0, and a missing or invalid "scale" directive
+// leaves cfg.Scale at 0), so passing -s is never indistinguishable from its own default
+// and a config scale can take effect.
+//
+// Both inputs go through the same config.ValidScale predicate the "scale" directive
+// uses, so a non-finite or out-of-range value (e.g. -s Inf, which flag.Float64 accepts)
+// is rejected rather than flattening every bar; the rejection is not fatal — the value
+// is dropped and the probe runs. Scale and warning are computed in one place so the
+// message always names what is actually in effect — a valid config "scale" or the
+// default — and cannot drift from the accept/reject decision.
+func resolveScale(cli, cfg float64) (float64, string) {
 	if config.ValidScale(cli) {
-		return cli
+		return cli, ""
 	}
 
-	return config.ScaleOrDefault(cfg)
-}
+	scale := config.ScaleOrDefault(cfg)
 
-// scaleWarning returns an operator-facing warning when an explicit -s value was rejected
-// as unusable, or "" when the CLI scale was unset (0) or usable. resolved is the scale
-// resolveScale chose, so the message names what is actually in effect — a valid config
-// "scale" or the default — rather than assuming the default. The probe still runs (the
-// invalid value is dropped, not fatal); this only surfaces the silently-ignored input.
-func scaleWarning(cli, resolved float64) string {
-	if cli == 0 || config.ValidScale(cli) {
-		return ""
+	if cli == 0 { // unset -s: nothing to surface.
+		return scale, ""
 	}
 
-	return fmt.Sprintf(
-		"-s %g ignored: not a usable RTT-bar scale (finite, ~0.0001..1000000 ms); using %gms instead",
+	return scale, fmt.Sprintf(
+		"-s %g ignored: not a usable RTT-bar scale (%s..%s ms); using %gms instead",
 		cli,
-		resolved,
+		strconv.FormatFloat(config.MinScale, 'f', -1, 64),
+		strconv.FormatFloat(config.MaxScale, 'f', -1, 64),
+		scale,
 	)
 }
 
@@ -158,17 +157,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	scale, warn := resolveScale(opts.Scale, cfg.Scale)
 	opts.Columns = cfg.Columns
-	rawScale := opts.Scale
-	opts.Scale = resolveScale(opts.Scale, cfg.Scale)
-
-	if w := scaleWarning(rawScale, opts.Scale); w != "" {
-		opts.Warnings = append(opts.Warnings, w)
-	}
-
+	opts.Scale = scale
 	opts.Precision = cfg.Precision
 	opts.Cols = resolveCols(opts.Cols, cfg.Cols)
 	opts.Version = version
+
+	if warn != "" {
+		opts.Warnings = append(opts.Warnings, warn)
+	}
 
 	if opts.LogDir != "" {
 		opts.LogWriter = monitor.NewLogWriter(opts.LogDir)

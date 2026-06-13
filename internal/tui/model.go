@@ -92,10 +92,7 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 	// "invalid → default" helper the CLI resolver's fallback uses, so behavior is uniform.
 	scale := config.ScaleOrDefault(opts.Scale)
 
-	// CLI-level warnings (e.g. an invalid -s) lead, then the per-target startup and build
-	// warnings. Clone so appending never mutates the caller's slice.
-	warnings := append(slices.Clone(opts.Warnings), startupWarnings(specs)...)
-	warnings = append(warnings, buildWarns...)
+	warnings := composeWarnings(opts.Warnings, append(startupWarnings(specs), buildWarns...))
 
 	return Model{
 		rows:     rows,
@@ -107,6 +104,15 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 		warnings: warnings,
 		cols:     max(opts.Cols, 1),
 	}, nil
+}
+
+// composeWarnings builds the header warning list: CLI-level diagnostics (e.g. an invalid
+// -s) lead, then the per-target startup/build warnings. New and handleReload both go
+// through it, so a reload that regenerates the target warnings cannot silently drop the
+// CLI ones — the rejected flag they describe is still in force-by-fallback after a
+// reload. Clones cli so appending never mutates the caller's slice.
+func composeWarnings(cli, target []string) []string {
+	return append(slices.Clone(cli), target...)
 }
 
 // buildRows turns specs into rows, returning any per-target construction warnings.
@@ -453,7 +459,7 @@ func (m Model) handleReload() (tea.Model, tea.Cmd) {
 	if r, ok := loadRows(m.opts.ConfigPath, m.rows); ok {
 		m.rows = r.rows
 		m.visible = buildVisible(r.columns)
-		m.warnings = r.warnings
+		m.warnings = composeWarnings(m.opts.Warnings, r.warnings)
 		m = m.recalcWidths()
 		m = m.clampScroll() // a shrunk target set may leave scrollTop past the end.
 	}

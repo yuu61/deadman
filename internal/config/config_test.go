@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// TestValidScale pins the usable-scale window: the [minScale, maxScale] bounds (and the
+// TestValidScale pins the usable-scale window: the [MinScale, MaxScale] bounds (and the
 // implicit rejection of zero, negatives, NaN and ±Inf). Extreme finite values are
-// rejected too — below minScale the footer label balloons and every bar overflows.
+// rejected too — below MinScale the footer label balloons and every bar overflows.
 func TestValidScale(t *testing.T) {
 	cases := []struct {
 		v  float64
@@ -16,12 +16,12 @@ func TestValidScale(t *testing.T) {
 	}{
 		{10, true},
 		{0.01, true},     // sub-ms ladder bottom.
-		{minScale, true}, // inclusive lower bound.
-		{maxScale, true}, // inclusive upper bound.
+		{MinScale, true}, // inclusive lower bound.
+		{MaxScale, true}, // inclusive upper bound.
 		{0, false},
 		{-5, false},
-		{1e-300, false}, // far below minScale: ~300-char footer label, bar all █.
-		{1e300, false},  // far above maxScale.
+		{1e-300, false}, // far below MinScale: ~300-char footer label, bar all █.
+		{1e300, false},  // far above MaxScale.
 		{math.Inf(1), false},
 		{math.Inf(-1), false},
 		{math.NaN(), false},
@@ -500,8 +500,8 @@ func TestParseConfigSplitLenient(t *testing.T) {
 func TestParseConfigScaleLenient(t *testing.T) {
 	// A non-numeric, non-positive, or non-finite scale is ignored, leaving Scale unset
 	// (0) so the caller falls back to the CLI/default rather than aborting the parse.
-	// "scale inf" is the case the math.IsInf guard catches (ParseFloat accepts it and
-	// +Inf > 0); "scale nan" is caught by the n > 0 check (NaN > 0 is false).
+	// All of these fall to the single ValidScale range predicate: ParseFloat accepts
+	// "inf"/"nan", but +Inf fails v <= MaxScale and NaN fails both range comparisons.
 	for _, in := range []string{
 		"scale abc\n", "scale -3\n", "scale 0\n", "scale\n", "scale inf\n", "scale nan\n",
 	} {

@@ -3,8 +3,10 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"math"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/yuu61/deadman/internal/config"
@@ -122,26 +124,47 @@ func TestParseArgsRejectsMultipleConfigs(t *testing.T) {
 	}
 }
 
+// TestResolveScale pins both the effective scale and its companion warning: an explicitly
+// passed, unusable -s warns (the value is dropped and the probe runs) while an unset or
+// usable -s is silent, and a warning always names the scale actually in effect.
 func TestResolveScale(t *testing.T) {
 	cases := []struct {
 		name     string
 		cli, cfg float64
 		want     float64
+		wantWarn bool
 	}{
-		{"cli explicit wins over config", 20, 5, 20},
-		{"config used when cli unset", 0, 5, 5},
-		{"cli used when config unset", 7, 0, 7},
-		{"sub-ms cli is honored", 0.5, 0, 0.5},
-		{"non-finite cli falls back to config", math.Inf(1), 5, 5},
-		{"nan cli falls back to config", math.NaN(), 5, 5},
-		{"non-finite cfg falls back to default", 0, math.Inf(1), config.DefaultScale},
-		{"nan cfg falls back to default", 0, math.NaN(), config.DefaultScale},
-		{"default when both unset", 0, 0, config.DefaultScale},
+		{"cli explicit wins over config", 20, 5, 20, false},
+		{"config used when cli unset", 0, 5, 5, false},
+		{"cli used when config unset", 7, 0, 7, false},
+		{"sub-ms cli is honored", 0.5, 0, 0.5, false},
+		{"non-finite cli falls back to config and warns", math.Inf(1), 5, 5, true},
+		{"nan cli falls back to config and warns", math.NaN(), 5, 5, true},
+		{"negative cli falls back to default and warns", -5, 0, config.DefaultScale, true},
+		{"out-of-range cli falls back to default and warns", 1e-300, 0, config.DefaultScale, true},
+		{"non-finite cfg falls back to default", 0, math.Inf(1), config.DefaultScale, false},
+		{"nan cfg falls back to default", 0, math.NaN(), config.DefaultScale, false},
+		{"default when both unset", 0, 0, config.DefaultScale, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := resolveScale(c.cli, c.cfg); got != c.want {
+			got, warn := resolveScale(c.cli, c.cfg)
+			if got != c.want {
 				t.Errorf("resolveScale(%g, %g) = %g, want %g", c.cli, c.cfg, got, c.want)
+			}
+
+			if (warn != "") != c.wantWarn {
+				t.Errorf(
+					"resolveScale(%g, %g) warning = %q, wantWarn=%v",
+					c.cli, c.cfg, warn, c.wantWarn,
+				)
+			}
+
+			// The warning must name the scale actually in effect (config or default),
+			// not assume the default.
+			if effective := fmt.Sprintf("using %gms", c.want); c.wantWarn &&
+				!strings.Contains(warn, effective) {
+				t.Errorf("warning %q should contain %q", warn, effective)
 			}
 		})
 	}
@@ -187,36 +210,6 @@ func TestResolveCols(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := resolveCols(c.cli, c.cfg); got != c.want {
 				t.Errorf("resolveCols(%d, %d) = %d, want %d", c.cli, c.cfg, got, c.want)
-			}
-		})
-	}
-}
-
-// TestScaleWarning checks that an explicitly-passed, unusable -s value yields a warning
-// (the value is still dropped and the probe runs), while an unset or usable -s is silent.
-func TestScaleWarning(t *testing.T) {
-	cases := []struct {
-		name          string
-		cli, resolved float64
-		wantWarn      bool
-	}{
-		{"unset cli is silent", 0, 10, false},
-		{"valid cli is silent", 5, 5, false},
-		{"inf cli warns", math.Inf(1), 10, true},
-		{"nan cli warns", math.NaN(), 10, true},
-		{"negative cli warns", -5, 10, true},
-		{"out-of-range cli warns", 1e-300, 10, true},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := scaleWarning(c.cli, c.resolved); (got != "") != c.wantWarn {
-				t.Errorf(
-					"scaleWarning(%g, %g) = %q, wantWarn=%v",
-					c.cli,
-					c.resolved,
-					got,
-					c.wantWarn,
-				)
 			}
 		})
 	}

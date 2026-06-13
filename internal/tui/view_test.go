@@ -1207,17 +1207,32 @@ func TestViewFitsTerminalHeight(t *testing.T) {
 }
 
 // TestOptionsWarningsSurface confirms a CLI-level warning passed via Options.Warnings is
-// rendered (with the "! " prefix) ahead of the rows, like the per-target startup warnings.
+// rendered (with the "! " prefix) ahead of the rows, like the per-target startup warnings,
+// and that it survives a reload: the rejected flag it describes is still in force, so a
+// reload that regenerates the per-target warnings must re-prepend the CLI ones.
 func TestOptionsWarningsSurface(t *testing.T) {
-	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deadman.conf")
 
-	m, err := New(specs, Options{Scale: 10, Warnings: []string{"cli warn xyz"}})
+	err := os.WriteFile(path, []byte("h 1.2.3.4\n"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10, ConfigPath: path, Warnings: []string{"cli warn xyz"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if !strings.Contains(out, "! cli warn xyz") {
 		t.Errorf("Options.Warnings should render with a '! ' prefix\n---\n%s", out)
+	}
+
+	_, out = drive(t, m, reloadMsg{})
+	if !strings.Contains(out, "! cli warn xyz") {
+		t.Errorf("Options.Warnings should survive a reload\n---\n%s", out)
 	}
 }

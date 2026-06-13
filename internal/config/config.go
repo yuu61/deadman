@@ -95,23 +95,25 @@ var directives = map[string]func(cfg *Config, args []string){
 	},
 }
 
-// Scale bounds. A scale outside [minScale, maxScale] is unusable, not merely degenerate:
-// below minScale every real RTT overflows the top band (the bar is uniformly "█") and the
+// Scale bounds. A scale outside [MinScale, MaxScale] is unusable, not merely degenerate:
+// below MinScale every real RTT overflows the top band (the bar is uniformly "█") and the
 // shortest-decimal footer label balloons toward hundreds of characters (FormatFloat 'f'
-// of 1e-300 is ~300 digits), shoving the key legend off-screen; above maxScale every bar
-// collapses to the floor. minScale (0.1 µs) is far finer and maxScale (1000 s) far coarser
+// of 1e-300 is ~300 digits), shoving the key legend off-screen; above MaxScale every bar
+// collapses to the floor. MinScale (0.1 µs) is far finer and MaxScale (1000 s) far coarser
 // than any real network bar, so the usable window stays generous while nonsense is rejected.
+// Exported so the CLI's rejection warning (cmd/deadman) formats the bounds from these
+// constants instead of carrying a prose copy that drifts when the window changes.
 const (
-	minScale = 1e-4
-	maxScale = 1e6
+	MinScale = 1e-4
+	MaxScale = 1e6
 )
 
-// ValidScale reports whether v is a usable RTT-bar scale: within [minScale, maxScale],
+// ValidScale reports whether v is a usable RTT-bar scale: within [MinScale, MaxScale],
 // which also excludes NaN, ±Inf, zero and negatives. It is the single predicate shared by
 // the "scale" directive, the CLI -s resolver (cmd/deadman) and the TUI's startup
 // normalization, so the accept/reject boundary cannot drift between them.
 func ValidScale(v float64) bool {
-	return v >= minScale && v <= maxScale
+	return v >= MinScale && v <= MaxScale
 }
 
 // DefaultScale is the RTT-bar scale used when neither the CLI -s flag nor a "scale"
