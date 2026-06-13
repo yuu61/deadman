@@ -593,13 +593,25 @@ func TestScaleStepKeys(t *testing.T) {
 		t.Errorf("after up,up: want scale 20\n---\n%s", out)
 	}
 
-	// down past the bottom rung clamps at 1ms.
-	_, out = drive(t, m,
-		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
-		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown},
-		tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyDown})
-	if !strings.Contains(out, "RTT Scale 1ms") {
-		t.Errorf("down past the bottom should clamp at 1ms\n---\n%s", out)
+	// down past the bottom clamps at the sub-ms floor (scaleSteps[0]). Pressing Down
+	// len(scaleSteps) times reaches the floor from any rung, so the count and the
+	// expected floor label both track the ladder instead of hardcoded literals.
+	floor := scaleLabel(scaleSteps[0])
+
+	downs := make([]tea.Msg, len(scaleSteps))
+	for i := range downs {
+		downs[i] = tea.KeyMsg{Type: tea.KeyDown}
+	}
+
+	m, out = drive(t, m, downs...)
+	if !strings.Contains(out, "RTT Scale "+floor+"ms") {
+		t.Errorf("down past the bottom should clamp at %sms\n---\n%s", floor, out)
+	}
+
+	// further down past the floor stays clamped at the floor.
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if !strings.Contains(out, "RTT Scale "+floor+"ms") {
+		t.Errorf("further down past the floor must stay at %sms\n---\n%s", floor, out)
 	}
 }
 
@@ -610,25 +622,27 @@ func TestScaleStepKeys(t *testing.T) {
 func TestScaleLadderBounds(t *testing.T) {
 	cases := []struct {
 		name           string
-		cur            int
-		wantUp, wantDn int
+		cur            float64
+		wantUp, wantDn float64
 	}{
 		{"within ladder", 10, 20, 5},
 		{"off-ladder below top", 7, 10, 5},
 		{"at top rung", 100, 100, 50},
 		{"above top rung stays put on up", 1000, 1000, 100}, // the Bug-1 regression guard.
-		{"at bottom rung", 1, 2, 1},
+		{"at bottom rung", 0.01, 0.02, 0.01},
 		{"off-ladder near bottom", 3, 5, 2},
+		{"sub-ms mid", 0.1, 0.2, 0.05},
+		{"below bottom holds", 0.005, 0.01, 0.005},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := scaleUp(c.cur); got != c.wantUp {
-				t.Errorf("scaleUp(%d) = %d, want %d", c.cur, got, c.wantUp)
+				t.Errorf("scaleUp(%g) = %g, want %g", c.cur, got, c.wantUp)
 			}
 
 			if got := scaleDown(c.cur); got != c.wantDn {
-				t.Errorf("scaleDown(%d) = %d, want %d", c.cur, got, c.wantDn)
+				t.Errorf("scaleDown(%g) = %g, want %g", c.cur, got, c.wantDn)
 			}
 		})
 	}
@@ -661,6 +675,71 @@ func TestScaleRebucketsExistingBar(t *testing.T) {
 	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if !strings.Contains(out, "▄") || strings.Contains(out, "▂") {
 		t.Errorf("after down to scale 5, RTT 15 should re-bucket to ▄ not ▂\n---\n%s", out)
+	}
+}
+
+// TestLogModeKey cycles the 'l' key (linear -> base e -> base e² -> linear), asserting
+// the footer relabels to floor mode and surfaces the factor up front (xe / xe2) and
+// wraps back. This is the regression guard for the 'l' wiring and the logFactors lookup.
+func TestLogModeKey(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 40})
+	if !strings.Contains(out, "RTT Scale 10ms") {
+		t.Errorf("linear start should show 'RTT Scale 10ms'\n---\n%s", out)
+	}
+
+	// 'l' -> base e: the footer switches to floor wording and the xe factor.
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !strings.Contains(out, "RTT floor 10ms xe.") {
+		t.Errorf("after l: want 'RTT floor 10ms xe'\n---\n%s", out)
+	}
+
+	// 'l' -> base e²: the xe2 factor (the trailing '.' keeps this from matching xe).
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !strings.Contains(out, "RTT floor 10ms xe2.") {
+		t.Errorf("after l,l: want xe2\n---\n%s", out)
+	}
+
+	// 'l' wraps back to linear.
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !strings.Contains(out, "RTT Scale 10ms") {
+		t.Errorf("after l×3: should wrap back to linear\n---\n%s", out)
+	}
+}
+
+// TestLogModeRebucketsBar confirms 'l' re-buckets the on-screen bar through the View
+// path (targetLine passing the selected LnBase to monitor.Glyph): the same stored RTT 50 renders ▆ on
+// the linear scale 10 but ▂ in log ×e (ln(50/10)≈1.6, band 1).
+func TestLogModeRebucketsBar(t *testing.T) {
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m,
+		tea.WindowSizeMsg{Width: 200, Height: 40},
+		pingResultMsg{
+			idx:    0,
+			target: m.rows[0].Target,
+			res:    ping.Result{Success: true, Code: ping.Success, RTT: 50},
+		},
+	)
+	if !strings.Contains(out, "▆") {
+		t.Errorf("RTT 50 at linear scale 10 should render ▆\n---\n%s", out)
+	}
+
+	// switch to log ×e: 50ms re-buckets from ▆ to ▂.
+	_, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !strings.Contains(out, "▂") || strings.Contains(out, "▆") {
+		t.Errorf("in log ×e, RTT 50 should re-bucket to ▂ not ▆\n---\n%s", out)
 	}
 }
 
@@ -705,19 +784,21 @@ func TestReloadPreservesScaleAndPrecision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Live: step the scale to 5 and cycle precision to ms.1.
+	// Live: step the scale to 5, cycle precision to ms.1, and switch to log mode.
 	m, _ = drive(t, m,
 		tea.WindowSizeMsg{Width: 120, Height: 40},
 		tea.KeyMsg{Type: tea.KeyDown},
 		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}},
 	)
 
 	// Reload reparses the file: columns reset to it (MIN hidden), but the live
-	// scale/precision are preserved (the documented, intentional asymmetry).
+	// scale/precision/log-factor are preserved (the documented, intentional asymmetry).
 	_, out := drive(t, m, reloadMsg{})
 
-	if !strings.Contains(out, "RTT Scale 5ms") || !strings.Contains(out, "(p)recision[ms.1]") {
-		t.Errorf("reload should preserve the live scale/precision\n---\n%s", out)
+	// The trailing '.' makes this fail if a reload bug advances logIdx 1->2 (xe -> xe2).
+	if !strings.Contains(out, "RTT floor 5ms xe.") || !strings.Contains(out, "(p)recision[ms.1]") {
+		t.Errorf("reload should preserve the live scale/precision/log-factor\n---\n%s", out)
 	}
 
 	if strings.Contains(out, "MIN") {
@@ -1123,4 +1204,35 @@ func TestViewFitsTerminalHeight(t *testing.T) {
 	// Eyeball sample for `go test -v`: the fixed header plus a scrolled window.
 	_, sample := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
 	t.Logf("sample render (120x20, 50 targets):\n%s", sample)
+}
+
+// TestOptionsWarningsSurface confirms a CLI-level warning passed via Options.Warnings is
+// rendered (with the "! " prefix) ahead of the rows, like the per-target startup warnings,
+// and that it survives a reload: the rejected flag it describes is still in force, so a
+// reload that regenerates the per-target warnings must re-prepend the CLI ones.
+func TestOptionsWarningsSurface(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deadman.conf")
+
+	err := os.WriteFile(path, []byte("h 1.2.3.4\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
+
+	m, err := New(specs, Options{Scale: 10, ConfigPath: path, Warnings: []string{"cli warn xyz"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !strings.Contains(out, "! cli warn xyz") {
+		t.Errorf("Options.Warnings should render with a '! ' prefix\n---\n%s", out)
+	}
+
+	_, out = drive(t, m, reloadMsg{})
+	if !strings.Contains(out, "! cli warn xyz") {
+		t.Errorf("Options.Warnings should survive a reload\n---\n%s", out)
+	}
 }

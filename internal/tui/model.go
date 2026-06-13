@@ -30,14 +30,15 @@ type Row struct {
 type Options struct {
 	Async      bool
 	Blink      bool
-	Scale      int
-	Precision  string // initial stat-precision label (config "precision"); "" = ms.
+	Scale      float64 // RTT-bar ms-per-step (the window floor in log mode); 0 lets New fall back.
+	Precision  string  // initial stat-precision label (config "precision"); "" = ms.
 	LogDir     string
 	LogWriter  *monitor.LogWriter // serializes -l log writes off the Update loop; nil = no logging.
 	ConfigPath string
 	Version    string          // build version label shown in the title bar (Makefile -ldflags); "" = "dev".
 	Columns    map[string]bool // per-column visibility overrides (config file).
 	Cols       int             // requested newspaper-column count (CLI -c/--split, config "split"); <=1 = single.
+	Warnings   []string        // CLI-level startup warnings (e.g. an invalid -s value), shown above the rows.
 }
 
 // Model is the Bubble Tea model.
@@ -58,8 +59,9 @@ type Model struct {
 
 	visible map[string]bool // per-column visibility (config defaults + 'm' toggle).
 
-	scale   int // RTT-bar ms-per-step; adjusted live with up/down, applied when rendering glyphs.
-	precIdx int // index into precisionModes for the stat columns; cycled with 'p'.
+	scale   float64 // RTT-bar ms-per-step (the window floor in log mode); adjusted live with up/down.
+	logIdx  int     // index into logFactors (0 = linear); cycled with 'l'. The selected LnBase drives Glyph.
+	precIdx int     // index into precisionModes for the stat columns; cycled with 'p'.
 
 	scrollTop int // first visible row when the list exceeds the viewport; moved with j/k/g/G/PgUp/PgDn.
 
@@ -84,16 +86,33 @@ type Model struct {
 func New(specs []config.TargetSpec, opts Options) (Model, error) {
 	rows, buildWarns := buildRows(specs, nil)
 
+	// Normalize the scale like Cols: a caller bypassing resolveScale (a test or an
+	// embedding) may pass a zero/degenerate Options.Scale, which would otherwise make
+	// rttGlyph's scale<=0 guard flatten every bar to ▁. config.ScaleOrDefault is the same
+	// "invalid → default" helper the CLI resolver's fallback uses, so behavior is uniform.
+	scale := config.ScaleOrDefault(opts.Scale)
+
+	warnings := composeWarnings(opts.Warnings, append(startupWarnings(specs), buildWarns...))
+
 	return Model{
 		rows:     rows,
 		opts:     opts,
-		scale:    opts.Scale,
+		scale:    scale,
 		precIdx:  precisionIndex(opts.Precision),
 		hostInfo: hostInfo(),
 		visible:  buildVisible(opts.Columns),
-		warnings: append(startupWarnings(specs), buildWarns...),
+		warnings: warnings,
 		cols:     max(opts.Cols, 1),
 	}, nil
+}
+
+// composeWarnings builds the header warning list: CLI-level diagnostics (e.g. an invalid
+// -s) lead, then the per-target startup/build warnings. New and handleReload both go
+// through it, so a reload that regenerates the target warnings cannot silently drop the
+// CLI ones — the rejected flag they describe is still in force-by-fallback after a
+// reload. Clones cli so appending never mutates the caller's slice.
+func composeWarnings(cli, target []string) []string {
+	return append(slices.Clone(cli), target...)
 }
 
 // buildRows turns specs into rows, returning any per-target construction warnings.
@@ -268,9 +287,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleViewKey handles the display-only keys: the MIN/MAX ('m') and structural
-// HOSTNAME/ADDRESS/VIA ('h'/'a'/'v') column toggles, the RTT-bar scale (up/down),
-// the stat precision ('p'), and the newspaper-column count ('['/']'). An unknown
-// key leaves the model unchanged.
+// HOSTNAME/ADDRESS/VIA ('h'/'a'/'v') column toggles, the RTT-bar scale (up/down) and
+// its log factor ('l'), the stat precision ('p'), and the newspaper-column count
+// ('['/']'). An unknown key leaves the model unchanged.
 //
 // The layout-changing keys clampScroll after recalcWidths: a stat-column toggle
 // shifts minColumnWidth, which can change effectiveCols and thus the vertical
@@ -291,13 +310,11 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 		// ('v'). Each one's width feeds the result-bar column and the multi-column
 		// fit, so recompute the layout and re-pin the scroll, like the MIN/MAX toggle.
 		return m.toggleStructuralCol(msg.String()).recalcWidths().clampScroll()
-	case "up":
-		// Coarser RTT-bar scale (more ms per step). Glyphs are bucketed at render
-		// time, so the existing bar re-buckets with no width change.
-		m.scale = scaleUp(m.scale)
-	case "down":
-		// Finer RTT-bar scale.
-		m.scale = scaleDown(m.scale)
+	case "up", "down", "l":
+		// RTT-bar scale (up/down step the ladder) and its log factor ('l' cycles
+		// 0->e->e²->0). Glyphs are bucketed at render time, so the bar re-buckets
+		// with no width change.
+		return m.adjustRTTScale(msg.String())
 	case "p":
 		// Cycle the stat precision (ms -> ms.1 -> ms.2 -> ms.3); the column width
 		// changes, so recompute the result-bar layout.
@@ -315,6 +332,24 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 		return m.scroll(msg.String())
 	default:
 		// Any other key is unbound; leave the model unchanged.
+	}
+
+	return m
+}
+
+// adjustRTTScale handles the RTT-bar scale and log-factor keys: up/down step the
+// scale ladder and 'l' cycles the log factor (0 linear -> e -> e²). None of these
+// changes a column width, so the caller needs no width recalc.
+func (m Model) adjustRTTScale(key string) Model {
+	switch key {
+	case "up":
+		m.scale = scaleUp(m.scale)
+	case "down":
+		m.scale = scaleDown(m.scale)
+	case "l":
+		m.logIdx = (m.logIdx + 1) % len(logFactors)
+	default:
+		// Unreachable: handleViewKey routes only up/down/l here.
 	}
 
 	return m
@@ -356,15 +391,42 @@ func (m Model) adjustCols(key string) Model {
 	return m
 }
 
-// scaleSteps is the ladder the up/down keys move the RTT-bar scale through (ms).
-var scaleSteps = []int{1, 2, 5, 10, 20, 50, 100}
+// logFactor is one entry in the 'l'-key cycle: a legend label paired with LnBase, the
+// log base carried as a value rather than implied by the slice index. Mirrors
+// precisionMode (label + behavior in one row).
+type logFactor struct {
+	Label string
+	// LnBase is the ln of the per-step bucket base, i.e. the divisor in
+	// ln(rtt/scale)/LnBase handed to monitor.Glyph: 0 = linear (no log), 1 = base e,
+	// 2 = base e². Because it is data, not the index, a new factor is just a row — base
+	// 10 would be {"x10", math.Log(10)} — with no rttGlyph change. Labels stay ASCII
+	// (narrow): "×"/"²" are East-Asian-ambiguous and render 2 cells on CJK terminals,
+	// desyncing the keys-line width from the renderer's measure.
+	LnBase float64
+}
+
+// logFactors is the single source of the 'l'-key cycle order, the log base each entry
+// selects, and the floor-mode legend labels for the log factors: linear (no log), then
+// base e and base e². Index 0's "lin" label is a cycle-slot placeholder, not rendered:
+// keysLine labels linear mode with its own "RTT Scale" wording (vs "RTT floor … xe"),
+// since linear shows ms-per-step while a log factor shows the window floor. So the table
+// is the single source of the log-factor labels (index > 0); the linear row is self-named.
+var logFactors = []logFactor{
+	{"lin", 0},
+	{"xe", 1},
+	{"xe2", 2},
+}
+
+// scaleSteps is the ladder the up/down keys move the RTT-bar scale through (ms); it
+// extends below 1ms so sub-millisecond LAN RTTs can be resolved.
+var scaleSteps = []float64{0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100}
 
 // scaleUp returns the next coarser (larger-ms) rung above cur. An off-ladder cur
 // (e.g. from -s 7) snaps up to the nearest rung, so the live scale stays a free-form
-// int while the keys move through sensible presets. At or above the top rung cur is
+// value while the keys move through sensible presets. At or above the top rung cur is
 // preserved: Up means coarser, so it must never decrease the scale (a free-form
 // -s 1000 stays 1000 rather than snapping down to the ladder top).
-func scaleUp(cur int) int {
+func scaleUp(cur float64) float64 {
 	for _, s := range scaleSteps {
 		if s > cur {
 			return s
@@ -374,27 +436,30 @@ func scaleUp(cur int) int {
 	return cur
 }
 
-// scaleDown returns the next finer (smaller-ms) rung below cur, clamped at the bottom.
-func scaleDown(cur int) int {
+// scaleDown returns the next finer (smaller-ms) rung below cur. At or below the bottom
+// rung cur is preserved: Down means finer, so it must never increase the scale — the
+// mirror of scaleUp's top guard, so a free-form -s 0.005 stays 0.005 rather than being
+// snapped up to the ladder bottom.
+func scaleDown(cur float64) float64 {
 	for _, s := range slices.Backward(scaleSteps) {
 		if s < cur {
 			return s
 		}
 	}
 
-	return scaleSteps[0]
+	return cur
 }
 
 // handleReload reparses the config and starts a fresh generation, so stale
-// timers/results from the previous target set are ignored. The live scale/precision
-// are intentionally preserved (not reset to config), unlike column visibility:
-// scale has a CLI flag (-s) whose value a reload must not silently drop, and
-// precision is a live, key-driven view setting.
+// timers/results from the previous target set are ignored. The live
+// scale/log-factor/precision are intentionally preserved (not reset to config),
+// unlike column visibility: scale has a CLI flag (-s) whose value a reload must not
+// silently drop, and the log factor and precision are live, key-driven view settings.
 func (m Model) handleReload() (tea.Model, tea.Cmd) {
 	if r, ok := loadRows(m.opts.ConfigPath, m.rows); ok {
 		m.rows = r.rows
 		m.visible = buildVisible(r.columns)
-		m.warnings = r.warnings
+		m.warnings = composeWarnings(m.opts.Warnings, r.warnings)
 		m = m.recalcWidths()
 		m = m.clampScroll() // a shrunk target set may leave scrollTop past the end.
 	}

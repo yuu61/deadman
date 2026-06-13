@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -81,7 +82,18 @@ func (m Model) View() string {
 // keysLine is the scale + key-legend line (line 2), factored into a method to sit
 // alongside the other fixed-line builders (centerTitle/titleLine/headerLine).
 func (m Model) keysLine() string {
-	s := rear + fmt.Sprintf("RTT Scale %dms.", m.scale)
+	// In log mode the scale value is the window floor (not ms-per-step) and the factor
+	// sets the width, so relabel and surface the factor up front (clipped last, like the
+	// cols count below). The mode is read from the selected factor's LnBase, not the
+	// index, so the linear/log split stays tied to the table.
+	f := m.logFactor()
+
+	var s string
+	if f.LnBase > 0 {
+		s = rear + fmt.Sprintf("RTT floor %sms %s.", scaleLabel(m.scale), f.Label)
+	} else {
+		s = rear + fmt.Sprintf("RTT Scale %sms.", scaleLabel(m.scale))
+	}
 
 	// The effective-vs-requested column count sits near the front, before the long
 	// key legend, so the renderer's width truncation (it clips lines, not wraps)
@@ -92,11 +104,29 @@ func (m Model) keysLine() string {
 	}
 
 	s += fmt.Sprintf(
-		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (p)recision[%s] ([/])cols",
+		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (l)og (p)recision[%s] ([/])cols",
 		m.precMode().Label,
 	)
 
 	return s
+}
+
+// logFactor returns the active RTT-scale log factor for the model, clamping an out-of-
+// range logIdx to the linear entry so a Model not built through New can never panic the
+// render (mirrors precMode). Callers read both its Label (legend) and LnBase (mode/base).
+func (m Model) logFactor() logFactor {
+	if m.logIdx < 0 || m.logIdx >= len(logFactors) {
+		return logFactors[0]
+	}
+
+	return logFactors[m.logIdx]
+}
+
+// scaleLabel formats an RTT-bar scale for the keys line. FormatFloat with 'f' avoids
+// %g's exponent switch (an explicit -s 1000000 would otherwise read "1e+06ms") while
+// the shortest-precision (-1) keeps ladder values byte-identical: "0.01", "10", "100".
+func scaleLabel(scale float64) string {
+	return strconv.FormatFloat(scale, 'f', -1, 64)
 }
 
 // scrollStatus is the one-line position indicator shown below the row window when
@@ -214,8 +244,11 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 
 	var g strings.Builder
 
+	// logIdx is loop-invariant, so resolve the log base once rather than per glyph
+	// (this loop runs resultWidth times per row, every frame).
+	lnBase := m.logFactor().LnBase
 	for _, res := range t.Results(m.resW) {
-		ch := monitor.Glyph(res, m.scale)
+		ch := monitor.Glyph(res, m.scale, lnBase)
 		if monitor.IsFailGlyph(ch) {
 			g.WriteString(styleDown.Render(ch))
 		} else {

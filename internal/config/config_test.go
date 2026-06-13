@@ -1,9 +1,58 @@
 package config
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
+
+// TestValidScale pins the usable-scale window: the [MinScale, MaxScale] bounds (and the
+// implicit rejection of zero, negatives, NaN and ±Inf). Extreme finite values are
+// rejected too — below MinScale the footer label balloons and every bar overflows.
+func TestValidScale(t *testing.T) {
+	cases := []struct {
+		v  float64
+		ok bool
+	}{
+		{10, true},
+		{0.01, true},     // sub-ms ladder bottom.
+		{MinScale, true}, // inclusive lower bound.
+		{MaxScale, true}, // inclusive upper bound.
+		{0, false},
+		{-5, false},
+		{1e-300, false}, // far below MinScale: ~300-char footer label, bar all █.
+		{1e300, false},  // far above MaxScale.
+		{math.Inf(1), false},
+		{math.Inf(-1), false},
+		{math.NaN(), false},
+	}
+	for _, c := range cases {
+		if got := ValidScale(c.v); got != c.ok {
+			t.Errorf("ValidScale(%g) = %v, want %v", c.v, got, c.ok)
+		}
+	}
+}
+
+// TestScaleOrDefault confirms the shared "invalid → default" normalization: a usable
+// value passes through, anything ValidScale rejects becomes DefaultScale.
+func TestScaleOrDefault(t *testing.T) {
+	cases := []struct {
+		v, want float64
+	}{
+		{5, 5},
+		{0.5, 0.5},
+		{0, DefaultScale},
+		{-1, DefaultScale},
+		{1e-300, DefaultScale},
+		{math.Inf(1), DefaultScale},
+		{math.NaN(), DefaultScale},
+	}
+	for _, c := range cases {
+		if got := ScaleOrDefault(c.v); got != c.want {
+			t.Errorf("ScaleOrDefault(%g) = %g, want %g", c.v, got, c.want)
+		}
+	}
+}
 
 const sample = `#
 #	deadman config
@@ -218,7 +267,7 @@ func TestParseConfigDirectiveCaseInsensitive(t *testing.T) {
 	}
 
 	if cfg.Scale != 5 {
-		t.Errorf("Scale = %d, want 5", cfg.Scale)
+		t.Errorf("Scale = %g, want 5", cfg.Scale)
 	}
 
 	if cfg.Cols != 2 {
@@ -403,7 +452,7 @@ func TestParseConfigScaleAndPrecision(t *testing.T) {
 	}
 
 	if cfg.Scale != 5 {
-		t.Errorf("Scale = %d, want 5", cfg.Scale)
+		t.Errorf("Scale = %g, want 5", cfg.Scale)
 	}
 
 	// The precision label is stored verbatim; the TUI validates it against its mode
@@ -449,17 +498,40 @@ func TestParseConfigSplitLenient(t *testing.T) {
 }
 
 func TestParseConfigScaleLenient(t *testing.T) {
-	// A non-numeric or non-positive scale is ignored, leaving Scale unset (0) so the
-	// caller falls back to the CLI/default rather than aborting the parse.
-	for _, in := range []string{"scale abc\n", "scale -3\n", "scale 0\n", "scale\n"} {
+	// A non-numeric, non-positive, non-finite, or out-of-range finite scale is ignored,
+	// leaving Scale unset (0) so the caller falls back to the CLI/default rather than
+	// aborting the parse. All of these fall to the single ValidScale range predicate:
+	// ParseFloat accepts "inf"/"nan", but +Inf fails v <= MaxScale and NaN fails both
+	// range comparisons. The "1e-300"/"1e300" cases pin the directive's finite range
+	// bounds (MinScale/MaxScale) specifically: they are finite and positive, so a
+	// regression that rejected only the non-finite inputs but kept a bare n>0 (e.g. an
+	// explicit IsInf/IsNaN guard plus n>0) would accept them and flatten every bar — the
+	// nan case alone can't catch that, and inf only catches it by sign, not by magnitude.
+	for _, in := range []string{
+		"scale abc\n", "scale -3\n", "scale 0\n", "scale\n", "scale inf\n", "scale nan\n",
+		"scale 1e-300\n", "scale 1e300\n",
+	} {
 		cfg, err := ParseConfig(strings.NewReader(in))
 		if err != nil {
 			t.Fatalf("ParseConfig(%q) error: %v", in, err)
 		}
 
 		if cfg.Scale != 0 {
-			t.Errorf("ParseConfig(%q): Scale = %d, want 0 (unset)", in, cfg.Scale)
+			t.Errorf("ParseConfig(%q): Scale = %g, want 0 (unset)", in, cfg.Scale)
 		}
+	}
+}
+
+func TestParseConfigScaleFractional(t *testing.T) {
+	// A fractional scale is accepted (sub-ms resolution); the value is stored verbatim
+	// as a float so the result bar can bucket sub-millisecond RTTs.
+	cfg, err := ParseConfig(strings.NewReader("scale 0.5\nhost 1.2.3.4\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Scale != 0.5 {
+		t.Errorf("Scale = %g, want 0.5", cfg.Scale)
 	}
 }
 

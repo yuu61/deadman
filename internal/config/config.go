@@ -42,7 +42,7 @@ type TargetSpec struct {
 type Config struct {
 	Targets   []TargetSpec
 	Columns   map[string]bool // column key (upper-case) -> shown.
-	Scale     int             // RTT-bar ms-per-step from a "scale" directive; 0 = unset.
+	Scale     float64         // RTT-bar ms-per-step (or log-mode floor) from a "scale" directive; 0 = unset.
 	Precision string          // stat-precision label from a "precision" directive; "" = unset.
 	Cols      int             // newspaper-column count from a "split" directive; 0 = unset.
 }
@@ -73,8 +73,8 @@ var directives = map[string]func(cfg *Config, args []string){
 			return
 		}
 
-		n, err := strconv.Atoi(args[0])
-		if err == nil && n > 0 {
+		n, err := strconv.ParseFloat(args[0], 64)
+		if err == nil && ValidScale(n) {
 			cfg.Scale = n
 		}
 	},
@@ -93,6 +93,44 @@ var directives = map[string]func(cfg *Config, args []string){
 			cfg.Cols = n
 		}
 	},
+}
+
+// Scale bounds. A scale outside [MinScale, MaxScale] is unusable, not merely degenerate:
+// below MinScale every real RTT overflows the top band (the bar is uniformly "█") and the
+// shortest-decimal footer label balloons toward hundreds of characters (FormatFloat 'f'
+// of 1e-300 is ~300 digits), shoving the key legend off-screen; above MaxScale every bar
+// collapses to the floor. MinScale (0.1 µs) is far finer and MaxScale (1000 s) far coarser
+// than any real network bar, so the usable window stays generous while nonsense is rejected.
+// Exported so the CLI's rejection warning (cmd/deadman) formats the bounds from these
+// constants instead of carrying a prose copy that drifts when the window changes.
+const (
+	MinScale = 1e-4
+	MaxScale = 1e6
+)
+
+// ValidScale reports whether v is a usable RTT-bar scale: within [MinScale, MaxScale],
+// which also excludes NaN, ±Inf, zero and negatives. It is the single predicate shared by
+// the "scale" directive, the CLI -s resolver (cmd/deadman) and the TUI's startup
+// normalization, so the accept/reject boundary cannot drift between them.
+func ValidScale(v float64) bool {
+	return v >= MinScale && v <= MaxScale
+}
+
+// DefaultScale is the RTT-bar scale used when neither the CLI -s flag nor a "scale"
+// directive supplies a valid value. It sits beside ValidScale so the CLI resolver
+// (cmd/deadman) and the TUI's startup normalization share one default rather than each
+// hardcoding it — the same single-source rationale as ValidScale.
+const DefaultScale = 10.0
+
+// ScaleOrDefault returns v when it is a usable scale and DefaultScale otherwise, so the
+// "invalid → default" normalization lives in one place rather than being repeated by the
+// CLI resolver (resolveScale) and the TUI's New.
+func ScaleOrDefault(v float64) float64 {
+	if ValidScale(v) {
+		return v
+	}
+
+	return DefaultScale
 }
 
 var reSeparator = regexp.MustCompile(`^-+$`)
