@@ -22,36 +22,36 @@ import (
 // describe); a plain `go install`/`go build` leaves it at "dev".
 var version = "dev"
 
-// resolveScale picks the effective RTT-bar scale and, when an explicit -s value was
-// rejected as unusable, an operator-facing warning ("" otherwise): an explicit CLI -s
-// wins, else a config "scale" directive, else config.DefaultScale. 0 means "unset" for
-// both inputs (the -s flag defaults to 0, and a missing or invalid "scale" directive
-// leaves cfg.Scale at 0), so passing -s is never indistinguishable from its own default
-// and a config scale can take effect.
+// resolveScale picks the effective RTT-bar scale: an explicit, usable CLI -s wins, else a
+// config "scale" directive, else config.DefaultScale. 0 means "unset" for both inputs (the
+// -s flag defaults to 0, and a missing or invalid "scale" directive leaves cfg.Scale at 0),
+// so a config scale can take effect when -s is absent.
 //
-// Both inputs go through the same config.ValidScale predicate the "scale" directive
-// uses, so a non-finite or out-of-range value (e.g. -s Inf, which flag.Float64 accepts)
-// is rejected rather than flattening every bar; the rejection is not fatal — the value
-// is dropped and the probe runs. Scale and warning are computed in one place so the
-// message always names what is actually in effect — a valid config "scale" or the
-// default — and cannot drift from the accept/reject decision.
-func resolveScale(cli, cfg float64) (float64, string) {
+// Both inputs go through the same config.ValidScale predicate the "scale" directive uses,
+// so a non-finite or out-of-range value (e.g. -s Inf, which flag.Float64 accepts) is
+// dropped rather than flattening every bar. The rejection is not fatal and is surfaced as
+// a startup warning by parseArgs (which alone can tell an explicit -s 0 from an unset one).
+func resolveScale(cli, cfg float64) float64 {
 	if config.ValidScale(cli) {
-		return cli, ""
+		return cli
 	}
 
-	scale := config.ScaleOrDefault(cfg)
+	return config.ScaleOrDefault(cfg)
+}
 
-	if cli == 0 { // unset -s: nothing to surface.
-		return scale, ""
-	}
-
-	return scale, fmt.Sprintf(
-		"-s %g ignored: not a usable RTT-bar scale (%s..%s ms); using %gms instead",
+// scaleWarning builds the operator-facing warning for an explicitly-passed but unusable -s
+// value (0, negative, inf, nan, or out of range). It names the rejected value and the
+// usable window — formatted from config's bounds so the prose can't drift from the
+// predicate — but deliberately NOT the effective scale: the warning is rendered
+// persistently in the header while the live scale can still change (↑/↓), so embedding
+// "using Nms" would go stale. The footer's "RTT Scale" line always shows the value in
+// effect, so the operator can read the real scale there.
+func scaleWarning(cli float64) string {
+	return fmt.Sprintf(
+		"-s %g ignored: not a usable RTT-bar scale (%s..%s ms); using the configured or default scale",
 		cli,
 		strconv.FormatFloat(config.MinScale, 'f', -1, 64),
 		strconv.FormatFloat(config.MaxScale, 'f', -1, 64),
-		scale,
 	)
 }
 
@@ -107,14 +107,39 @@ func parseArgs(args []string) (tui.Options, error) {
 		)
 	}
 
-	return tui.Options{
+	opts := tui.Options{
 		Async:      *async,
 		Blink:      *blink,
 		Scale:      *scale,
 		LogDir:     *logdir,
 		Cols:       *cols,
 		ConfigPath: positional[0],
-	}, nil
+	}
+
+	// Surface an explicitly-passed but unusable -s as a startup warning. The value is still
+	// dropped and the configured/default scale is used (see resolveScale); this only makes
+	// the silently-ignored input visible.
+	if scaleFlagSet(fs) && !config.ValidScale(*scale) {
+		opts.Warnings = append(opts.Warnings, scaleWarning(*scale))
+	}
+
+	return opts, nil
+}
+
+// scaleFlagSet reports whether -s or --scale was actually given on the command line. It
+// distinguishes an explicit `-s 0` (a rejected value worth warning about) from an unset -s
+// — the *scale == 0 sentinel cannot, since both leave it at the flag's 0 default — by
+// asking the flag set which flags were set rather than inspecting the parsed value.
+func scaleFlagSet(fs *flag.FlagSet) bool {
+	set := false
+
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "s" || f.Name == "scale" {
+			set = true
+		}
+	})
+
+	return set
 }
 
 // resolveCols picks the newspaper-column count: an explicit CLI -c/--split wins,
@@ -157,16 +182,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	scale, warn := resolveScale(opts.Scale, cfg.Scale)
+	// The invalid-scale warning (if any) was already queued by parseArgs, which alone can
+	// tell an explicit -s from its default; here we only resolve the effective value.
 	opts.Columns = cfg.Columns
-	opts.Scale = scale
+	opts.Scale = resolveScale(opts.Scale, cfg.Scale)
 	opts.Precision = cfg.Precision
 	opts.Cols = resolveCols(opts.Cols, cfg.Cols)
 	opts.Version = version
-
-	if warn != "" {
-		opts.Warnings = append(opts.Warnings, warn)
-	}
 
 	if opts.LogDir != "" {
 		opts.LogWriter = monitor.NewLogWriter(opts.LogDir)
