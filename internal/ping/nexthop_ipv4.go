@@ -71,8 +71,7 @@ func (echoIPv4) build(src, dst net.IP, id, seq int, token []byte) ([]byte, error
 		return nil, err
 	}
 
-	// h.Checksum was 0, so the checksum field is 0; compute over the header and
-	// write the result back into it.
+	// h.Checksum was 0, so compute over the zeroed-checksum header and write it back.
 	binary.BigEndian.PutUint16(header[ipv4ChecksumOff:], ipChecksum(header))
 
 	return append(header, payload...), nil

@@ -39,7 +39,7 @@ func (m Model) View() string {
 	// probe arrow (arrowFor reads m.arrowIdx / m.inflight by absolute index) stays
 	// correct when scrolled.
 	if vp.cols <= 1 {
-		b.WriteString(m.headerLine()) // column headers.
+		b.WriteString(m.headerLine())
 		b.WriteByte('\n')
 
 		for i := vp.top; i < vp.top+vp.count && i < len(m.rows); i++ {

@@ -163,7 +163,7 @@ func (p *icmpPinger) resolve(ctx context.Context) (net.IP, int, error) {
 
 	netw := "ip"
 	if p.network != "" {
-		netw = p.network // "ip4"/"ip6".
+		netw = p.network
 	}
 
 	ips, err := net.DefaultResolver.LookupIP(ctx, netw, p.addr)
