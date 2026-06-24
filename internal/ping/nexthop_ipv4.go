@@ -1,7 +1,6 @@
 package ping
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"net"
@@ -106,6 +105,9 @@ type ipv4Waiter struct {
 
 func (w *ipv4Waiter) close() error { return w.conn.Close() }
 
+// wait is a deliberate parallel mirror of ipv6Waiter.wait; keep the two in sync. They
+// differ only in the per-family PacketConn type (whose ReadFrom yields a different
+// control message) and the matcher called. The reply-match body itself is shared (matchEcho).
 func (w *ipv4Waiter) wait(
 	peer net.IP,
 	id, seq int,
@@ -136,9 +138,8 @@ func (w *ipv4Waiter) wait(
 }
 
 // matchEchoReply reports whether a received datagram is the echo reply for our
-// probe (id, seq, and the echoed token from peer), and its TTL. The token guards
-// against accepting another process's reply: a raw ICMP socket also delivers ICMP
-// addressed to other listeners, whose id/seq can collide with ours.
+// probe (id, seq, and the echoed token from peer), and its TTL. It extracts the TTL
+// from the IPv4 control message and defers the family-agnostic checks to matchEcho.
 func matchEchoReply(
 	b []byte,
 	cm *netipv4.ControlMessage,
@@ -147,26 +148,12 @@ func matchEchoReply(
 	id, seq int,
 	token []byte,
 ) (int, bool) {
-	if !addrIP(src).Equal(peer) {
-		return -1, false
-	}
-
-	msg, err := icmp.ParseMessage(ianaProtocolICMP, b)
-	if err != nil || msg.Type != netipv4.ICMPTypeEchoReply {
-		return -1, false
-	}
-
-	echo, ok := msg.Body.(*icmp.Echo)
-	if !ok || echo.ID != id || echo.Seq != seq || !bytes.Equal(echo.Data, token) {
-		return -1, false
-	}
-
 	ttl := -1
 	if cm != nil {
 		ttl = cm.TTL
 	}
 
-	return ttl, true
+	return matchEcho(b, src, peer, id, seq, token, echoKindV4, ttl)
 }
 
 func isTimeout(err error) bool {

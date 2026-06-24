@@ -58,7 +58,7 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 
 	err := pinger.RunWithContext(ctx)
 	if err != nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	st := pinger.Statistics()
@@ -68,13 +68,8 @@ func (p *icmpPinger) Send(ctx context.Context) Result {
 			ttl = int(st.TTLs[0])
 		}
 
-		return Result{
-			Success: true,
-			Code:    Success,
-			RTT:     float64(st.AvgRtt.Microseconds()) / usPerMs,
-			TTL:     ttl,
-		}
+		return success(float64(st.AvgRtt.Microseconds())/usPerMs, ttl)
 	}
 
-	return Result{Code: Failed, TTL: -1}
+	return failedResult
 }

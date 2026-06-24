@@ -32,6 +32,57 @@ func drive(t *testing.T, m Model, msgs ...tea.Msg) (Model, string) {
 	return m, m.View()
 }
 
+// newModel builds a model from specs+opts, failing the test if New errors. It is the
+// unsized sibling of sizedModel (which also feeds a WindowSizeMsg).
+func newModel(t *testing.T, specs []config.TargetSpec, opts Options) Model {
+	t.Helper()
+
+	m, err := New(specs, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return m
+}
+
+// okResult builds a successful pingResultMsg for row 0 of m (current generation).
+func okResult(m Model, rtt float64) pingResultMsg {
+	return pingResultMsg{
+		idx:    0,
+		target: m.rows[0].Target,
+		res:    ping.Result{Success: true, Code: ping.Success, RTT: rtt},
+	}
+}
+
+// fillWideCounts fills every target's history with full successes and forces 6-digit
+// Snt/Loss, so the stat columns outgrow their 5-wide header and the layout must shrink
+// the result bar.
+func fillWideCounts(m Model) {
+	for _, r := range m.rows {
+		if r.Target == nil {
+			continue
+		}
+
+		for range 300 {
+			r.Target.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 5})
+		}
+
+		r.Target.Snt = 123456
+		r.Target.Loss = 654321
+	}
+}
+
+// assertNoLineExceedsWidth fails if any rendered line is wider than width.
+func assertNoLineExceedsWidth(t *testing.T, out string, width int) {
+	t.Helper()
+
+	for ln := range strings.SplitSeq(out, "\n") {
+		if w := lipgloss.Width(ln); w > width {
+			t.Errorf("rendered line exceeds terminal width: %d > %d\n%q", w, width, ln)
+		}
+	}
+}
+
 func TestViewRendersTargetsAndSeparator(t *testing.T) {
 	specs := []config.TargetSpec{
 		{Name: "host1", Addr: "1.2.3.4", Relay: map[string]string{}},
@@ -39,20 +90,13 @@ func TestViewRendersTargetsAndSeparator(t *testing.T) {
 		{Name: "host2", Addr: "5.6.7.8", Relay: map[string]string{}},
 	}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	_, out := drive(
 		t,
 		m,
 		tea.WindowSizeMsg{Width: 120, Height: 40},
-		pingResultMsg{
-			idx:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
-		},
+		okResult(m, 5),
 	)
 
 	for _, want := range []string{
@@ -77,10 +121,7 @@ func TestViaColumnAndToggle(t *testing.T) {
 		{Name: "cf", Addr: "1.1.1.1", Relay: map[string]string{"nexthop": "10.98.38.9"}},
 	}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	// VIA column shown by default, labeling the probing method + its differentiator.
@@ -110,10 +151,7 @@ func TestColumnsConfigHidesViaAtStart(t *testing.T) {
 		{Name: "cf", Addr: "1.1.1.1", Relay: map[string]string{"nexthop": "10.98.38.9"}},
 	}
 
-	m, err := New(specs, Options{Scale: 10, Columns: map[string]bool{"VIA": false}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10, Columns: map[string]bool{"VIA": false}})
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if strings.Contains(out, "VIA") || strings.Contains(out, "nexthop 10.98.38.9") {
@@ -129,10 +167,7 @@ func TestHostAddrColumnToggle(t *testing.T) {
 		{Name: "alpha", Addr: "203.0.113.7", Relay: map[string]string{}},
 	}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	for _, want := range []string{"HOSTNAME", "ADDRESS", "alpha", "203.0.113.7"} {
@@ -177,10 +212,7 @@ func TestColumnsConfigHidesHostAddrAtStart(t *testing.T) {
 		{Name: "beta", Addr: "198.51.100.9", Relay: map[string]string{}},
 	}
 
-	m, err := New(specs, Options{Scale: 10, Columns: map[string]bool{"ADDRESS": false}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10, Columns: map[string]bool{"ADDRESS": false}})
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if strings.Contains(out, "ADDRESS") || strings.Contains(out, "198.51.100.9") {
@@ -206,10 +238,7 @@ func TestStructuralGatingMatchesRowFixedWidth(t *testing.T) {
 		},
 	}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 40})
 
@@ -242,10 +271,7 @@ func TestParseWarningShown(t *testing.T) {
 		Dropped: []string{"MGMT", "1.1.1.1"},
 	}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	for _, want := range []string{"ignored stray tokens", "MGMT 1.1.1.1"} {
@@ -265,10 +291,7 @@ func TestSourceUnsupportedWarningShown(t *testing.T) {
 		Relay:  map[string]string{"via": "snmp", "relay": "h", "community": "c"},
 	}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
 	for _, want := range []string{"source=", "ignored in this mode", "quic"} {
@@ -286,10 +309,7 @@ func TestUnterminatedQuoteWarningShown(t *testing.T) {
 		UnterminatedQuote: true,
 	}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if !strings.Contains(out, "unterminated quote") {
@@ -300,20 +320,13 @@ func TestUnterminatedQuoteWarningShown(t *testing.T) {
 func TestMinMaxToggleHidesColumns(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "host1", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	m, out := drive(
 		t,
 		m,
 		tea.WindowSizeMsg{Width: 120, Height: 40},
-		pingResultMsg{
-			idx:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
-		},
+		okResult(m, 5),
 	)
 	// MIN/MAX shown by default.
 	for _, want := range []string{"MIN", "MAX", "JIT", "FAIL"} {
@@ -347,20 +360,17 @@ func TestMinMaxToggleHidesColumns(t *testing.T) {
 func TestColumnsConfigHidesAtStart(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "host1", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10, Columns: map[string]bool{"MIN": false, "MAX": false}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(
+		t,
+		specs,
+		Options{Scale: 10, Columns: map[string]bool{"MIN": false, "MAX": false}},
+	)
 
 	_, out := drive(
 		t,
 		m,
 		tea.WindowSizeMsg{Width: 120, Height: 40},
-		pingResultMsg{
-			idx:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
-		},
+		okResult(m, 5),
 	)
 	// Config hides MIN/MAX from the very first render (no key needed).
 	if strings.Contains(out, "MIN") || strings.Contains(out, "MAX") {
@@ -378,10 +388,7 @@ func TestColumnsConfigHidesAtStart(t *testing.T) {
 // clamp its output to the height and keep the title (line 0) on screen rather than
 // let Bubble Tea's top-drop eat it.
 func TestViewClampsTinyTerminal(t *testing.T) {
-	m, err := New(manySpecs(5), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(5), Options{Scale: 10})
 
 	for _, height := range []int{1, 2, 3, 4} {
 		_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: height})
@@ -397,13 +404,11 @@ func TestViewClampsTinyTerminal(t *testing.T) {
 }
 
 func TestViewEmptyBeforeSize(t *testing.T) {
-	m, err := New(
+	m := newModel(
+		t,
 		[]config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}},
 		Options{Scale: 10},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	if out := m.View(); out != "" {
 		t.Errorf("expected empty view before WindowSizeMsg, got %q", out)
@@ -413,20 +418,13 @@ func TestViewEmptyBeforeSize(t *testing.T) {
 func TestRefreshKeyResetsStats(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	m, _ = drive(
 		t,
 		m,
 		tea.WindowSizeMsg{Width: 100, Height: 20},
-		pingResultMsg{
-			idx:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
-		},
+		okResult(m, 5),
 	)
 	if m.rows[0].Target.Snt != 1 {
 		t.Fatalf("Snt = %d, want 1", m.rows[0].Target.Snt)
@@ -473,13 +471,11 @@ func TestStaleMessagesDoNotPanic(t *testing.T) {
 func TestGenerationGatingIgnoresStaleResults(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(
+	m := newModel(
+		t,
 		specs,
 		Options{Scale: 10},
 	) // ConfigPath empty: reload bumps gen without changing rows.
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 100, Height: 20})
 	oldGen := m.gen
@@ -521,20 +517,13 @@ func TestGenerationGatingIgnoresStaleResults(t *testing.T) {
 func TestPrecisionCycle(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	m, out := drive(
 		t,
 		m,
 		tea.WindowSizeMsg{Width: 120, Height: 40},
-		pingResultMsg{
-			idx:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
-		},
+		okResult(m, 5),
 	)
 	// Default: integer ms. (The footer label is the unambiguous discriminator; the
 	// rendered numbers nest as substrings — " 5.0" ⊂ " 5.00" ⊂ " 5.000" — so each
@@ -571,10 +560,7 @@ func TestPrecisionCycle(t *testing.T) {
 func TestScaleStepKeys(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if !strings.Contains(out, "RTT Scale 10ms") {
@@ -651,21 +637,14 @@ func TestScaleLadderBounds(t *testing.T) {
 func TestScaleRebucketsExistingBar(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	// One probe at RTT 15 renders ▂ at scale 10.
 	m, out := drive(
 		t,
 		m,
 		tea.WindowSizeMsg{Width: 120, Height: 40},
-		pingResultMsg{
-			idx:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 15},
-		},
+		okResult(m, 15),
 	)
 	if !strings.Contains(out, "▂") {
 		t.Errorf("at scale 10, RTT 15 should render ▂\n---\n%s", out)
@@ -684,10 +663,7 @@ func TestScaleRebucketsExistingBar(t *testing.T) {
 func TestLogModeKey(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	m, out := drive(t, m, tea.WindowSizeMsg{Width: 200, Height: 40})
 	if !strings.Contains(out, "RTT Scale 10ms") {
@@ -719,18 +695,11 @@ func TestLogModeKey(t *testing.T) {
 func TestLogModeRebucketsBar(t *testing.T) {
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	m, out := drive(t, m,
 		tea.WindowSizeMsg{Width: 200, Height: 40},
-		pingResultMsg{
-			idx:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 50},
-		},
+		okResult(m, 50),
 	)
 	if !strings.Contains(out, "▆") {
 		t.Errorf("RTT 50 at linear scale 10 should render ▆\n---\n%s", out)
@@ -748,20 +717,13 @@ func TestPrecisionFromConfigAtStartup(t *testing.T) {
 
 	// A config "precision ms.1" reaches the model via Options.Precision and must take
 	// effect at the first paint, before any key press.
-	m, err := New(specs, Options{Scale: 10, Precision: "ms.1"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10, Precision: "ms.1"})
 
 	_, out := drive(
 		t,
 		m,
 		tea.WindowSizeMsg{Width: 120, Height: 40},
-		pingResultMsg{
-			idx:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
-		},
+		okResult(m, 5),
 	)
 	if !strings.Contains(out, "(p)recision[ms.1]") || !strings.Contains(out, "5.0") {
 		t.Errorf("config precision ms.1 should render one decimal at startup\n---\n%s", out)
@@ -779,10 +741,7 @@ func TestReloadPreservesScaleAndPrecision(t *testing.T) {
 
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10, ConfigPath: path})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10, ConfigPath: path})
 
 	// Live: step the scale to 5, cycle precision to ms.1, and switch to log mode.
 	m, _ = drive(t, m,
@@ -835,10 +794,7 @@ func lineWith(out, sub string) string {
 // A list that fits the terminal renders every row and shows no scroll indicator,
 // so small configs look exactly as before the viewport existed.
 func TestViewportSmallFitsNoScroll(t *testing.T) {
-	m, err := New(manySpecs(3), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(3), Options{Scale: 10})
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 
@@ -856,10 +812,7 @@ func TestViewportSmallFitsNoScroll(t *testing.T) {
 // A list taller than the terminal renders only the visible window plus a one-line
 // position indicator; rows below the fold are absent.
 func TestViewportWindowAndStatus(t *testing.T) {
-	m, err := New(manySpecs(50), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(50), Options{Scale: 10})
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
 
@@ -885,10 +838,7 @@ func TestViewportWindowAndStatus(t *testing.T) {
 
 // g/G jump to the ends, j past the bottom clamps, and PgUp walks back up.
 func TestScrollKeysMoveAndClamp(t *testing.T) {
-	m, err := New(manySpecs(50), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(50), Options{Scale: 10})
 
 	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
 
@@ -924,10 +874,7 @@ func TestScrollKeysMoveAndClamp(t *testing.T) {
 // Growing the terminal so the list fits drops the scroll state back to a full,
 // unscrolled view; shrinking re-engages the viewport from the top.
 func TestViewportResizeReclamps(t *testing.T) {
-	m, err := New(manySpecs(50), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(50), Options{Scale: 10})
 
 	// Scroll to the bottom while overflowing.
 	m, _ = drive(t, m,
@@ -975,10 +922,7 @@ func TestReloadShrinkClampsScroll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m, err := New(manySpecs(50), Options{Scale: 10, ConfigPath: path})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(50), Options{Scale: 10, ConfigPath: path})
 
 	// Overflow and scroll to the bottom.
 	m, _ = drive(t, m,
@@ -1012,10 +956,7 @@ func TestReloadShrinkClampsScroll(t *testing.T) {
 // When scrolled, targetLine must receive the absolute row index so the probe
 // arrow lands on the right row (arrowFor reads m.arrowIdx by absolute index).
 func TestArrowUsesAbsoluteIndexWhenScrolled(t *testing.T) {
-	m, err := New(manySpecs(50), Options{Scale: 10}) // sync mode: a single arrow.
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(50), Options{Scale: 10}) // sync mode: a single arrow.
 
 	// Mark row 40 as the one being probed, then scroll so it is inside the window.
 	_, out := drive(t, m,
@@ -1036,10 +977,7 @@ func TestArrowUsesAbsoluteIndexWhenScrolled(t *testing.T) {
 // With a width but no height yet (height 0), the whole list renders without a
 // viewport and without panicking.
 func TestViewportHeightZeroShowsAll(t *testing.T) {
-	m, err := New(manySpecs(3), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(3), Options{Scale: 10})
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 0})
 
@@ -1074,10 +1012,7 @@ func indexOfLine(out, sub string) int {
 // ties the bare "5" constant to the real render (no warnings -> 5, +1 per warning).
 func TestFixedHeaderLinesMatchesRender(t *testing.T) {
 	// No warnings: title, host info, keys, blank, header = 5 lines before row 0.
-	clean, err := New(manySpecs(3), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	clean := newModel(t, manySpecs(3), Options{Scale: 10})
 
 	clean, out := drive(t, clean, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if got, want := indexOfLine(out, "h000"), clean.fixedHeaderLines(); got != want {
@@ -1089,15 +1024,12 @@ func TestFixedHeaderLinesMatchesRender(t *testing.T) {
 	}
 
 	// A startup warning adds exactly one fixed line above the rows.
-	warned, err := New([]config.TargetSpec{{
+	warned := newModel(t, []config.TargetSpec{{
 		Name:    "Cloudflare",
 		Addr:    "via",
 		Relay:   map[string]string{"nexthop": "10.98.38.9"},
 		Dropped: []string{"MGMT", "1.1.1.1"},
 	}}, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	warned, out = drive(t, warned, tea.WindowSizeMsg{Width: 120, Height: 40})
 	// Match the VIA column (unique to the data row; the warning line also names the host).
@@ -1118,10 +1050,7 @@ func TestFixedHeaderLinesMatchesRender(t *testing.T) {
 // PgDown pages forward and the Home/End aliases jump to the ends, mirroring
 // PgUp/g/G. Guards the bubbletea key-string mapping for the documented keys.
 func TestScrollPageDownAndAliases(t *testing.T) {
-	m, err := New(manySpecs(50), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(50), Options{Scale: 10})
 
 	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 20})
 
@@ -1149,10 +1078,7 @@ func TestScrollPageDownAndAliases(t *testing.T) {
 // render zero rows rather than forcing one and emitting height+1 lines, which would
 // push the title off the top via Bubble Tea's top-drop.
 func TestViewportNoRoomForRows(t *testing.T) {
-	m, err := New(manySpecs(50), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(50), Options{Scale: 10})
 
 	// Size once to compute the fixed-header height (5 with no warnings), then shrink
 	// the terminal to exactly that.
@@ -1186,10 +1112,7 @@ func TestViewportNoRoomForRows(t *testing.T) {
 // count a valid physical-overflow check at any width, narrow or wide. Height 5
 // is the boundary == fixedHeaderLines (no warnings); the rest leave room for rows.
 func TestViewFitsTerminalHeight(t *testing.T) {
-	m, err := New(manySpecs(50), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(50), Options{Scale: 10})
 
 	for _, width := range []int{80, 120, 200} {
 		for _, height := range []int{5, 10, 12, 20, 25, 100} {
@@ -1221,10 +1144,11 @@ func TestOptionsWarningsSurface(t *testing.T) {
 
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
 
-	m, err := New(specs, Options{Scale: 10, ConfigPath: path, Warnings: []string{"cli warn xyz"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(
+		t,
+		specs,
+		Options{Scale: 10, ConfigPath: path, Warnings: []string{"cli warn xyz"}},
+	)
 
 	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if !strings.Contains(out, "! cli warn xyz") {

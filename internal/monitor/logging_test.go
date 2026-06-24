@@ -1,11 +1,7 @@
 package monitor
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/yuu61/deadman/internal/ping"
 )
@@ -15,7 +11,7 @@ import (
 func TestAppendLogDistinguishesUpDown(t *testing.T) {
 	dir := t.TempDir()
 	tg := &Target{Name: "host"}
-	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	now := testTime
 
 	up := ping.Result{Success: true, Code: ping.Success, RTT: 5}
 	tg.Consume(up)
@@ -33,20 +29,14 @@ func TestAppendLogDistinguishesUpDown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// #nosec G304 -- test reads back the file it just wrote in t.TempDir().
-	b, err := os.ReadFile(filepath.Join(dir, "host"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	lines := readLogLines(t, dir, "host")
 	if len(lines) != 2 {
-		t.Fatalf("got %d log lines, want 2:\n%s", len(lines), b)
+		t.Fatalf("got %d log lines, want 2", len(lines))
 	}
 
 	// Fields: <date> <time> <status> <rtt> <avg> <snt>.
-	up0 := strings.Fields(lines[0])
-	down1 := strings.Fields(lines[1])
+	up0 := lines[0]
+	down1 := lines[1]
 
 	if len(up0) != 6 || up0[2] != "up" || up0[3] != "5.000" {
 		t.Errorf("up line fields = %v, want status=up rtt=5.000", up0)

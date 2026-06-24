@@ -234,10 +234,7 @@ func TestICMPPrivilegeWarningNexthopRawOnly(t *testing.T) {
 func TestICMPPrivilegeWarningRenders(t *testing.T) {
 	pinProbes(t, true, false)
 
-	m, err := New([]config.TargetSpec{{Name: "a", Addr: "8.8.8.8"}}, Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, []config.TargetSpec{{Name: "a", Addr: "8.8.8.8"}}, Options{Scale: 10})
 
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if !strings.Contains(out, "native ICMP unavailable") {

@@ -9,8 +9,9 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/yuu61/deadman/internal/config"
 )
 
 // routerOSPinger pings via the RouterOS REST API (POST /rest/ping). It uses only
@@ -63,11 +64,9 @@ func newRouterOSPinger(s Spec) (Pinger, error) {
 	// — the bug the old "anything but the literal true" rule had (verify=yes -> insecure).
 	insecure := false
 
-	switch strings.ToLower(s.Relay["verify"]) {
-	case "off", "false", "no", "0":
-		insecure = true
-	default:
-		// "", "on", "true", "yes", "1", or any unrecognized value: stay secure.
+	v, err := config.ParseBoolToken(s.Relay["verify"])
+	if err == nil {
+		insecure = !v
 	}
 
 	client := &http.Client{
@@ -105,12 +104,12 @@ func (p *routerOSPinger) Send(ctx context.Context) Result {
 
 	body, err := json.Marshal(map[string]any{"address": p.addr, "count": 1})
 	if err != nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.url, bytes.NewReader(body))
 	if err != nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	req.SetBasicAuth(p.user, p.pass)
@@ -118,19 +117,19 @@ func (p *routerOSPinger) Send(ctx context.Context) Result {
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	var arr []routerOSResp
 
 	err = json.NewDecoder(http.MaxBytesReader(nil, resp.Body, maxRouterOSBody)).Decode(&arr)
 	if err != nil || len(arr) == 0 {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	r := arr[0]
@@ -138,11 +137,11 @@ func (p *routerOSPinger) Send(ctx context.Context) Result {
 	// than reporting the host up on a malformed response.
 	pl, perr := strconv.Atoi(r.PacketLoss)
 	if perr != nil || pl > 0 {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	rtt, _ := ParseRouterOSMinRTT(r.MinRTT)
 	ttl, _ := strconv.Atoi(r.TTL)
 
-	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
+	return success(rtt, ttl)
 }

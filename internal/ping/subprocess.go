@@ -95,7 +95,7 @@ func (p *subprocessPinger) Send(ctx context.Context) Result {
 	err := cmd.Run()
 	if errors.Is(err, exec.ErrNotFound) {
 		// e.g. ssh/ip not installed on this OS.
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	if p.mode == modeSSH {
@@ -103,7 +103,7 @@ func (p *subprocessPinger) Send(ctx context.Context) Result {
 			return res
 		}
 	} else if ctx.Err() == context.DeadlineExceeded {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	return ParsePingOutput(stdout.String())

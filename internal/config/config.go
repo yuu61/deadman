@@ -332,12 +332,12 @@ func applyColumn(cols map[string]bool, kv string) {
 		return
 	}
 
-	switch strings.ToLower(val) {
-	case "on", "true", "yes", "1":
-		cols[strings.ToUpper(key)] = true
-	case "off", "false", "no", "0":
-		cols[strings.ToUpper(key)] = false
-	default:
-		// unknown bool spelling: ignored.
+	// Unknown bool spellings are ignored (no map entry), matching applyAttr's lenient
+	// handling; ParseBoolToken returns ErrUnknownBool for those.
+	v, err := ParseBoolToken(val)
+	if err != nil {
+		return
 	}
+
+	cols[strings.ToUpper(key)] = v
 }

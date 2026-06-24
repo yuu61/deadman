@@ -7,10 +7,11 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/quic-go/quic-go"
+
+	"github.com/yuu61/deadman/internal/config"
 )
 
 const quicTimeout = 5 * time.Second
@@ -69,11 +70,9 @@ func newQUICPinger(s Spec) (Pinger, error) {
 	// or unrecognized value stays insecure.
 	insecure := true
 
-	switch strings.ToLower(s.Relay["verify"]) {
-	case "on", "true", "yes", "1":
-		insecure = false
-	default:
-		// "", off/false/no/0, or any unrecognized value: stay insecure.
+	v, err := config.ParseBoolToken(s.Relay["verify"])
+	if err == nil {
+		insecure = !v
 	}
 
 	// SNI: an explicit sni= wins; otherwise the hostname Addr; otherwise "" for an IP
@@ -115,7 +114,7 @@ func (p *quicPinger) Send(ctx context.Context) Result {
 	// ctx timeout, so a hung resolver cannot overrun the probe.
 	addr, err := p.resolveAddr(ctx)
 	if err != nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	// DialAddr blocks until the 1-RTT handshake completes; ctx cancellation aborts the
@@ -124,7 +123,7 @@ func (p *quicPinger) Send(ctx context.Context) Result {
 
 	conn, err := quic.DialAddr(ctx, addr, p.tlsConfig, nil)
 	if err != nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	// Capture the RTT before closing so the close path never contaminates it.
@@ -134,7 +133,7 @@ func (p *quicPinger) Send(ctx context.Context) Result {
 	// or leak a socket and goroutines on every probe.
 	_ = conn.CloseWithError(0, "")
 
-	return Result{Success: true, Code: Success, RTT: rtt, TTL: -1}
+	return success(rtt, -1)
 }
 
 // resolveAddr returns the host:port to dial with the host already resolved to an IP, so

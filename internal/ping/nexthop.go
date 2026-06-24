@@ -163,7 +163,7 @@ func (p *nexthopPinger) Send(ctx context.Context) Result {
 	// cannot be force-routed and fails as X.
 	dst := resolveToFamily(ctx, p.addr, p.nexthopIP)
 	if dst == nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	return p.sendForced(ctx, familyFor(dst), dst)
@@ -173,14 +173,14 @@ func (p *nexthopPinger) Send(ctx context.Context) Result {
 func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.IP) Result {
 	r, err := p.resolve(dst) //nolint:contextcheck // local-only selection; no ctx to thread.
 	if err != nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	waiter, err := fam.listen(r.src)
 	if err != nil {
 		p.reset() // the source IP may be gone (interface recreated); re-select next round.
 
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 	defer func() { _ = waiter.close() }()
 
@@ -188,7 +188,7 @@ func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.
 
 	pkt, err := fam.build(r.src, dst, id, seq, token)
 	if err != nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	deadline := probeDeadline(ctx)
@@ -198,19 +198,19 @@ func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.
 	if err != nil {
 		p.reset() // the ifindex/MAC may be stale (interface or gateway changed); re-select.
 
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	ttl, ok, err := waiter.wait(dst, id, seq, token, deadline)
 	if err != nil || !ok {
 		p.invalidateMAC() // no reply: the gateway MAC may have changed; re-read the neighbor table next round.
 
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	rtt := float64(time.Since(start).Microseconds()) / usPerMs
 
-	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
+	return success(rtt, ttl)
 }
 
 // resolve returns where to send and as what, caching the result across rounds. dst

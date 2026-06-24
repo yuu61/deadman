@@ -102,56 +102,55 @@ func TestRouterOSVerifyBool(t *testing.T) {
 	}
 }
 
-func TestRouterOSSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"packet-loss":"0","min-rtt":"1ms500us","ttl":"58"}]`))
-	}))
-	defer srv.Close()
-
-	res := newTestRouterOS(srv.URL).Send(context.Background())
-	if !res.Success {
-		t.Fatalf("expected success, got %+v", res)
+func TestRouterOSSend(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        string // REST response body; written verbatim.
+		status      int    // HTTP status; 0 means 200 OK.
+		wantSuccess bool
+		wantRTT     float64 // checked only when wantSuccess.
+		wantTTL     int     // checked only when wantSuccess.
+	}{
+		{
+			name:        "success",
+			body:        `[{"packet-loss":"0","min-rtt":"1ms500us","ttl":"58"}]`,
+			wantSuccess: true,
+			wantRTT:     1.5,
+			wantTTL:     58,
+		},
+		{name: "packet loss", body: `[{"packet-loss":"1","min-rtt":"0us","ttl":"0"}]`},
+		{name: "http error", status: http.StatusInternalServerError},
+		{name: "empty array", body: `[]`},
 	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					if c.status != 0 {
+						w.WriteHeader(c.status)
+					}
 
-	if math.Abs(res.RTT-1.5) > 1e-9 {
-		t.Errorf("RTT = %v, want 1.5", res.RTT)
-	}
+					_, _ = w.Write([]byte(c.body))
+				}),
+			)
+			defer srv.Close()
 
-	if res.TTL != 58 {
-		t.Errorf("TTL = %d, want 58", res.TTL)
-	}
-}
+			res := newTestRouterOS(srv.URL).Send(context.Background())
+			if res.Success != c.wantSuccess {
+				t.Fatalf("Success = %v, want %v (%+v)", res.Success, c.wantSuccess, res)
+			}
 
-func TestRouterOSPacketLoss(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"packet-loss":"1","min-rtt":"0us","ttl":"0"}]`))
-	}))
-	defer srv.Close()
+			if !c.wantSuccess {
+				return
+			}
 
-	if res := newTestRouterOS(srv.URL).Send(context.Background()); res.Success {
-		t.Fatalf("expected failure on packet loss, got %+v", res)
-	}
-}
+			if math.Abs(res.RTT-c.wantRTT) > 1e-9 {
+				t.Errorf("RTT = %v, want %v", res.RTT, c.wantRTT)
+			}
 
-func TestRouterOSHTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	if res := newTestRouterOS(srv.URL).Send(context.Background()); res.Success {
-		t.Fatalf("expected failure on 500, got %+v", res)
-	}
-}
-
-func TestRouterOSEmptyArray(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[]`))
-	}))
-	defer srv.Close()
-
-	if res := newTestRouterOS(srv.URL).Send(context.Background()); res.Success {
-		t.Fatalf("expected failure on empty array, got %+v", res)
+			if res.TTL != c.wantTTL {
+				t.Errorf("TTL = %d, want %d", res.TTL, c.wantTTL)
+			}
+		})
 	}
 }

@@ -38,9 +38,6 @@ const (
 // errAddrFamily reports that an address is not of the family the probe pinned/needs.
 var errAddrFamily = errors.New("ping: address family mismatch")
 
-// failedResult is the canonical "no reply / could not probe" outcome.
-var failedResult = Result{Code: Failed, TTL: -1}
-
 // icmpPinger sends a native ICMP echo via a synchronous, kernel-timestamped probe.
 //
 // It replaces the portable pro-bing path (icmp_other.go) on Linux for one reason: RTT
@@ -516,7 +513,7 @@ func (pr icmpProbe) result(oob []byte, recvUser, tSend time.Time) Result {
 
 	rtt := float64(dur.Microseconds()) / usPerMs
 
-	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
+	return success(rtt, ttl)
 }
 
 // parseControl extracts the kernel RX timestamp (SCM_TIMESTAMPNS) and reply TTL from the
