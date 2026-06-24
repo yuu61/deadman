@@ -19,7 +19,11 @@ func TestLogWriterWritesQueuedLines(t *testing.T) {
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	w.Log("host", ping.Result{Success: true, Code: ping.Success, RTT: 5}, 5, 1, now)
 	w.Log("host", ping.Result{Code: ping.Failed}, 5, 2, now)
-	w.Close()
+
+	err := w.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// #nosec G304 -- test reads back the file it just wrote in t.TempDir().
 	b, err := os.ReadFile(filepath.Join(dir, "host"))
@@ -66,5 +70,30 @@ func TestLogWriterDoesNotBlockOnOverflow(t *testing.T) {
 		t.Fatal("Log blocked under overflow; want non-blocking drop")
 	}
 
-	w.Close()
+	err := w.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A write that keeps failing (here: an un-creatable log dir, since its parent is a
+// regular file) must not be silently swallowed — Close surfaces the first error so the
+// caller can report it after the TUI exits.
+func TestLogWriterCloseReportsWriteError(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "file")
+
+	err := os.WriteFile(parent, []byte("x"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// MkdirAll(parent/logs) fails because parent is a file, so every queued line errors.
+	w := NewLogWriter(filepath.Join(parent, "logs"))
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	w.Log("host", ping.Result{Success: true, Code: ping.Success, RTT: 5}, 5, 1, now)
+
+	err = w.Close()
+	if err == nil {
+		t.Fatal("Close() = nil, want the write error to surface")
+	}
 }

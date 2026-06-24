@@ -21,15 +21,6 @@ const (
 	statusDown = "down"
 )
 
-// AppendLog appends one probe line for target t. It snapshots the fields it logs and
-// delegates to AppendLogLine. Callers that must run the (blocking) disk write off the
-// Bubble Tea Update goroutine should snapshot t themselves on the Update goroutine and
-// call AppendLogLine directly — t must not be read from another goroutine, since only
-// Update may touch target stats.
-func AppendLog(dir string, t *Target, res ping.Result, now time.Time) error {
-	return AppendLogLine(dir, t.Name, res, t.Avg, t.Snt, now)
-}
-
 // AppendLogLine appends one line to <dir>/<name> in the format
 // "<timestamp> <status> <rtt> <avg> <snt>", built from already-snapshotted values so it
 // is safe to call from a command goroutine. status is "up"/"down" so a failed probe is

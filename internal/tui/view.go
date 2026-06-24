@@ -247,8 +247,9 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 	// logIdx is loop-invariant, so resolve the log base once rather than per glyph
 	// (this loop runs resultWidth times per row, every frame).
 	lnBase := m.logFactor().LnBase
-	for _, res := range t.Results(m.resW) {
-		ch := monitor.Glyph(res, m.scale, lnBase)
+
+	for i := range min(t.Len(), m.resW) {
+		ch := monitor.Glyph(t.At(i), m.scale, lnBase)
 		if monitor.IsFailGlyph(ch) {
 			g.WriteString(styleDown.Render(ch))
 		} else {

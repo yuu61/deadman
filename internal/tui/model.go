@@ -186,19 +186,20 @@ type reload struct {
 	warnings []string
 }
 
-// loadRows reparses the config file for a SIGHUP/manual reload. ok is false when
-// the file cannot be read or parsed (the current state is kept).
+// loadRows reparses the config file for a SIGHUP/manual reload. ok is false when the
+// file cannot be read or parsed; the current rows are kept and the returned reload
+// carries a "reload failed: ..." warning so the reason surfaces in the header.
 func loadRows(path string, existing []Row) (reload, bool) {
 	// #nosec G304 -- path is the operator-supplied config file, not remote input.
 	f, err := os.Open(path)
 	if err != nil {
-		return reload{}, false
+		return reload{warnings: []string{"reload failed: " + err.Error()}}, false
 	}
 	defer func() { _ = f.Close() }()
 
 	cfg, err := config.ParseConfig(f)
 	if err != nil {
-		return reload{}, false
+		return reload{warnings: []string{"reload failed: " + err.Error()}}, false
 	}
 
 	rows, buildWarns := buildRows(cfg.Targets, existing)
@@ -456,10 +457,14 @@ func scaleDown(cur float64) float64 {
 // unlike column visibility: scale has a CLI flag (-s) whose value a reload must not
 // silently drop, and the log factor and precision are live, key-driven view settings.
 func (m Model) handleReload() (tea.Model, tea.Cmd) {
-	if r, ok := loadRows(m.opts.ConfigPath, m.rows); ok {
+	r, ok := loadRows(m.opts.ConfigPath, m.rows)
+	// Always refresh warnings: on success these are the new config's startup/build
+	// warnings; on failure the single "reload failed: ..." note (the old rows are kept).
+	m.warnings = composeWarnings(m.opts.Warnings, r.warnings)
+
+	if ok {
 		m.rows = r.rows
 		m.visible = buildVisible(r.columns)
-		m.warnings = composeWarnings(m.opts.Warnings, r.warnings)
 		m = m.recalcWidths()
 		m = m.clampScroll() // a shrunk target set may leave scrollTop past the end.
 	}

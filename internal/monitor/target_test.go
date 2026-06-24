@@ -69,12 +69,38 @@ func TestConsume(t *testing.T) {
 		t.Errorf("Jit = %v, want 1.25", tg.Jit)
 	}
 	// History is newest-first: the last result was RTT 30, which renders ▄ at scale 10.
-	if got := tg.Results(1); len(got) != 1 || Glyph(got[0], 10, 0) != "▄" {
-		t.Errorf("Results(1) rendered at scale 10 = %v, want [▄]", got)
+	if got := tg.At(0); Glyph(got, 10, 0) != "▄" {
+		t.Errorf("At(0) rendered at scale 10 = %v, want ▄", got)
 	}
 
-	if len(tg.Results(10)) != 3 {
-		t.Errorf("history length = %d, want 3", len(tg.Results(10)))
+	if tg.Len() != 3 {
+		t.Errorf("history length = %d, want 3", tg.Len())
+	}
+}
+
+// TestHistoryRingWrap pins the bounded-ring contract: pushing more than historyCap
+// results caps Len at historyCap, keeps the newest historyCap newest-first via At, and
+// evicts the oldest. This guards the ring index math in Consume/At.
+func TestHistoryRingWrap(t *testing.T) {
+	tg := &Target{}
+
+	const extra = 5
+	for i := range historyCap + extra {
+		tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: float64(i)})
+	}
+
+	if tg.Len() != historyCap {
+		t.Fatalf("Len = %d, want %d", tg.Len(), historyCap)
+	}
+
+	// Newest first: At(0) is the last pushed; At(Len-1) is the oldest still retained
+	// (RTT extra, since the first `extra` results were evicted).
+	if got := tg.At(0).RTT; got != float64(historyCap+extra-1) {
+		t.Errorf("At(0).RTT = %v, want %v", got, float64(historyCap+extra-1))
+	}
+
+	if got := tg.At(historyCap - 1).RTT; got != float64(extra) {
+		t.Errorf("At(Len-1).RTT = %v, want %v", got, float64(extra))
 	}
 }
 
@@ -84,8 +110,8 @@ func TestRefresh(t *testing.T) {
 	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 25})
 	tg.Refresh()
 
-	if tg.Snt != 0 || tg.Loss != 0 || tg.State != Unknown || len(tg.Results(10)) != 0 {
-		t.Errorf("after Refresh: %+v history=%v", tg, tg.Results(10))
+	if tg.Snt != 0 || tg.Loss != 0 || tg.State != Unknown || tg.Len() != 0 {
+		t.Errorf("after Refresh: %+v histLen=%d", tg, tg.Len())
 	}
 	// The new running stats must reset too, or a refreshed target keeps stale
 	// min/max/jitter (the fields above do not cover them).
@@ -176,7 +202,7 @@ func TestResultsRescale(t *testing.T) {
 	tg := &Target{}
 	tg.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 15})
 
-	res := tg.Results(1)[0]
+	res := tg.At(0)
 	// RTT 15: at scale 10 it lands in the 2nd bucket (10..20 -> ▂); at scale 5 it is
 	// in the 4th (15 == 5*3, < 5*4 -> ▄).
 	if got := Glyph(res, 10, 0); got != "▂" {

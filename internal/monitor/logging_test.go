@@ -20,7 +20,7 @@ func TestAppendLogDistinguishesUpDown(t *testing.T) {
 	up := ping.Result{Success: true, Code: ping.Success, RTT: 5}
 	tg.Consume(up)
 
-	err := AppendLog(dir, tg, up, now)
+	err := AppendLogLine(dir, tg.Name, up, tg.Avg, tg.Snt, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestAppendLogDistinguishesUpDown(t *testing.T) {
 	down := ping.Result{Code: ping.Failed}
 	tg.Consume(down)
 
-	err = AppendLog(dir, tg, down, now)
+	err = AppendLogLine(dir, tg.Name, down, tg.Avg, tg.Snt, now)
 	if err != nil {
 		t.Fatal(err)
 	}

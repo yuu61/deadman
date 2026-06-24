@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"errors"
 	"time"
 
 	"github.com/yuu61/deadman/internal/ping"
@@ -15,6 +16,13 @@ const logQueueDepth = 256
 // store drains well within it; a stalled one would otherwise hang shutdown, so Close
 // gives up after this and lets the process exit.
 const closeDrainTimeout = 2 * time.Second
+
+// errLogDrainTimeout reports that Close gave up draining queued lines because the backing
+// store stalled past closeDrainTimeout, so some lines were lost. Close returns it instead
+// of any write error since a stalled write never returns one.
+var errLogDrainTimeout = errors.New(
+	"log writer: drain timed out on close; some queued lines were lost",
+)
 
 // logEntry is one already-snapshotted log line. It carries values, not a *Target, so the
 // writer goroutine never reads live target state (only Update may touch it).
@@ -36,6 +44,11 @@ type LogWriter struct {
 	dir  string
 	ch   chan logEntry
 	done chan struct{}
+
+	// firstErr holds the first AppendLogLine error seen by run(). It is written only on
+	// the run() goroutine and read only in Close after <-w.done (so run() has exited):
+	// that close→receive happens-before makes the unsynchronized field safe.
+	firstErr error
 }
 
 // NewLogWriter starts a LogWriter writing under dir.
@@ -64,15 +77,18 @@ func (w *LogWriter) Log(name string, res ping.Result, avg float64, snt int, now 
 
 // Close stops the writer, draining any buffered lines first so a clean shutdown
 // (q/Ctrl-C) does not silently lose queued log entries. It must be called only after the
-// last Log (no concurrent send on the closed channel). If the backing store is stalled,
-// it gives up after closeDrainTimeout rather than hang the process exit.
-func (w *LogWriter) Close() {
+// last Log (no concurrent send on the closed channel). It returns the first write error
+// seen, or errLogDrainTimeout if the backing store stalled past closeDrainTimeout (in
+// which case it gives up rather than hang the process exit).
+func (w *LogWriter) Close() error {
 	close(w.ch)
 
 	select {
 	case <-w.done:
+		return w.firstErr
 	case <-time.After(closeDrainTimeout):
 		// stalled store: stop waiting so shutdown isn't blocked; remaining lines are lost.
+		return errLogDrainTimeout
 	}
 }
 
@@ -80,6 +96,9 @@ func (w *LogWriter) run() {
 	defer close(w.done)
 
 	for e := range w.ch {
-		_ = AppendLogLine(w.dir, e.name, e.res, e.avg, e.snt, e.now)
+		err := AppendLogLine(w.dir, e.name, e.res, e.avg, e.snt, e.now)
+		if err != nil && w.firstErr == nil {
+			w.firstErr = err
+		}
 	}
 }

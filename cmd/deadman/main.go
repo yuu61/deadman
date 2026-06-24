@@ -214,7 +214,10 @@ func main() {
 	// Drain any queued log lines before exit. The TUI has stopped, so no Log call races
 	// this Close. os.Exit skips defers, so close explicitly before the error exit too.
 	if opts.LogWriter != nil {
-		opts.LogWriter.Close()
+		cerr := opts.LogWriter.Close()
+		if cerr != nil {
+			fmt.Fprintln(os.Stderr, "deadman: "+cerr.Error())
+		}
 	}
 
 	if err != nil {

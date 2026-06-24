@@ -58,8 +58,10 @@ type Target struct {
 	Snt      int     // number sent.
 	TTL      int     // last TTL (captured, not displayed).
 
-	history []ping.Result // raw probe results (newest first); rendered to glyphs at view time.
-	prevRTT float64       // previous successful RTT, for the jitter delta.
+	history  []ping.Result // ring buffer of raw probe results; len == historyCap once seeded. newest is at histNext-1.
+	histNext int           // ring index where the next result will be written.
+	histLen  int           // number of valid results retained, capped at historyCap.
+	prevRTT  float64       // previous successful RTT, for the jitter delta.
 
 	// failed marks a placeholder built by NewFailedTarget (a target whose config could
 	// not be constructed). It is excluded from reload history-reuse so that fixing the
@@ -124,25 +126,32 @@ func (t *Target) Consume(res ping.Result) {
 
 	t.LossRate = float64(t.Loss) / float64(t.Snt) * percentMultiplier
 
-	t.history = append([]ping.Result{res}, t.history...)
-	if len(t.history) > historyCap {
-		t.history = t.history[:historyCap]
+	if t.history == nil {
+		t.history = make([]ping.Result, historyCap)
+	}
+
+	t.history[t.histNext] = res
+	t.histNext = (t.histNext + 1) % historyCap
+
+	if t.histLen < historyCap {
+		t.histLen++
 	}
 }
 
-// Results returns the most recent n probe results (newest first). The TUI renders
-// each to a glyph at view time via Glyph, so the result bar re-buckets live when
-// the RTT scale changes.
-func (t *Target) Results(n int) []ping.Result {
-	if n > len(t.history) {
-		n = len(t.history)
+// Len reports how many probe results are currently retained (at most historyCap).
+func (t *Target) Len() int { return t.histLen }
+
+// At returns the i-th most recent probe result: At(0) is the newest, At(Len()-1) the
+// oldest still retained. The TUI renders each to a glyph at view time via Glyph, so the
+// result bar re-buckets live when the RTT scale changes. Callers must keep 0 <= i < Len();
+// the TUI bounds i with Len at render time.
+func (t *Target) At(i int) ping.Result {
+	idx := (t.histNext - 1 - i) % historyCap
+	if idx < 0 {
+		idx += historyCap
 	}
 
-	if n < 0 {
-		n = 0
-	}
-
-	return t.history[:n]
+	return t.history[idx]
 }
 
 // Refresh resets all statistics and history (the 'r' key).
@@ -159,6 +168,8 @@ func (t *Target) Refresh() {
 	t.Snt = 0
 	t.TTL = 0
 	t.history = nil
+	t.histNext = 0
+	t.histLen = 0
 	t.prevRTT = 0
 }
 
