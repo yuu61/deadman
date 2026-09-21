@@ -120,7 +120,7 @@ func ValidScale(v float64) bool {
 // directive supplies a valid value. It sits beside ValidScale so the CLI resolver
 // (cmd/deadman) and the TUI's startup normalization share one default rather than each
 // hardcoding it — the same single-source rationale as ValidScale.
-const DefaultScale = 10.0
+const DefaultScale = 1.0
 
 // ScaleOrDefault returns v when it is a usable scale and DefaultScale otherwise, so the
 // "invalid → default" normalization lives in one place rather than being repeated by the
