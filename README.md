@@ -80,13 +80,15 @@ kame6           2001:200:dff:fff1:216:3eff:feb1:44d7
 - `resolve_family=ipv4|ipv6`: ホスト名の解決レコードを固定。
 - ディレクティブ行: 設定の独立した行に `columns` (列表示), `scale` (RTTバー), `precision` (精度), `split` (段組み) を記述し、起動時の既定値を指定可能。
 
-*(詳細な文法や仕様は同梱の `deadman.conf` を参照してください)*
+*(詳細な属性やディレクティブの仕様については [docs/configuration.md](docs/configuration.md) を参照してください)*
 
 ## プラットフォームに関する注意
 
 - **Windows / macOS**: 特権不要で動作します。
 - **Linux**: 直接 ICMP は raw ソケット（root / `CAP_NET_RAW`）を優先利用します。非 root 環境では非特権 ICMP（`SOCK_DGRAM`）を自動使用しますが、事前に `sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"` の設定が必要です。
 - **表示フォント**: ブロック文字（`▁▂▃▄▅▆▇█`）が正しく表示されるUnicode対応端末（Windows Terminal等）を推奨します。Linux の fbcon 環境では `fbterm` と等幅フォント（Source Han Sans等）の利用を推奨します。
+
+*(中継モードの実行要件や、Linuxコンソール環境における文字化け解消の詳細は [docs/platform_and_font.md](docs/platform_and_font.md) をご参照ください)*
 
 ## セキュリティに関する注意
 設定ファイル（中継先ホストや宛先など）は外部コマンドの引数に渡される場合があります。インベントリなどから自動生成した信頼できない入力が設定ファイルに混入しないよう注意してください。
