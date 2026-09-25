@@ -32,6 +32,15 @@ type Result struct {
 	TTL     int
 }
 
+// failedResult is the canonical "no reply / could not probe" outcome. Every mode
+// returns it for a failed probe so the failure shape lives in one place.
+var failedResult = Result{Code: Failed, TTL: -1}
+
+// success returns a successful probe Result. ttl is -1 when the mode has no TTL.
+func success(rtt float64, ttl int) Result {
+	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
+}
+
 // Pinger sends a single probe. Failures are reported via Result.Code rather than
 // an error, so a missing relay binary (e.g. no ssh on Windows) degrades to a
 // failure glyph instead of an error path.

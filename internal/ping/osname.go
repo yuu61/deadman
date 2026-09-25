@@ -14,7 +14,6 @@ const (
 	osWindows = "Windows"
 )
 
-// IP protocol versions.
 const (
 	ipv4 = 4
 	ipv6 = 6

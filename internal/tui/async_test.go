@@ -105,10 +105,7 @@ func TestAsyncShowsInflightArrows(t *testing.T) {
 		{Name: "h2", Addr: "5.6.7.8", Relay: map[string]string{}},
 	}
 
-	m, err := New(specs, Options{Scale: 10, Async: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, specs, Options{Scale: 10, Async: true})
 
 	m, out := drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40}, roundStartMsg{gen: 0})
 
@@ -123,12 +120,7 @@ func TestAsyncShowsInflightArrows(t *testing.T) {
 	m, _ = drive(
 		t,
 		m,
-		pingResultMsg{
-			idx:    0,
-			gen:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
-		},
+		okResult(m, 5),
 	)
 	if m.inflight[0] {
 		t.Error("inflight[0] should clear once its result lands")

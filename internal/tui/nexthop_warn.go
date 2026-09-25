@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/yuu61/deadman/internal/config"
+	"github.com/yuu61/deadman/internal/ping"
 )
 
 // nexthopWarnings returns operator-facing warnings about next-hop targets that
@@ -78,7 +79,12 @@ func classifyNexthop(specs []config.TargetSpec) nexthopClasses {
 
 // classifyOne files one next-hop target (already known to set nexthop=) into c.
 func classifyOne(c *nexthopClasses, s config.TargetSpec) {
-	if s.Relay["relay"] != "" || s.Relay["via"] != "" || s.TCP != "" {
+	// Whether the gateway is honored is ping's precedence call, not ours: a
+	// higher-priority mode (relay/via/tcp) wins over nexthop. Delegate to
+	// ping.UsesNexthop so this warning can never disagree with the mode New actually
+	// builds — e.g. an unknown via= value falls through to nexthop in selectMethod,
+	// so it must not be reported here as "ignored".
+	if !ping.UsesNexthop(specToPingSpec(s)) {
 		c.modeIgnored = append(c.modeIgnored, s.Name)
 
 		return

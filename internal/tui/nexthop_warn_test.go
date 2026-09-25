@@ -65,6 +65,39 @@ func TestClassifyNexthop(t *testing.T) {
 	}
 }
 
+// TestClassifyNexthopViaPrecedence pins classifyOne to ping's selectMethod precedence
+// rather than a hand-rolled "any via= wins" check. A recognized via= (e.g. snmp) does
+// take precedence, so the gateway is genuinely ignored; an unrecognized via= falls
+// through to nexthop in selectMethod, so the gateway IS honored and must not be
+// reported as ignored.
+func TestClassifyNexthopViaPrecedence(t *testing.T) {
+	// Recognized via=: a real relay mode wins, so the next-hop is ignored.
+	if c := classifyNexthop([]config.TargetSpec{{
+		Name:  "via-snmp",
+		Addr:  "8.8.8.8",
+		Relay: map[string]string{"nexthop": "192.0.2.1", "via": "snmp"},
+	}}); !slices.Equal(c.modeIgnored, []string{"via-snmp"}) {
+		t.Errorf("recognized via=snmp: modeIgnored = %v, want [via-snmp]", c.modeIgnored)
+	}
+
+	// Unrecognized via=: selectMethod falls through to nexthop, so the gateway is
+	// honored. The old inline `s.Relay["via"] != ""` check wrongly flagged this as
+	// ignored — the drift this delegation fixes.
+	c := classifyNexthop([]config.TargetSpec{{
+		Name:  "via-bogus",
+		Addr:  "8.8.8.8",
+		Relay: map[string]string{"nexthop": "192.0.2.1", "via": "bogus"},
+	}})
+
+	if len(c.modeIgnored) != 0 {
+		t.Errorf("unrecognized via=bogus: modeIgnored = %v, want none", c.modeIgnored)
+	}
+
+	if !slices.Equal(c.forced, []string{"via-bogus"}) {
+		t.Errorf("unrecognized via=bogus: forced = %v, want [via-bogus]", c.forced)
+	}
+}
+
 func TestClassifyNexthopForcedV4Scope(t *testing.T) {
 	// A name is resolved to the gateway's family at runtime, so a name behind an IPv6
 	// gateway is an IPv6 probe and must NOT trip the IPv4-only rp_filter warning.

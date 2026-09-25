@@ -1,7 +1,6 @@
 package ping
 
 import (
-	"bytes"
 	"encoding/binary"
 	"net"
 	"time"
@@ -99,6 +98,9 @@ type ipv6Waiter struct {
 
 func (w *ipv6Waiter) close() error { return w.conn.Close() }
 
+// wait is a deliberate parallel mirror of ipv4Waiter.wait; keep the two in sync. They
+// differ only in the per-family PacketConn type (whose ReadFrom yields a different
+// control message) and the matcher called. The reply-match body itself is shared (matchEcho).
 func (w *ipv6Waiter) wait(
 	peer net.IP,
 	id, seq int,
@@ -129,8 +131,8 @@ func (w *ipv6Waiter) wait(
 }
 
 // matchEchoReplyV6 reports whether a received datagram is the ICMPv6 echo reply for
-// our probe (id, seq, and the echoed token from peer), and its hop limit. The token
-// guards against accepting another process's reply, whose id/seq can collide.
+// our probe (id, seq, and the echoed token from peer), and its hop limit. It extracts
+// the hop limit from the IPv6 control message and defers the rest to matchEcho.
 func matchEchoReplyV6(
 	b []byte,
 	cm *netipv6.ControlMessage,
@@ -139,24 +141,10 @@ func matchEchoReplyV6(
 	id, seq int,
 	token []byte,
 ) (int, bool) {
-	if !addrIP(src).Equal(peer) {
-		return -1, false
-	}
-
-	msg, err := icmp.ParseMessage(ianaProtocolICMPv6, b)
-	if err != nil || msg.Type != netipv6.ICMPTypeEchoReply {
-		return -1, false
-	}
-
-	echo, ok := msg.Body.(*icmp.Echo)
-	if !ok || echo.ID != id || echo.Seq != seq || !bytes.Equal(echo.Data, token) {
-		return -1, false
-	}
-
 	hl := -1
 	if cm != nil {
 		hl = cm.HopLimit
 	}
 
-	return hl, true
+	return matchEcho(b, src, peer, id, seq, token, echoKindV6, hl)
 }

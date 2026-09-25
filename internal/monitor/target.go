@@ -4,6 +4,7 @@
 package monitor
 
 import (
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -57,8 +58,10 @@ type Target struct {
 	Snt      int     // number sent.
 	TTL      int     // last TTL (captured, not displayed).
 
-	history []ping.Result // raw probe results (newest first); rendered to glyphs at view time.
-	prevRTT float64       // previous successful RTT, for the jitter delta.
+	history  []ping.Result // ring buffer of raw probe results; len == historyCap once seeded. newest is at histNext-1.
+	histNext int           // ring index where the next result will be written.
+	histLen  int           // number of valid results retained, capped at historyCap.
+	prevRTT  float64       // previous successful RTT, for the jitter delta.
 
 	// failed marks a placeholder built by NewFailedTarget (a target whose config could
 	// not be constructed). It is excluded from reload history-reuse so that fixing the
@@ -123,25 +126,32 @@ func (t *Target) Consume(res ping.Result) {
 
 	t.LossRate = float64(t.Loss) / float64(t.Snt) * percentMultiplier
 
-	t.history = append([]ping.Result{res}, t.history...)
-	if len(t.history) > historyCap {
-		t.history = t.history[:historyCap]
+	if t.history == nil {
+		t.history = make([]ping.Result, historyCap)
+	}
+
+	t.history[t.histNext] = res
+	t.histNext = (t.histNext + 1) % historyCap
+
+	if t.histLen < historyCap {
+		t.histLen++
 	}
 }
 
-// Results returns the most recent n probe results (newest first). The TUI renders
-// each to a glyph at view time via Glyph, so the result bar re-buckets live when
-// the RTT scale changes.
-func (t *Target) Results(n int) []ping.Result {
-	if n > len(t.history) {
-		n = len(t.history)
+// Len reports how many probe results are currently retained (at most historyCap).
+func (t *Target) Len() int { return t.histLen }
+
+// At returns the i-th most recent probe result: At(0) is the newest, At(Len()-1) the
+// oldest still retained. The TUI renders each to a glyph at view time via Glyph, so the
+// result bar re-buckets live when the RTT scale changes. Callers must keep 0 <= i < Len();
+// the TUI bounds i with Len at render time.
+func (t *Target) At(i int) ping.Result {
+	idx := (t.histNext - 1 - i) % historyCap
+	if idx < 0 {
+		idx += historyCap
 	}
 
-	if n < 0 {
-		n = 0
-	}
-
-	return t.history[:n]
+	return t.history[idx]
 }
 
 // Refresh resets all statistics and history (the 'r' key).
@@ -158,6 +168,8 @@ func (t *Target) Refresh() {
 	t.Snt = 0
 	t.TTL = 0
 	t.history = nil
+	t.histNext = 0
+	t.histLen = 0
 	t.prevRTT = 0
 }
 
@@ -226,14 +238,26 @@ func (t *Target) foldSuccessRTT(rtt float64) {
 	t.prevRTT = rtt
 }
 
-// rttBars are the block elements for ascending RTT buckets; bar i is used when
-// RTT < scale*(i+1), and the full block "█" for anything above the last bucket.
+// rttBars are the block elements for ascending RTT buckets. In linear mode bar i
+// covers [scale*i, scale*(i+1)); in log mode it covers the geometric band
+// [floor*aⁱ, floor*a^(i+1)) with a = e^lnBase and floor = scale. The full block "█"
+// renders for anything at or above the last band in either mode.
 var rttBars = []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇"}
 
+// boundaryEpsilon nudges the bucket index up before truncation so an RTT exactly on a
+// band boundary — where the true step value is a whole number that float rounding can
+// render a hair below it (rtt/scale for rtt=0.3, scale=0.1 is 2.9999999999999996, not
+// 3.0) — lands in the band it opens rather than the one below. The trade-off is
+// deliberate: an RTT within ~1e-9 in step space just under a boundary rounds up too, a
+// sliver far below display resolution. barForStep applies it, so every caller shares
+// the nudge-then-truncate protocol without re-adding it.
+const boundaryEpsilon = 1e-9
+
 // Glyph maps a result to its result-bar character. Failures map to X/t/s; a
-// success maps to a block element scaled by the RTT scale (ms per step). The TUI
-// calls this at render time, so the bar re-buckets when the scale changes.
-func Glyph(res ping.Result, scale int) string {
+// success maps to a block element bucketed by rttGlyph (logarithmic when lnBase is
+// positive, linear otherwise). The TUI calls this at render time, so the bar re-buckets
+// when the scale or log factor changes.
+func Glyph(res ping.Result, scale, lnBase float64) string {
 	switch res.Code {
 	case ping.SSHTimeout:
 		return "t"
@@ -244,23 +268,48 @@ func Glyph(res ping.Result, scale int) string {
 			return "X"
 		}
 
-		return rttGlyph(res.RTT, scale)
+		return rttGlyph(res.RTT, scale, lnBase)
 	default:
 		// unknown code: treat as a plain failure.
 		return "X"
 	}
 }
 
-// rttGlyph picks the block element for a successful probe's RTT.
-func rttGlyph(rtt float64, scale int) string {
-	step := float64(scale)
-	for i, bar := range rttBars {
-		if rtt < step*float64(i+1) {
-			return bar
-		}
+// rttGlyph picks the block element for a successful probe's RTT. The bucket index is
+// computed in "step space" — rtt/scale for the linear scale (lnBase <= 0) or
+// ln(rtt/scale)/lnBase for the logarithmic scale (a base-e^lnBase log) — then clamped by
+// barForStep. Both regimes share the half-open, left-closed band inclusion: band i
+// covers [scale*i, scale*(i+1)) linearly, [scale*aⁱ, scale*a^(i+1)) logarithmically
+// (a = e^lnBase). A degenerate scale or a non-positive RTT (where the ratio/log is
+// undefined) falls back to the lowest bar.
+func rttGlyph(rtt, scale, lnBase float64) string {
+	if scale <= 0 || rtt <= 0 {
+		return rttBars[0]
 	}
 
-	return "█"
+	step := rtt / scale
+	if lnBase > 0 {
+		step = math.Log(step) / lnBase
+	}
+
+	return barForStep(step)
+}
+
+// barForStep maps a bucket index to a bar glyph, clamping to [0, len(rttBars)]: a
+// negative index (RTT below the first band) or NaN yields the lowest bar, and an index
+// at or above len(rttBars) overflows to "█". It applies boundaryEpsilon itself so the
+// nudge-then-truncate protocol lives in one place rather than across the call boundary.
+func barForStep(step float64) string {
+	step += boundaryEpsilon
+	switch {
+	case math.IsNaN(step) || step < 0:
+		return rttBars[0]
+	case step >= float64(len(rttBars)):
+		return "█"
+	default:
+		// step is in [0, len(rttBars)) here, so the truncation is a valid bar index.
+		return rttBars[int(step)]
+	}
 }
 
 // IsFailGlyph reports whether a glyph represents a failure (rendered in red).

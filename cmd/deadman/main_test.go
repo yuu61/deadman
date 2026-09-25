@@ -3,8 +3,11 @@ package main
 import (
 	"errors"
 	"flag"
+	"math"
 	"os"
 	"testing"
+
+	"github.com/yuu61/deadman/internal/config"
 )
 
 // -h/--help must surface flag.ErrHelp so main can exit 0 (success) rather than the
@@ -73,7 +76,7 @@ func TestParseArgsScaleBlinkLog(t *testing.T) {
 	}
 
 	if opts.Scale != 20 {
-		t.Errorf("Scale = %d, want 20", opts.Scale)
+		t.Errorf("Scale = %g, want 20", opts.Scale)
 	}
 
 	if !opts.Blink {
@@ -82,6 +85,18 @@ func TestParseArgsScaleBlinkLog(t *testing.T) {
 
 	if opts.LogDir != "logs" {
 		t.Errorf("LogDir = %q, want logs", opts.LogDir)
+	}
+}
+
+func TestParseArgsScaleFractional(t *testing.T) {
+	// A fractional -s is accepted (sub-ms scale); the flag parses as float64.
+	opts, err := parseArgs([]string{"deadman.conf", "-s", "0.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if opts.Scale != 0.5 {
+		t.Errorf("Scale = %g, want 0.5", opts.Scale)
 	}
 }
 
@@ -107,21 +122,70 @@ func TestParseArgsRejectsMultipleConfigs(t *testing.T) {
 	}
 }
 
+// TestResolveScale pins the effective scale: an explicit, usable CLI -s wins, else the
+// config "scale", else the default; any unusable value (here passed as a bare float, not
+// via the flag) is dropped rather than flattening every bar. The companion warning is the
+// flag layer's job — it needs to tell an explicit -s from its default — so it is covered
+// by TestParseArgsScaleWarning, not here.
 func TestResolveScale(t *testing.T) {
 	cases := []struct {
 		name     string
-		cli, cfg int
-		want     int
+		cli, cfg float64
+		want     float64
 	}{
 		{"cli explicit wins over config", 20, 5, 20},
 		{"config used when cli unset", 0, 5, 5},
 		{"cli used when config unset", 7, 0, 7},
-		{"default when both unset", 0, 0, defaultScale},
+		{"sub-ms cli is honored", 0.5, 0, 0.5},
+		{"non-finite cli falls back to config", math.Inf(1), 5, 5},
+		{"nan cli falls back to config", math.NaN(), 5, 5},
+		{"out-of-range cli falls back to default", 1e-300, 0, config.DefaultScale},
+		{"non-finite cfg falls back to default", 0, math.Inf(1), config.DefaultScale},
+		{"nan cfg falls back to default", 0, math.NaN(), config.DefaultScale},
+		{"default when both unset", 0, 0, config.DefaultScale},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := resolveScale(c.cli, c.cfg); got != c.want {
-				t.Errorf("resolveScale(%d, %d) = %d, want %d", c.cli, c.cfg, got, c.want)
+				t.Errorf("resolveScale(%g, %g) = %g, want %g", c.cli, c.cfg, got, c.want)
+			}
+		})
+	}
+}
+
+// TestParseArgsScaleWarning checks that an explicitly-passed, unusable -s surfaces a
+// startup warning while an unset or usable -s stays silent. The explicit `-s 0` case is
+// the one a value sentinel cannot catch (an unset -s also parses to 0): fs.Visit
+// distinguishes them, so the rejected zero is not silently dropped. The warning omits the
+// effective scale on purpose (it is rendered persistently while ↑/↓ can change the live
+// scale), so this only asserts presence/absence, not an embedded "using Nms".
+func TestParseArgsScaleWarning(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantWarn bool
+	}{
+		{"unset -s is silent", []string{"deadman.conf"}, false},
+		{"usable -s is silent", []string{"-s", "5", "deadman.conf"}, false},
+		{"explicit zero -s warns", []string{"-s", "0", "deadman.conf"}, true},
+		{"explicit zero --scale warns", []string{"--scale=0", "deadman.conf"}, true},
+		{"negative -s warns", []string{"-s", "-5", "deadman.conf"}, true},
+		{"inf -s warns", []string{"-s", "inf", "deadman.conf"}, true},
+		{"nan -s warns", []string{"-s", "nan", "deadman.conf"}, true},
+		{"out-of-range -s warns", []string{"-s", "1e-300", "deadman.conf"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			opts, err := parseArgs(c.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if gotWarn := len(opts.Warnings) > 0; gotWarn != c.wantWarn {
+				t.Errorf(
+					"parseArgs(%v) warnings = %v, wantWarn=%v",
+					c.args, opts.Warnings, c.wantWarn,
+				)
 			}
 		})
 	}

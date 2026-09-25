@@ -31,7 +31,7 @@ func rpFilterStrict() bool {
 			continue
 		}
 
-		if maxInt(all, readRPFilter(base+"/"+e.Name()+"/rp_filter")) == 1 {
+		if max(all, readRPFilter(base+"/"+e.Name()+"/rp_filter")) == 1 {
 			return true
 		}
 	}
@@ -57,12 +57,4 @@ func readRPFilter(path string) int {
 	}
 
 	return v
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-
-	return b
 }

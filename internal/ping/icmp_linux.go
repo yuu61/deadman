@@ -38,9 +38,6 @@ const (
 // errAddrFamily reports that an address is not of the family the probe pinned/needs.
 var errAddrFamily = errors.New("ping: address family mismatch")
 
-// failedResult is the canonical "no reply / could not probe" outcome.
-var failedResult = Result{Code: Failed, TTL: -1}
-
 // icmpPinger sends a native ICMP echo via a synchronous, kernel-timestamped probe.
 //
 // It replaces the portable pro-bing path (icmp_other.go) on Linux for one reason: RTT
@@ -163,7 +160,7 @@ func (p *icmpPinger) resolve(ctx context.Context) (net.IP, int, error) {
 
 	netw := "ip"
 	if p.network != "" {
-		netw = p.network // "ip4"/"ip6".
+		netw = p.network
 	}
 
 	ips, err := net.DefaultResolver.LookupIP(ctx, netw, p.addr)
@@ -259,8 +256,8 @@ func familyOf(ip net.IP) icmpFamily {
 // pro-bing's ControlMessage{IfIndex} — unlike SO_BINDTODEVICE, which the kernel gated on
 // CAP_NET_RAW before 5.7. The source IP is left zero so the kernel auto-picks it to match
 // the destination scope (README: "送信元 IP は宛先のスコープに合わせて自動選択").
-func (fam icmpFamily) egressControl(ifIndex int) []byte {
-	if fam.domain == unix.AF_INET {
+func (f icmpFamily) egressControl(ifIndex int) []byte {
+	if f.domain == unix.AF_INET {
 		return (&netipv4.ControlMessage{IfIndex: ifIndex}).Marshal()
 	}
 
@@ -516,13 +513,13 @@ func (pr icmpProbe) result(oob []byte, recvUser, tSend time.Time) Result {
 
 	rtt := float64(dur.Microseconds()) / usPerMs
 
-	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
+	return success(rtt, ttl)
 }
 
 // parseControl extracts the kernel RX timestamp (SCM_TIMESTAMPNS) and reply TTL from the
 // ancillary data. An absent/invalid timestamp leaves haveRx false so the caller falls
 // back to the monotonic span; an absent TTL leaves ttl -1.
-func (fam icmpFamily) parseControl(oob []byte) (time.Time, bool, int) {
+func (f icmpFamily) parseControl(oob []byte) (time.Time, bool, int) {
 	cmsgs, err := unix.ParseSocketControlMessage(oob)
 	if err != nil {
 		return time.Time{}, false, -1
@@ -546,7 +543,7 @@ func (fam icmpFamily) parseControl(oob []byte) (time.Time, bool, int) {
 			continue
 		}
 
-		if int(c.Header.Level) == fam.ttlLevel && int(c.Header.Type) == fam.ttlCmsgType &&
+		if int(c.Header.Level) == f.ttlLevel && int(c.Header.Type) == f.ttlCmsgType &&
 			len(c.Data) >= 4 {
 			// The IP_TTL / IPV6_HOPLIMIT cmsg is a native-endian C int; reading c.Data[0]
 			// would yield 0 on a big-endian host (s390x/ppc64). All shipped arches are LE,

@@ -59,7 +59,7 @@ func (p *hpingPinger) Send(ctx context.Context) Result {
 
 	err := cmd.Run()
 	if errors.Is(err, exec.ErrNotFound) {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	return parseHpingResult(out.String())
@@ -73,16 +73,16 @@ func (p *hpingPinger) Send(ctx context.Context) Result {
 func parseHpingResult(out string) Result {
 	m := reHpingRecv.FindStringSubmatch(out)
 	if m == nil {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	if recv, _ := strconv.Atoi(m[1]); recv > 0 {
 		if rm := reHping.FindStringSubmatch(out); rm != nil {
 			rtt, _ := strconv.ParseFloat(rm[1], 64)
 
-			return Result{Success: true, Code: Success, RTT: rtt, TTL: -1}
+			return success(rtt, -1)
 		}
 	}
 
-	return Result{Code: Failed, TTL: -1}
+	return failedResult
 }

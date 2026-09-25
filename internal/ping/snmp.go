@@ -63,7 +63,7 @@ func (p *snmpPinger) Send(ctx context.Context) Result {
 
 	err := cmd.Run()
 	if errors.Is(err, exec.ErrNotFound) {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	// snmpping (Net-SNMP apps/snmpping.c) prints the "rtt min/avg/max/stddev" summary
@@ -74,8 +74,8 @@ func (p *snmpPinger) Send(ctx context.Context) Result {
 	if m := reSNMP.FindStringSubmatch(out.String()); m != nil {
 		rtt, _ := strconv.ParseFloat(m[1], 64)
 
-		return Result{Success: true, Code: Success, RTT: rtt, TTL: -1}
+		return success(rtt, -1)
 	}
 
-	return Result{Code: Failed, TTL: -1}
+	return failedResult
 }

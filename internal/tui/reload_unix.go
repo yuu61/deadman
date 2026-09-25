@@ -10,8 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// InstallReloadSignal wires SIGHUP to a config reload (Unix only). The signal
-// handler injects a reloadMsg into the running program.
+// InstallReloadSignal wires SIGHUP to a config reload (Unix only) by injecting a
+// reloadMsg into the running program.
 func InstallReloadSignal(p *tea.Program) {
 	c := make(chan os.Signal, 1)
 

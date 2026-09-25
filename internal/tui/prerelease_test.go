@@ -6,10 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/yuu61/deadman/internal/config"
-	"github.com/yuu61/deadman/internal/ping"
 )
 
 // A long-uptime SNT/FAIL count (>=10000) overflows the fixed 5-wide stat header. In the
@@ -20,36 +18,17 @@ import (
 func TestSingleColumnWideCountKeepsRowWidth(t *testing.T) {
 	const width = 120
 
-	m, err := New(manySpecs(3), Options{Scale: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(3), Options{Scale: 10})
 
 	m, _ = drive(t, m, tea.WindowSizeMsg{Width: width, Height: 40})
 
 	// Fill history so the bar is full, then force 6-digit SNT/FAIL.
-	for _, r := range m.rows {
-		if r.Target == nil {
-			continue
-		}
-
-		for range 300 {
-			r.Target.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 5})
-		}
-
-		r.Target.Snt = 123456
-		r.Target.Loss = 654321
-	}
+	fillWideCounts(m)
 
 	// A layout recompute (a resize here; in the app, every probe result) picks up the
 	// widened stat columns and shrinks the result bar to keep the row aligned.
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: width, Height: 40})
-
-	for ln := range strings.SplitSeq(out, "\n") {
-		if w := lipgloss.Width(ln); w > width {
-			t.Errorf("single-column line exceeds terminal width: %d > %d\n%q", w, width, ln)
-		}
-	}
+	assertNoLineExceedsWidth(t, out, width)
 }
 
 // A target whose config cannot be constructed (here an snmp relay missing its required
@@ -62,10 +41,7 @@ func TestBadTargetDegradesToPlaceholder(t *testing.T) {
 		{Name: "badsnmp", Addr: "1.1.1.1", Relay: map[string]string{"via": "snmp", "relay": "h"}},
 	}
 
-	m, err := New(specs, Options{Scale: 10})
-	if err != nil {
-		t.Fatalf("New must not error on a bad target, got %v", err)
-	}
+	m := newModel(t, specs, Options{Scale: 10})
 
 	if len(m.rows) != 2 {
 		t.Fatalf("got %d rows, want 2 (good + placeholder)", len(m.rows))

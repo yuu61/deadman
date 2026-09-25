@@ -9,7 +9,7 @@ import "context"
 type failedPinger struct{}
 
 func (failedPinger) Send(context.Context) Result {
-	return Result{Code: Failed, TTL: -1}
+	return failedResult
 }
 
 // AlwaysFail returns a Pinger that always reports Failed.

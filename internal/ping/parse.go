@@ -47,7 +47,7 @@ func ParsePingOutput(out string) Result {
 	}
 
 	if !matched {
-		return Result{Code: Failed, TTL: -1}
+		return failedResult
 	}
 
 	ttl := -1
@@ -57,7 +57,7 @@ func ParsePingOutput(out string) Result {
 		ttl, _ = strconv.Atoi(m[1])
 	}
 
-	return Result{Success: true, Code: Success, RTT: rtt, TTL: ttl}
+	return success(rtt, ttl)
 }
 
 // ParseRouterOSMinRTT parses a RouterOS min-rtt duration into milliseconds. Each

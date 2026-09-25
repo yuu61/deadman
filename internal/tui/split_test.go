@@ -9,7 +9,6 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"github.com/yuu61/deadman/internal/config"
-	"github.com/yuu61/deadman/internal/ping"
 )
 
 // sizedModel builds a model from manySpecs(n) with the given options and feeds one
@@ -17,11 +16,7 @@ import (
 func sizedModel(t *testing.T, n int, opts Options, w, h int) Model {
 	t.Helper()
 
-	m, err := New(manySpecs(n), opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	m := newModel(t, manySpecs(n), opts)
 	m, _ = drive(t, m, tea.WindowSizeMsg{Width: w, Height: h})
 
 	return m
@@ -234,10 +229,7 @@ func TestTwoColumnArrowAbsoluteIndex(t *testing.T) {
 // The multi-column render must never emit more physical lines than the terminal
 // height, at any width (including widths where the request is clamped to 1).
 func TestTwoColumnFitsTerminalHeight(t *testing.T) {
-	m, err := New(manySpecs(60), Options{Scale: 10, Cols: 3})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(60), Options{Scale: 10, Cols: 3})
 
 	for _, width := range []int{80, 120, 160, 220, 320} {
 		for _, height := range []int{5, 10, 20, 40} {
@@ -318,23 +310,17 @@ func TestTwoColumnSeparatorRenders(t *testing.T) {
 		{Name: "a2", Addr: "1.0.0.3", Relay: map[string]string{}},
 	}
 
-	m, err := New(
+	m := newModel(
+		t,
 		specs,
 		Options{Scale: 10, Cols: 2, Columns: map[string]bool{"MIN": false, "MAX": false}},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	_, out := drive(
 		t,
 		m,
 		tea.WindowSizeMsg{Width: 160, Height: 40},
-		pingResultMsg{
-			idx:    0,
-			target: m.rows[0].Target,
-			res:    ping.Result{Success: true, Code: ping.Success, RTT: 5},
-		},
+		okResult(m, 5),
 	)
 
 	if !strings.Contains(out, "----------") {
@@ -366,33 +352,15 @@ func TestTwoColumnOverWideCellTruncated(t *testing.T) {
 
 	opts := Options{Scale: 10, Cols: 2, Columns: map[string]bool{"MIN": false, "MAX": false}}
 
-	m, err := New(manySpecs(12), opts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, manySpecs(12), opts)
 
 	m, _ = drive(t, m, tea.WindowSizeMsg{Width: width, Height: 40})
 
 	// Fill each target's history (so the result bar is full) and force a 6-digit
 	// SNT/FAIL, which makes the stats cell wider than its 5-column header budget.
-	for _, r := range m.rows {
-		if r.Target == nil {
-			continue
-		}
+	fillWideCounts(m)
 
-		for range 300 {
-			r.Target.Consume(ping.Result{Success: true, Code: ping.Success, RTT: 5})
-		}
-
-		r.Target.Snt = 123456
-		r.Target.Loss = 654321
-	}
-
-	for ln := range strings.SplitSeq(m.View(), "\n") {
-		if w := lipgloss.Width(ln); w > width {
-			t.Errorf("rendered line exceeds terminal width: %d > %d\n%q", w, width, ln)
-		}
-	}
+	assertNoLineExceedsWidth(t, m.View(), width)
 }
 
 // Requesting more columns than there are rows must not open a phantom header-only
@@ -438,10 +406,7 @@ func TestColumnsCappedByRowCount(t *testing.T) {
 // request-based fit stays above 1 and renderColumns paints several header-only
 // phantom columns — the very thing the row-count clamp exists to prevent.
 func TestEmptyRowsClampToOneColumn(t *testing.T) {
-	m, err := New(nil, Options{Scale: 10, Cols: 4})
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newModel(t, nil, Options{Scale: 10, Cols: 4})
 
 	// Wide + tall enough that, without the empty-list guard, the width fit would
 	// yield several columns.
