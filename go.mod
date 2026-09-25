@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/prometheus-community/pro-bing v0.9.1
-	github.com/quic-go/quic-go v0.62.0
+	github.com/quic-go/quic-go v0.63.0
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0
 )
