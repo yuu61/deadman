@@ -10,6 +10,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"github.com/yuu61/deadman/internal/monitor"
+	"github.com/yuu61/deadman/internal/ping"
 )
 
 // View renders the entire screen.
@@ -254,15 +255,22 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 	lnBase := m.logFactor().LnBase
 
 	for i := range min(t.Len(), m.resW) {
-		ch := monitor.Glyph(t.At(i), m.scale, lnBase, m.bar)
-		if monitor.IsFailGlyph(ch) {
-			g.WriteString(styleDown.Render(ch))
-		} else {
-			g.WriteString(styleUp.Render(ch))
-		}
+		g.WriteString(m.resultCell(t.At(i), lnBase))
 	}
 
 	return text + g.String()
+}
+
+// resultCell renders one RESULT-bar cell: a success as its level's glyph in that
+// level's ramp color (safe green → caution yellow → danger red), a failure as X/t/s in
+// red. Glyph and color come from the same monitor.Level, so they always agree.
+func (m Model) resultCell(res ping.Result, lnBase float64) string {
+	lv := monitor.Level(res, m.scale, lnBase, m.bar)
+	if lv == monitor.NoLevel {
+		return styleDown.Render(monitor.Glyph(res, m.scale, lnBase, m.bar))
+	}
+
+	return rttStyle(m.bar, lv).Render(m.bar.GlyphAt(lv))
 }
 
 // renderColumns lays the visible window out as vp.cols side-by-side newspaper
@@ -334,7 +342,7 @@ func joinColumns(blocks [][]string) string {
 }
 
 // padCell fits s to exactly w display columns, measuring width ANSI-aware
-// (lipgloss.Width ignores the SGR escapes styleBold/styleUp/styleDown add, and
+// (lipgloss.Width ignores the SGR escapes styleBold/styleDown/rttStyle add, and
 // ansi.Truncate never cuts mid-escape) so the colored glyphs and bold header stay
 // intact — unlike padRight, whose runewidth basis would count the escape bytes.
 // Cells are normally <= w (effectiveCols budgets the result bar), but a long-uptime

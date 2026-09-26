@@ -9,6 +9,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"github.com/yuu61/deadman/internal/config"
+	"github.com/yuu61/deadman/internal/monitor"
 )
 
 // sizedModel builds a model from manySpecs(n) with the given options and feeds one
@@ -331,13 +332,19 @@ func TestTwoColumnSeparatorRenders(t *testing.T) {
 // padCell fits a styled string to exactly w display columns: it pads when short and
 // truncates (ANSI-aware) when long, so a cell can never push the next column over.
 func TestPadCellFitsWidth(t *testing.T) {
-	short := styleUp.Render("▁▂▃") // 3 glyphs.
+	short := rttStyle(monitor.BarBlock, 0).Render("▁▂▃") // 3 glyphs.
 	if got := lipgloss.Width(padCell(short, 8)); got != 8 {
 		t.Errorf("padCell(short, 8) width = %d, want 8", got)
 	}
 
 	// A styled string wider than the cell must be trimmed to exactly w cells.
-	long := styleUp.Render("▁▂▃▄▅▆▇█") + styleDown.Render("XXXXXX") // 14 glyphs wide.
+	long := rttStyle(
+		monitor.BarBlock,
+		0,
+	).Render("▁▂▃▄▅▆▇█") +
+		styleDown.Render(
+			"XXXXXX",
+		) // 14 glyphs wide.
 	if got := lipgloss.Width(padCell(long, 6)); got != 6 {
 		t.Errorf("padCell(long, 6) width = %d, want 6 (must truncate)", got)
 	}

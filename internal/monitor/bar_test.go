@@ -173,3 +173,76 @@ func TestBarOutOfRangeFallsBackToBlock(t *testing.T) {
 		}
 	}
 }
+
+// TestLevelMatchesGlyph guards the contract the TUI's coloring relies on: Level names the
+// very band Glyph draws, for every set in linear and log mode, and NoLevel exactly when
+// Glyph draws a failure — so a cell's color can never disagree with its glyph.
+func TestLevelMatchesGlyph(t *testing.T) {
+	results := []ping.Result{
+		{Code: ping.Failed},
+		{Code: ping.SSHTimeout},
+		{Code: ping.SSHFailed},
+		{
+			Success: true,
+			Code:    ping.SSHTimeout,
+		}, // a relay failure is a failure regardless of Success.
+		{Success: true, Code: ping.ResultCode(99)},
+	}
+	for rtt := 0.0; rtt <= 2000; rtt += 0.5 {
+		results = append(results, okRTT(rtt))
+	}
+
+	for _, bar := range []Bar{BarBlock, BarASCII, BarDigit} {
+		for _, lnBase := range []float64{0, 1, 2} {
+			for _, res := range results {
+				g := Glyph(res, 10, lnBase, bar)
+				lv := Level(res, 10, lnBase, bar)
+
+				switch {
+				case IsFailGlyph(g):
+					if lv != NoLevel {
+						t.Errorf(
+							"%s lnBase=%g %+v: Glyph %q is a failure but Level = %d",
+							bar,
+							lnBase,
+							res,
+							g,
+							lv,
+						)
+					}
+				case lv < 0 || lv >= bar.Levels():
+					t.Errorf(
+						"%s lnBase=%g %+v: Level = %d outside [0, %d)",
+						bar,
+						lnBase,
+						res,
+						lv,
+						bar.Levels(),
+					)
+				case bar.GlyphAt(lv) != g:
+					t.Errorf("%s lnBase=%g %+v: GlyphAt(Level %d) = %q, Glyph = %q",
+						bar, lnBase, res, lv, bar.GlyphAt(lv), g)
+				default:
+					// Level names the band Glyph drew.
+				}
+			}
+		}
+	}
+}
+
+func TestBarLevels(t *testing.T) {
+	for bar, want := range map[Bar]int{BarBlock: 8, BarASCII: 8, BarDigit: 10} {
+		if got := bar.Levels(); got != want {
+			t.Errorf("%s.Levels() = %d, want %d", bar, got, want)
+		}
+	}
+
+	// GlyphAt clamps rather than panicking on a stale or corrupted level.
+	if got := BarDigit.GlyphAt(-1); got != "0" {
+		t.Errorf("GlyphAt(-1) = %q, want the lowest glyph 0", got)
+	}
+
+	if got := BarDigit.GlyphAt(99); got != "9" {
+		t.Errorf("GlyphAt(99) = %q, want the overflow glyph 9", got)
+	}
+}

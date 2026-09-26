@@ -234,6 +234,19 @@ func resolveCols(cli, cfg int) int {
 	return cfg
 }
 
+// run starts the TUI on m and blocks until it exits.
+func run(m tui.Model) error {
+	// Ask the terminal for its background now, while nothing else reads stdin.
+	tui.DetectBackground()
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	tui.InstallReloadSignal(p)
+
+	_, err := p.Run()
+
+	return err
+}
+
 func main() {
 	opts, err := parseArgs(os.Args[1:])
 	if err != nil {
@@ -284,10 +297,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	tui.InstallReloadSignal(p)
-
-	_, err = p.Run()
+	err = run(m)
 
 	// Drain any queued log lines before exit. The TUI has stopped, so no Log call races
 	// this Close. os.Exit skips defers, so close explicitly before the error exit too.

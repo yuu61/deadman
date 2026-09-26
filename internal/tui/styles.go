@@ -4,6 +4,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
+	"github.com/yuu61/deadman/internal/monitor"
+	"github.com/yuu61/deadman/internal/palette"
 )
 
 // Layout constants for the TUI screen.
@@ -46,6 +50,56 @@ const spinnerChars = `|/-\`
 
 var (
 	styleBold = lipgloss.NewStyle().Bold(true)
-	styleUp   = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green.
 	styleDown = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // red.
 )
+
+// rttStyles holds the RESULT bar's per-level styles, colored safe → caution → danger
+// by palette.Ramp. They are keyed by level count, so block and ascii, which share
+// their thresholds, also share their colors ('b' between them recolors nothing).
+var rttStyles = buildRTTStyles()
+
+func buildRTTStyles() map[int][]lipgloss.Style {
+	out := map[int][]lipgloss.Style{}
+
+	for _, name := range monitor.BarNames() {
+		bar, _ := monitor.ParseBar(name)
+
+		n := bar.Levels()
+		if _, ok := out[n]; ok {
+			continue
+		}
+
+		styles := make([]lipgloss.Style, n)
+		for i, c := range palette.Ramp(n) {
+			styles[i] = lipgloss.NewStyle().Foreground(c)
+		}
+
+		out[n] = styles
+	}
+
+	return out
+}
+
+// rttStyle returns the style for a success at level (monitor.Level) on bar, clamping
+// the level like Bar.GlyphAt so a stale index can never panic the render.
+func rttStyle(bar monitor.Bar, level int) lipgloss.Style {
+	styles := rttStyles[bar.Levels()]
+
+	return styles[min(max(level, 0), len(styles)-1)]
+}
+
+// DetectBackground settles whether the terminal background is dark, which picks the RTT
+// ramp's dark or light variant. Call it before the Bubble Tea program starts: lipgloss
+// otherwise asks the terminal (OSC 11) at the first render, even with color off, and
+// the reply would race Bubble Tea's key reader and could be read as keystrokes. lipgloss
+// caches the answer, and a terminal that does not answer counts as dark. With no color
+// to draw (NO_COLOR, or not a terminal) it records "dark" without asking.
+func DetectBackground() {
+	if lipgloss.ColorProfile() == termenv.Ascii {
+		lipgloss.SetHasDarkBackground(true)
+
+		return
+	}
+
+	lipgloss.HasDarkBackground()
+}
