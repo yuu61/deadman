@@ -37,13 +37,14 @@ type TargetSpec struct {
 
 // Config is the parsed configuration: the target list plus optional display
 // settings from directive lines. Columns holds only the columns explicitly named
-// (absent columns keep their default, shown); Scale/Precision are zero/empty when
+// (absent columns keep their default, shown); Scale/Precision/Glyph are zero/empty when
 // their directive is absent, letting the caller fall back to the CLI/default.
 type Config struct {
 	Targets   []TargetSpec
 	Columns   map[string]bool // column key (upper-case) -> shown.
 	Scale     float64         // RTT-bar ms-per-step (or log-mode floor) from a "scale" directive; 0 = unset.
 	Precision string          // stat-precision label from a "precision" directive; "" = unset.
+	Glyph     string          // RESULT-bar glyph set name from a "glyph" directive; "" = unset.
 	Cols      int             // newspaper-column count from a "split" directive; 0 = unset.
 }
 
@@ -54,14 +55,15 @@ const (
 	scaleDirective     = "scale"
 	precisionDirective = "precision"
 	splitDirective     = "split"
+	glyphDirective     = "glyph"
 )
 
 // directives maps a keyword to its handler, applied to the line's remaining fields.
 // Handlers are lenient — malformed or out-of-range tokens are ignored, matching
 // applyColumn/applyAttr — so a typo degrades to the default rather than aborting the
-// parse. The precision label is stored verbatim and validated by the TUI (its
-// precisionModes table is the single source of valid labels), keeping config free of
-// a duplicate list.
+// parse. The precision and glyph labels are stored verbatim and validated by their
+// consumers (the TUI's precisionModes table and monitor.ParseBar plus the CLI's "auto"
+// are the single sources of valid labels), keeping config free of a duplicate list.
 var directives = map[string]func(cfg *Config, args []string){
 	columnDirective: func(cfg *Config, args []string) {
 		for _, kv := range args {
@@ -81,6 +83,11 @@ var directives = map[string]func(cfg *Config, args []string){
 	precisionDirective: func(cfg *Config, args []string) {
 		if len(args) > 0 {
 			cfg.Precision = args[0]
+		}
+	},
+	glyphDirective: func(cfg *Config, args []string) {
+		if len(args) > 0 {
+			cfg.Glyph = args[0]
 		}
 	},
 	splitDirective: func(cfg *Config, args []string) {

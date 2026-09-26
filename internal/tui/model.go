@@ -32,6 +32,7 @@ type Options struct {
 	Blink      bool
 	Scale      float64 // RTT-bar ms-per-step (the window floor in log mode); 0 lets New fall back.
 	Precision  string  // initial stat-precision label (config "precision"); "" = ms.
+	Glyph      string  // RESULT-bar glyph set (monitor.ParseBar name); main resolves -g/"glyph"/auto. "" = block.
 	LogDir     string
 	LogWriter  *monitor.LogWriter // serializes -l log writes off the Update loop; nil = no logging.
 	ConfigPath string
@@ -59,9 +60,10 @@ type Model struct {
 
 	visible map[string]bool // per-column visibility (config defaults + 'm' toggle).
 
-	scale   float64 // RTT-bar ms-per-step (the window floor in log mode); adjusted live with up/down.
-	logIdx  int     // index into logFactors (0 = linear); cycled with 'l'. The selected LnBase drives Glyph.
-	precIdx int     // index into precisionModes for the stat columns; cycled with 'p'.
+	scale   float64     // RTT-bar ms-per-step (the window floor in log mode); adjusted live with up/down.
+	logIdx  int         // index into logFactors (0 = linear); cycled with 'l'. The selected LnBase drives Glyph.
+	precIdx int         // index into precisionModes for the stat columns; cycled with 'p'.
+	bar     monitor.Bar // RESULT-bar glyph set; cycled with 'b'.
 
 	scrollTop int // first visible row when the list exceeds the viewport; moved with j/k/g/G/PgUp/PgDn.
 
@@ -94,11 +96,16 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 
 	warnings := composeWarnings(opts.Warnings, append(startupWarnings(specs), buildWarns...))
 
+	// The CLI resolves "auto" to a concrete set before New; an empty or unknown name
+	// (a test or an embedding) keeps the block elements, as ParseBar falls back.
+	bar, _ := monitor.ParseBar(opts.Glyph)
+
 	return Model{
 		rows:     rows,
 		opts:     opts,
 		scale:    scale,
 		precIdx:  precisionIndex(opts.Precision),
+		bar:      bar,
 		hostInfo: hostInfo(),
 		visible:  buildVisible(opts.Columns),
 		warnings: warnings,
@@ -289,8 +296,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleViewKey handles the display-only keys: the MIN/MAX ('m') and structural
 // HOSTNAME/ADDRESS/VIA ('h'/'a'/'v') column toggles, the RTT-bar scale (up/down) and
-// its log factor ('l'), the stat precision ('p'), and the newspaper-column count
-// ('['/']'). An unknown key leaves the model unchanged.
+// its log factor ('l'), the stat precision ('p'), the RESULT-bar glyph set ('b'), and
+// the newspaper-column count ('['/']'). An unknown key leaves the model unchanged.
 //
 // The layout-changing keys clampScroll after recalcWidths: a stat-column toggle
 // shifts minColumnWidth, which can change effectiveCols and thus the vertical
@@ -322,6 +329,12 @@ func (m Model) handleViewKey(msg tea.KeyMsg) Model {
 		m.precIdx = (m.precIdx + 1) % len(precisionModes)
 
 		return m.recalcWidths().clampScroll()
+	case "b":
+		// Cycle the RESULT-bar glyph set (block -> ascii -> digit). Every glyph is one
+		// cell and is chosen at render time, so no width changes.
+		m.bar = m.bar.Next()
+
+		return m
 	case "[", "]":
 		// Adjust the newspaper-column count (']' more, '[' fewer; effectiveCols clamps
 		// it to what the width fits). The count changes both the per-column width and
@@ -453,9 +466,11 @@ func scaleDown(cur float64) float64 {
 
 // handleReload reparses the config and starts a fresh generation, so stale
 // timers/results from the previous target set are ignored. The live
-// scale/log-factor/precision are intentionally preserved (not reset to config),
-// unlike column visibility: scale has a CLI flag (-s) whose value a reload must not
-// silently drop, and the log factor and precision are live, key-driven view settings.
+// scale/log-factor/precision/glyph set are intentionally preserved (not reset to
+// config), unlike column visibility: scale and the glyph set have CLI flags (-s/-g)
+// whose value a reload must not silently drop (and the glyph set may have been picked
+// by terminal detection at startup), and the log factor, precision and glyph set are
+// live, key-driven view settings.
 func (m Model) handleReload() (tea.Model, tea.Cmd) {
 	r, ok := loadRows(m.opts.ConfigPath, m.rows)
 	// Always refresh warnings: on success these are the new config's startup/build
