@@ -238,11 +238,93 @@ func (t *Target) foldSuccessRTT(rtt float64) {
 	t.prevRTT = rtt
 }
 
-// rttBars are the block elements for ascending RTT buckets. In linear mode bar i
-// covers [scale*i, scale*(i+1)); in log mode it covers the geometric band
-// [floor*aⁱ, floor*a^(i+1)) with a = e^lnBase and floor = scale. The full block "█"
-// renders for anything at or above the last band in either mode.
-var rttBars = []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇"}
+// Bar selects the glyph set a successful probe renders as in the result bar. The zero
+// value is BarBlock, so a Model or test that never picks a set keeps the block elements.
+type Bar int
+
+// Result-bar glyph sets, in the 'b'-key cycle order.
+const (
+	// BarBlock is the block-element bar ▁▂▃▄▅▆▇█ (the default).
+	BarBlock Bar = iota
+	// BarASCII is BarBlock's 8 levels and thresholds spelled in ASCII, for a terminal
+	// whose font or locale cannot show block elements (e.g. the Linux virtual console's
+	// Lat15 font). Only the characters change, so switching sets never re-buckets.
+	BarASCII
+	// BarDigit is 0-9: digit d covers [scale*d, scale*(d+1)), 9 at or above 9*scale,
+	// so the digit reads directly as a multiple of the scale (at scale 10, "3" is 30-39ms).
+	BarDigit
+)
+
+// barSets holds each Bar's CLI/config/legend name and its glyphs in ascending RTT
+// order. The last glyph is the overflow; the ones before it are the bands. In linear
+// mode band i covers [scale*i, scale*(i+1)); in log mode it covers the geometric band
+// [floor*aⁱ, floor*a^(i+1)) with a = e^lnBase and floor = scale. Anything at or above
+// the last band renders the overflow glyph in either mode. No glyph may collide with
+// the failure glyphs (X/t/s), which IsFailGlyph tells apart by value.
+var barSets = [...]struct {
+	name   string
+	glyphs []string
+}{
+	BarBlock: {"block", []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"}},
+	BarASCII: {"ascii", []string{"_", ".", "-", "=", "+", "*", "#", "@"}},
+	BarDigit: {"digit", []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}},
+}
+
+// String returns the set's name as accepted by ParseBar ("block", "ascii", "digit").
+func (b Bar) String() string {
+	if b < 0 || int(b) >= len(barSets) {
+		return barSets[BarBlock].name
+	}
+
+	return barSets[b].name
+}
+
+// Next returns the following set in the 'b'-key cycle, wrapping to the first.
+func (b Bar) Next() Bar {
+	if b < 0 || int(b) >= len(barSets) {
+		return BarBlock
+	}
+
+	return (b + 1) % Bar(len(barSets))
+}
+
+// Chars returns every glyph of the set concatenated, so a caller can ask whether the
+// terminal can display the whole set.
+func (b Bar) Chars() string {
+	return strings.Join(b.glyphs(), "")
+}
+
+// glyphs returns the set's glyphs, falling back to BarBlock for an out-of-range Bar so
+// a value not built through ParseBar can never panic the render.
+func (b Bar) glyphs() []string {
+	if b < 0 || int(b) >= len(barSets) {
+		return barSets[BarBlock].glyphs
+	}
+
+	return barSets[b].glyphs
+}
+
+// ParseBar returns the set named s (case-insensitive) and true, or BarBlock and false
+// when s names no set.
+func ParseBar(s string) (Bar, bool) {
+	for i, set := range barSets {
+		if strings.EqualFold(s, set.name) {
+			return Bar(i), true
+		}
+	}
+
+	return BarBlock, false
+}
+
+// BarNames lists the set names in cycle order, for the CLI usage text.
+func BarNames() []string {
+	names := make([]string, len(barSets))
+	for i, set := range barSets {
+		names[i] = set.name
+	}
+
+	return names
+}
 
 // boundaryEpsilon nudges the bucket index up before truncation so an RTT exactly on a
 // band boundary — where the true step value is a whole number that float rounding can
@@ -254,10 +336,10 @@ var rttBars = []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇"}
 const boundaryEpsilon = 1e-9
 
 // Glyph maps a result to its result-bar character. Failures map to X/t/s; a
-// success maps to a block element bucketed by rttGlyph (logarithmic when lnBase is
+// success maps to a glyph of bar bucketed by rttGlyph (logarithmic when lnBase is
 // positive, linear otherwise). The TUI calls this at render time, so the bar re-buckets
-// when the scale or log factor changes.
-func Glyph(res ping.Result, scale, lnBase float64) string {
+// when the scale, log factor or glyph set changes.
+func Glyph(res ping.Result, scale, lnBase float64, bar Bar) string {
 	switch res.Code {
 	case ping.SSHTimeout:
 		return "t"
@@ -268,23 +350,23 @@ func Glyph(res ping.Result, scale, lnBase float64) string {
 			return "X"
 		}
 
-		return rttGlyph(res.RTT, scale, lnBase)
+		return rttGlyph(res.RTT, scale, lnBase, bar.glyphs())
 	default:
 		// unknown code: treat as a plain failure.
 		return "X"
 	}
 }
 
-// rttGlyph picks the block element for a successful probe's RTT. The bucket index is
-// computed in "step space" — rtt/scale for the linear scale (lnBase <= 0) or
-// ln(rtt/scale)/lnBase for the logarithmic scale (a base-e^lnBase log) — then clamped by
-// barForStep. Both regimes share the half-open, left-closed band inclusion: band i
-// covers [scale*i, scale*(i+1)) linearly, [scale*aⁱ, scale*a^(i+1)) logarithmically
+// rttGlyph picks the glyph for a successful probe's RTT. The bucket index is computed
+// in "step space" — rtt/scale for the linear scale (lnBase <= 0) or ln(rtt/scale)/lnBase
+// for the logarithmic scale (a base-e^lnBase log) — then clamped by barForStep. Both
+// regimes share the half-open, left-closed band inclusion: band i covers
+// [scale*i, scale*(i+1)) linearly, [scale*aⁱ, scale*a^(i+1)) logarithmically
 // (a = e^lnBase). A degenerate scale or a non-positive RTT (where the ratio/log is
-// undefined) falls back to the lowest bar.
-func rttGlyph(rtt, scale, lnBase float64) string {
+// undefined) falls back to the lowest glyph.
+func rttGlyph(rtt, scale, lnBase float64, glyphs []string) string {
 	if scale <= 0 || rtt <= 0 {
-		return rttBars[0]
+		return glyphs[0]
 	}
 
 	step := rtt / scale
@@ -292,23 +374,26 @@ func rttGlyph(rtt, scale, lnBase float64) string {
 		step = math.Log(step) / lnBase
 	}
 
-	return barForStep(step)
+	return barForStep(step, glyphs)
 }
 
-// barForStep maps a bucket index to a bar glyph, clamping to [0, len(rttBars)]: a
-// negative index (RTT below the first band) or NaN yields the lowest bar, and an index
-// at or above len(rttBars) overflows to "█". It applies boundaryEpsilon itself so the
+// barForStep maps a bucket index to one of glyphs, whose last entry is the overflow:
+// the bands are glyphs[:n] with n = len(glyphs)-1, and the index is clamped to [0, n].
+// A negative index (RTT below the first band) or NaN yields the lowest glyph, and an
+// index at or above n overflows to glyphs[n]. It applies boundaryEpsilon itself so the
 // nudge-then-truncate protocol lives in one place rather than across the call boundary.
-func barForStep(step float64) string {
+func barForStep(step float64, glyphs []string) string {
+	bands := len(glyphs) - 1
+
 	step += boundaryEpsilon
 	switch {
 	case math.IsNaN(step) || step < 0:
-		return rttBars[0]
-	case step >= float64(len(rttBars)):
-		return "█"
+		return glyphs[0]
+	case step >= float64(bands):
+		return glyphs[bands]
 	default:
-		// step is in [0, len(rttBars)) here, so the truncation is a valid bar index.
-		return rttBars[int(step)]
+		// step is in [0, bands) here, so the truncation is a valid band index.
+		return glyphs[int(step)]
 	}
 }
 

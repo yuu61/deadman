@@ -23,7 +23,9 @@ func (m Model) View() string {
 	b.WriteByte('\n')
 	b.WriteString(m.titleLine()) // line 1: host info (+spinner) and version.
 	b.WriteByte('\n')
-	b.WriteString(m.keysLine()) // line 2: scale + key legend.
+	// line 2: scale + key legend, clipped to the width like scrollStatus so every View
+	// line fits the terminal (the renderer would clip it identically anyway).
+	b.WriteString(runewidth.Truncate(m.keysLine(), m.width, ""))
 	b.WriteByte('\n')
 
 	for _, w := range m.warnings {
@@ -96,16 +98,19 @@ func (m Model) keysLine() string {
 	}
 
 	// The effective-vs-requested column count sits near the front, before the long
-	// key legend, so the renderer's width truncation (it clips lines, not wraps)
-	// never hides it: a request is clamped precisely on a narrow terminal, where a
-	// tail-appended hint would be the first thing cut.
+	// key legend, so the width truncation (View clips lines, not wraps) never hides
+	// it: a request is clamped precisely on a narrow terminal, where a tail-appended
+	// hint would be the first thing cut.
 	if m.cols > 1 {
 		s += fmt.Sprintf(" cols %d/%d", m.effectiveCols(), m.cols)
 	}
 
+	// (b)ar is last so the legend keeps the width it fitted before the key existed; the
+	// active set is also visible in the bar itself, so it is the cheapest item to clip.
 	s += fmt.Sprintf(
-		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (l)og (p)recision[%s] ([/])cols",
+		" Keys: (q)uit (r)efresh (R)eload (m)in/max (v)ia (↑/↓)scale (l)og (p)recision[%s] ([/])cols (b)ar[%s]",
 		m.precMode().Label,
+		m.bar,
 	)
 
 	return s
@@ -249,7 +254,7 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 	lnBase := m.logFactor().LnBase
 
 	for i := range min(t.Len(), m.resW) {
-		ch := monitor.Glyph(t.At(i), m.scale, lnBase)
+		ch := monitor.Glyph(t.At(i), m.scale, lnBase, m.bar)
 		if monitor.IsFailGlyph(ch) {
 			g.WriteString(styleDown.Render(ch))
 		} else {

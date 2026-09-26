@@ -26,7 +26,7 @@ func TestGlyph(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := Glyph(c.res, scale, 0); got != c.want {
+			if got := Glyph(c.res, scale, 0, BarBlock); got != c.want {
 				t.Errorf("Glyph(%+v) = %q, want %q", c.res, got, c.want)
 			}
 		})
@@ -69,7 +69,7 @@ func TestConsume(t *testing.T) {
 		t.Errorf("Jit = %v, want 1.25", tg.Jit)
 	}
 	// History is newest-first: the last result was RTT 30, which renders ▄ at scale 10.
-	if got := tg.At(0); Glyph(got, 10, 0) != "▄" {
+	if got := tg.At(0); Glyph(got, 10, 0, BarBlock) != "▄" {
 		t.Errorf("At(0) rendered at scale 10 = %v, want ▄", got)
 	}
 
@@ -205,11 +205,11 @@ func TestResultsRescale(t *testing.T) {
 	res := tg.At(0)
 	// RTT 15: at scale 10 it lands in the 2nd bucket (10..20 -> ▂); at scale 5 it is
 	// in the 4th (15 == 5*3, < 5*4 -> ▄).
-	if got := Glyph(res, 10, 0); got != "▂" {
+	if got := Glyph(res, 10, 0, BarBlock); got != "▂" {
 		t.Errorf("Glyph(RTT 15, scale 10) = %q, want ▂", got)
 	}
 
-	if got := Glyph(res, 5, 0); got != "▄" {
+	if got := Glyph(res, 5, 0, BarBlock); got != "▄" {
 		t.Errorf("Glyph(RTT 15, scale 5) = %q, want ▄", got)
 	}
 }
@@ -231,7 +231,7 @@ func TestRttGlyphLinearBoundary(t *testing.T) {
 	}
 	for _, c := range cases {
 		res := ping.Result{Success: true, Code: ping.Success, RTT: c.rtt}
-		if got := Glyph(res, c.scale, 0); got != c.want {
+		if got := Glyph(res, c.scale, 0, BarBlock); got != c.want {
 			t.Errorf("Glyph(RTT %v, scale %v, linear) = %q, want %q", c.rtt, c.scale, got, c.want)
 		}
 	}
@@ -240,7 +240,7 @@ func TestRttGlyphLinearBoundary(t *testing.T) {
 // TestRttGlyphLog covers the log-mode cases that TestRttGlyphLogBoundaryStability's
 // exhaustive boundary sweep does not: an RTT below the floor, a mid-band value (not on a
 // boundary), a far overflow, the zero/negative guards, and the lnBase==0 linear
-// passthrough. The exact band boundaries (floor*e^(lnBase*i) → rttBars[i]) are pinned by
+// passthrough. The exact band boundaries (floor*e^(lnBase*i) → band i) are pinned by
 // the sweep across several floors and both factors, so they are not duplicated here.
 func TestRttGlyphLog(t *testing.T) {
 	exp := math.Exp
@@ -270,7 +270,7 @@ func TestRttGlyphLog(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			res := ping.Result{Success: true, Code: ping.Success, RTT: c.rtt}
-			if got := Glyph(res, c.scale, c.lnBase); got != c.want {
+			if got := Glyph(res, c.scale, c.lnBase, BarBlock); got != c.want {
 				t.Errorf("Glyph(RTT %v, scale %v, lnBase %g) = %q, want %q",
 					c.rtt, c.scale, c.lnBase, got, c.want)
 			}
@@ -280,24 +280,27 @@ func TestRttGlyphLog(t *testing.T) {
 
 // TestRttGlyphLogBoundaryStability checks the log boundary contract across non-unit
 // floors and both factors: an RTT exactly on band boundary i (floor*e^(lnBase*i)) lands
-// in band i (rttBars[i]) for i in 0..len(rttBars)-1 and overflows to "█" at
-// i == len(rttBars). These particular floors land on exact integer steps (so the
+// in band i (the i-th block glyph) for every band and overflows to "█" one past the
+// last band. These particular floors land on exact integer steps (so the
 // boundaryEpsilon regression itself is guarded by TestRttGlyphLinearBoundary, where
 // float rounding actually bites), but they pin the band semantics.
 func TestRttGlyphLogBoundaryStability(t *testing.T) {
+	blockBars := BarBlock.glyphs()
+	bands := len(blockBars) - 1
+
 	floors := []float64{0.3, 1.0, 2.5, 7.0, 0.001}
 	for _, floor := range floors {
 		for _, lnBase := range []float64{1, 2} {
-			for i := 0; i <= len(rttBars); i++ {
+			for i := 0; i <= bands; i++ {
 				rtt := floor * math.Exp(lnBase*float64(i))
 
 				want := "█"
-				if i < len(rttBars) {
-					want = rttBars[i]
+				if i < bands {
+					want = blockBars[i]
 				}
 
 				res := ping.Result{Success: true, Code: ping.Success, RTT: rtt}
-				if got := Glyph(res, floor, lnBase); got != want {
+				if got := Glyph(res, floor, lnBase, BarBlock); got != want {
 					t.Errorf("floor=%v lnBase=%g band=%d (rtt=%v): Glyph = %q, want %q",
 						floor, lnBase, i, rtt, got, want)
 				}
@@ -319,7 +322,7 @@ func TestGlyphFailureCodesLogMode(t *testing.T) {
 		{ping.Result{Code: ping.SSHFailed}, "s"},
 	}
 	for _, c := range cases {
-		if got := Glyph(c.res, 1.0, 1); got != c.want {
+		if got := Glyph(c.res, 1.0, 1, BarBlock); got != c.want {
 			t.Errorf("Glyph(%+v, lnBase=1) = %q, want %q", c.res, got, c.want)
 		}
 	}

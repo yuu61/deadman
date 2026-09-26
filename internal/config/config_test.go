@@ -467,6 +467,38 @@ func TestParseConfigScaleAndPrecision(t *testing.T) {
 	}
 }
 
+func TestParseConfigGlyph(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		// The label is stored verbatim; the CLI validates it (monitor.ParseBar plus
+		// "auto"), so an unknown value is kept here and falls back to auto there.
+		{"digit", "glyph digit\nhost 1.2.3.4\n", "digit"},
+		{"auto", "glyph auto\nhost 1.2.3.4\n", "auto"},
+		{"capitalized_keyword", "Glyph ascii\nhost 1.2.3.4\n", "ascii"},
+		{"unknown_kept", "glyph bogus\nhost 1.2.3.4\n", "bogus"},
+		{"no_arg", "glyph\nhost 1.2.3.4\n", ""},
+		{"absent", "host 1.2.3.4\n", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, err := ParseConfig(strings.NewReader(c.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if cfg.Glyph != c.want {
+				t.Errorf("Glyph = %q, want %q", cfg.Glyph, c.want)
+			}
+
+			// The directive line is not a target.
+			if len(cfg.Targets) != 1 || cfg.Targets[0].Name != "host" {
+				t.Fatalf("targets = %+v", cfg.Targets)
+			}
+		})
+	}
+}
+
 func TestParseConfigSplit(t *testing.T) {
 	cfg, err := ParseConfig(strings.NewReader("split 2\nhost 1.2.3.4\n"))
 	if err != nil {

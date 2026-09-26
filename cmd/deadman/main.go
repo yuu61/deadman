@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/yuu61/deadman/internal/config"
 	"github.com/yuu61/deadman/internal/monitor"
+	"github.com/yuu61/deadman/internal/termfont"
 	"github.com/yuu61/deadman/internal/tui"
 )
 
@@ -61,6 +63,76 @@ func scaleWarning(cli float64) string {
 	)
 }
 
+// glyphAuto is the -g / "glyph" value that lets the terminal decide the RESULT-bar glyph
+// set: the block elements where they can render, else ASCII (see resolveGlyph).
+const glyphAuto = "auto"
+
+// glyphChoices lists every -g / "glyph" value for the usage and error text: auto first,
+// then the glyph sets from monitor, so the list cannot drift from ParseBar.
+func glyphChoices() string {
+	return strings.Join(append([]string{glyphAuto}, monitor.BarNames()...), ", ")
+}
+
+// validGlyph reports whether s is a -g value: auto or a monitor glyph-set name (both
+// case-insensitive, like the config directive keywords).
+func validGlyph(s string) bool {
+	if strings.EqualFold(s, glyphAuto) {
+		return true
+	}
+
+	_, ok := monitor.ParseBar(s)
+
+	return ok
+}
+
+// resolveGlyph picks the RESULT-bar glyph set name: an explicit CLI -g wins, else a
+// config "glyph" directive, else auto. "" means unset for both inputs, and an unknown
+// directive value is ignored (lenient, like "precision"), so it lands on auto too — as
+// does an explicit -g auto, which overrides a set named in the config. Auto asks
+// blockOK whether the terminal can render the block elements and falls back to ASCII,
+// which keeps the same levels and thresholds, so -s/scale means the same either way.
+// blockOK is only called on the auto path, keeping the terminal probe off the others.
+func resolveGlyph(cli, cfg string, blockOK func() bool) string {
+	choice := cli
+	if choice == "" {
+		choice = cfg
+	}
+
+	if b, ok := monitor.ParseBar(choice); ok {
+		return b.String()
+	}
+
+	if blockOK() {
+		return monitor.BarBlock.String()
+	}
+
+	return monitor.BarASCII.String()
+}
+
+// glyphFlag registers -g/--glyph on fs and returns where the parsed value lands. The
+// value is validated as it is parsed, so a typo is a usage error rather than a silent
+// fallback; "" (unset) lets the config directive or auto decide.
+func glyphFlag(fs *flag.FlagSet) *string {
+	var glyph string
+
+	// The backquoted word names the value in -h ("-g set").
+	usage := "RESULT bar glyph `set`: " + glyphChoices() + " (default " + glyphAuto + ")"
+	set := func(s string) error {
+		if !validGlyph(s) {
+			return fmt.Errorf("unknown glyph set %q (want one of: %s)", s, glyphChoices())
+		}
+
+		glyph = s
+
+		return nil
+	}
+
+	fs.Func("g", usage, set)
+	fs.Func("glyph", usage, set)
+
+	return &glyph
+}
+
 // parseArgs parses the command line into TUI options. Flags may appear before or
 // after the configfile; Go's flag package stops at the first non-flag argument, so
 // we collect positionals and re-parse the remainder to let flags and the
@@ -81,6 +153,7 @@ func parseArgs(args []string) (tui.Options, error) {
 	fs.StringVar(logdir, "logging", "", "directory for log files")
 	cols := fs.Int("c", 0, "split the host list into N side-by-side columns (default 1)")
 	fs.IntVar(cols, "split", 0, "split the host list into N side-by-side columns (default 1)")
+	glyph := glyphFlag(fs)
 
 	var positional []string
 
@@ -119,6 +192,7 @@ func parseArgs(args []string) (tui.Options, error) {
 		Scale:      *scale,
 		LogDir:     *logdir,
 		Cols:       *cols,
+		Glyph:      *glyph,
 		ConfigPath: positional[0],
 	}
 
@@ -194,6 +268,10 @@ func main() {
 	opts.Scale = resolveScale(opts.Scale, cfg.Scale)
 	opts.Precision = cfg.Precision
 	opts.Cols = resolveCols(opts.Cols, cfg.Cols)
+	// Bubble Tea draws on stdout, so that is the terminal whose font auto inspects.
+	opts.Glyph = resolveGlyph(opts.Glyph, cfg.Glyph, func() bool {
+		return termfont.CanRender(os.Stdout, monitor.BarBlock.Chars())
+	})
 	opts.Version = version
 
 	if opts.LogDir != "" {

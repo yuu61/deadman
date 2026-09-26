@@ -52,7 +52,11 @@ deadman）から引き継いだものだが、もはや Python 版とのバイ�
 - `internal/ping` — 単一プローブの抽象化。`Pinger` インタフェースと各モード実装
   （直接 ICMP / SSH / SNMP / netns / vrf / RouterOS REST / tcp(hping3)）。`ping.New` が
   `via` 属性などからモードを選択してディスパッチする。
-- `internal/monitor` — ping 層と TUI の間の per-target 状態・統計・結果バーのグリフ化。
+- `internal/monitor` — ping 層と TUI の間の per-target 状態・統計・結果バーのグリフ化
+  （グリフ集合 `monitor.Bar`: block / ascii / digit）。
+- `internal/termfont` — 出力先端末が文字を表示できるかの判定（ロケール + Linux 仮想コンソールの
+  フォント Unicode 表 `GIO_UNIMAP`）。`-g auto` の解決に `cmd/deadman` が起動時に一度だけ使う。
+  pty など判定できない出力は「表示可」とみなす（誤判定しても `-g` で上書きできる側に倒す）。
 - `internal/tui` — Bubble Tea のモデル / 更新 / 描画。
 
 ## プラットフォーム分岐

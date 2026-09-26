@@ -235,3 +235,105 @@ func TestResolveCols(t *testing.T) {
 		})
 	}
 }
+
+func TestParseArgsGlyph(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"short flag", []string{"-g", "digit", "deadman.conf"}, "digit"},
+		{"long flag", []string{"--glyph=ascii", "deadman.conf"}, "ascii"},
+		{"after config", []string{"deadman.conf", "-g", "block"}, "block"},
+		{"explicit auto", []string{"-g", "auto", "deadman.conf"}, "auto"},
+		{"case-insensitive", []string{"-g", "DIGIT", "deadman.conf"}, "DIGIT"},
+		{"unset stays empty", []string{"deadman.conf"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			opts, err := parseArgs(c.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if opts.Glyph != c.want {
+				t.Errorf("Glyph = %q, want %q", opts.Glyph, c.want)
+			}
+		})
+	}
+}
+
+// An unknown -g value is a usage error, not a silent fallback: unlike the lenient
+// config directive, the operator typed it on this very invocation.
+func TestParseArgsGlyphRejectsUnknown(t *testing.T) {
+	// flag reports the error and usage on os.Stderr; keep the test output quiet.
+	orig := os.Stderr
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	os.Stderr = w
+
+	defer func() {
+		os.Stderr = orig
+		_ = w.Close()
+		_ = r.Close()
+	}()
+
+	for _, args := range [][]string{{"-g", "digits", "deadman.conf"}, {"--glyph", "", "deadman.conf"}} {
+		_, perr := parseArgs(args)
+		if perr == nil {
+			t.Errorf("parseArgs(%v) = nil error, want an unknown glyph set rejection", args)
+		}
+	}
+}
+
+// TestResolveGlyph pins the precedence (explicit CLI -g > config "glyph" > auto) and the
+// auto policy (block where the terminal can render it, else ascii). The probe must not
+// run when a set is named explicitly: it inspects the real terminal, so a spurious call
+// would make an explicit choice environment-dependent.
+func TestResolveGlyph(t *testing.T) {
+	cases := []struct {
+		name      string
+		cli, cfg  string
+		blockOK   bool
+		wantProbe bool
+		want      string
+	}{
+		{"cli wins over config", "digit", "ascii", true, false, "digit"},
+		{"cli case-folds", "DIGIT", "", true, false, "digit"},
+		{"config used when cli unset", "", "digit", true, false, "digit"},
+		{"cli auto overrides config set", "auto", "digit", false, true, "ascii"},
+		{"config auto probes", "", "auto", true, true, "block"},
+		{"unknown config falls to auto", "", "bogus", false, true, "ascii"},
+		{"unset probes: renderable", "", "", true, true, "block"},
+		{"unset probes: not renderable", "", "", false, true, "ascii"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			probed := false
+			got := resolveGlyph(c.cli, c.cfg, func() bool {
+				probed = true
+
+				return c.blockOK
+			})
+
+			if got != c.want {
+				t.Errorf(
+					"resolveGlyph(%q, %q, blockOK=%v) = %q, want %q",
+					c.cli,
+					c.cfg,
+					c.blockOK,
+					got,
+					c.want,
+				)
+			}
+
+			if probed != c.wantProbe {
+				t.Errorf("probe called = %v, want %v", probed, c.wantProbe)
+			}
+		})
+	}
+}

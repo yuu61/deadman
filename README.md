@@ -10,7 +10,7 @@ deadman は ICMP echo によるホストの死活監視に特化した TUI ツ�
 
 - **基本監視**: 1行1ホストの一覧をリアルタイム更新。IPv6対応、結果履歴、RTTバー、基本統計（LOSS / RTT / AVG / MIN / MAX / SNT）。
 - **中継・プローブ**: ssh / snmp / netns / vrf / RouterOS API / tcp(hping3) / quic 経由の監視、送信元指定（`source=`）。
-- **表示制御**: 段組み表示、表示精度の切り替え、統計列のトグル表示。ビューポートスクロール対応。
+- **表示制御**: 段組み表示、表示精度の切り替え、統計列のトグル表示。ビューポートスクロール対応。RESULT バーの表示文字切替（ブロック / ASCII / 数字 0-9）と、ブロック文字を表示できない端末の自動判定。
 - **Go 版による強化**: クロスプラットフォーム単一バイナリ、特権の自動判別（外部 `ping` コマンド不要）、`via=quic` 監視、`nexthop` 強制プローブ、SIGHUP による設定リロード。
 
 ## インストール
@@ -44,11 +44,13 @@ go build -o bin/deadman ./cmd/deadman
 - `-b, --blink-arrow` : async モードで矢印を点滅させる
 - `-l, --logging DIR` : DIR 配下に対象ごとのログを書き出す
 - `-c, --split N` : 一覧を N 列の段組みで表示する（既定 1）
+- `-g, --glyph MODE` : RESULT バーの表示文字。`auto`（既定）/ `block` / `ascii` / `digit`。`auto` はブロック文字を表示できない端末を起動時に判定して `ascii` に切り替える
 
 ### 主なキー操作
 - `↑` / `↓`: RTT バーのスケール変更
 - `l`: RTT スケールの対数表示切替
 - `p`: 統計値の表示精度切替（ms〜ms.3）
+- `b`: RESULT バーの表示文字切替（block → ascii → digit）
 - `m` / `v` / `h` / `a`: 各列（MIN/MAX, VIA, HOSTNAME, ADDRESS）の表示切替
 - `r`: 全対象の統計をリセット
 - `R`: 設定ファイルの再読み込み (Windows。Unix は SIGHUP を使用)
@@ -78,7 +80,7 @@ kame6           2001:200:dff:fff1:216:3eff:feb1:44d7
 - `relay=...`, `via=...`: ssh や snmp、netns、quic などの中継モードを指定します。
 - `source=...`: プローブの送信元（IPやインタフェース名）を指定。
 - `resolve_family=ipv4|ipv6`: ホスト名の解決レコードを固定。
-- ディレクティブ行: 設定の独立した行に `columns` (列表示), `scale` (RTTバー), `precision` (精度), `split` (段組み) を記述し、起動時の既定値を指定可能。
+- ディレクティブ行: 設定の独立した行に `columns` (列表示), `scale` (RTTバー), `precision` (精度), `split` (段組み), `glyph` (RESULT バーの表示文字) を記述し、起動時の既定値を指定可能。
 
 *(詳細な属性やディレクティブの仕様については [docs/configuration.md](docs/configuration.md) を参照してください)*
 
@@ -86,7 +88,7 @@ kame6           2001:200:dff:fff1:216:3eff:feb1:44d7
 
 - **Windows / macOS**: 特権不要で動作します。
 - **Linux**: 直接 ICMP は raw ソケット（root / `CAP_NET_RAW`）を優先利用します。非 root 環境では非特権 ICMP（`SOCK_DGRAM`）を自動使用しますが、事前に `sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"` の設定が必要です。
-- **表示フォント**: ブロック文字（`▁▂▃▄▅▆▇█`）が正しく表示されるUnicode対応端末（Windows Terminal等）を推奨します。Linux の fbcon 環境では `fbterm` と等幅フォント（Source Han Sans等）の利用を推奨します。
+- **表示フォント**: ブロック文字（`▁▂▃▄▅▆▇█`）が正しく表示されるUnicode対応端末（Windows Terminal等）を推奨します。Linux の仮想コンソール（tty1 等）でフォントにブロック文字が無い場合や、ロケールが UTF-8 でない場合は、自動で ASCII（`_.-=+*#@`）表示に切り替わります。ブロック表示のまま使いたい場合は `fbterm` と等幅フォント（Source Han Sans等）の利用を推奨します。
 
 *(中継モードの実行要件や、Linuxコンソール環境における文字化け解消の詳細は [docs/platform_and_font.md](docs/platform_and_font.md) をご参照ください)*
 
