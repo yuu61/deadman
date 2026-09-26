@@ -5,7 +5,7 @@
 GO            ?= go
 GOLANGCI      ?= golangci-lint
 # golangci-lint を `make tools` で入れる際のバージョン (現行 v2 系)。
-GOLANGCI_VERSION ?= v2.12.2
+GOLANGCI_VERSION ?= v2.14.0
 
 # アーカイブ生成に使う外部ツール (macOS で GNU tar を使う場合は `make package TAR=gtar`)。
 # zip の変数は ZIP_BIN とする: Info-ZIP の zip は環境変数 $ZIP / $ZIPOPT を既定オプション

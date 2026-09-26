@@ -110,15 +110,8 @@ func TestMatchEchoReplyV6(t *testing.T) {
 	}
 
 	// A reply from a different host, or with a different id/seq/token, is rejected.
-	if _, ok := matchEchoReplyV6(
-		reply,
-		cm,
-		&net.IPAddr{IP: net.ParseIP("2001:db8::a")},
-		net.ParseIP(peer),
-		id,
-		seq,
-		token,
-	); ok {
+	otherSrc := &net.IPAddr{IP: net.ParseIP("2001:db8::a")}
+	if _, ok := matchEchoReplyV6(reply, cm, otherSrc, net.ParseIP(peer), id, seq, token); ok {
 		t.Error("matched a reply from the wrong source")
 	}
 
@@ -130,15 +123,8 @@ func TestMatchEchoReplyV6(t *testing.T) {
 		t.Error("matched a reply with the wrong seq")
 	}
 
-	if _, ok := matchEchoReplyV6(
-		reply,
-		cm,
-		src,
-		net.ParseIP(peer),
-		id,
-		seq,
-		[]byte{0x09, 0x09, 0x09, 0x09},
-	); ok {
+	otherToken := []byte{0x09, 0x09, 0x09, 0x09}
+	if _, ok := matchEchoReplyV6(reply, cm, src, net.ParseIP(peer), id, seq, otherToken); ok {
 		t.Error("matched a reply with the wrong token")
 	}
 

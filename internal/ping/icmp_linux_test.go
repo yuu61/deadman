@@ -53,7 +53,8 @@ func TestProbePayloadStripsRawV4Header(t *testing.T) {
 	// A 20-byte IPv4 header: version 4, IHL 5 (×4 = 20 bytes).
 	rawV4 := append(
 		[]byte{0x45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		icmpBytes...)
+		icmpBytes...,
+	)
 
 	got, ok := v4Probe(true, 1, nil).payload(rawV4)
 	if !ok || !bytes.Equal(got, icmpBytes) {
