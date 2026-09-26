@@ -72,18 +72,20 @@ func TestClassifyNexthop(t *testing.T) {
 // reported as ignored.
 func TestClassifyNexthopViaPrecedence(t *testing.T) {
 	// Recognized via=: a real relay mode wins, so the next-hop is ignored.
-	if c := classifyNexthop([]config.TargetSpec{{
+	c := classifyNexthop([]config.TargetSpec{{
 		Name:  "via-snmp",
 		Addr:  "8.8.8.8",
 		Relay: map[string]string{"nexthop": "192.0.2.1", "via": "snmp"},
-	}}); !slices.Equal(c.modeIgnored, []string{"via-snmp"}) {
+	}})
+
+	if !slices.Equal(c.modeIgnored, []string{"via-snmp"}) {
 		t.Errorf("recognized via=snmp: modeIgnored = %v, want [via-snmp]", c.modeIgnored)
 	}
 
 	// Unrecognized via=: selectMethod falls through to nexthop, so the gateway is
 	// honored. The old inline `s.Relay["via"] != ""` check wrongly flagged this as
 	// ignored — the drift this delegation fixes.
-	c := classifyNexthop([]config.TargetSpec{{
+	c = classifyNexthop([]config.TargetSpec{{
 		Name:  "via-bogus",
 		Addr:  "8.8.8.8",
 		Relay: map[string]string{"nexthop": "192.0.2.1", "via": "bogus"},
@@ -116,11 +118,13 @@ func TestClassifyNexthopForcedV4Scope(t *testing.T) {
 	}
 
 	// A name behind an IPv4 gateway stays rp_filter-relevant.
-	if c := classifyNexthop([]config.TargetSpec{{
+	c = classifyNexthop([]config.TargetSpec{{
 		Name:  "name-v4gw",
 		Addr:  "example.com",
 		Relay: map[string]string{"nexthop": "192.0.2.1"},
-	}}); !c.forcedV4 {
+	}})
+
+	if !c.forcedV4 {
 		t.Error("forcedV4 = false for a name behind an IPv4 gateway; want true")
 	}
 }

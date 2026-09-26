@@ -12,7 +12,10 @@ linters:
     - wsl
     - gomodguard
     - varnamelen
+    # exhaustruct は v2.13 で非推奨となり exhaustruct_v5 に置き換わったが、
+    # default: all は非推奨の旧版も有効にするため両方を無効にする。
     - exhaustruct
+    - exhaustruct_v5
     - ireturn
     - err113
     - wrapcheck
@@ -163,4 +166,8 @@ formatters:
         - default
         - localmodule
     gofumpt:
-      extra-rules: true
+      # 旧 extra-rules (v2.13 で非推奨) は細分化された。全部を明示的に有効にする。
+      extra:
+        group-params: true
+        clothe-returns: true
+        balance-calls: true
