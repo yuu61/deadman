@@ -56,10 +56,10 @@ func TestRampReference(t *testing.T) {
 		{"#72C36F", "78", "10", "#5FA45C", "65", "2"},
 		{"#AED65C", "149", "11", "#809F42", "100", "3"},
 		{"#E5E838", "184", "11", "#989A21", "136", "3"},
-		{"#FFDC00", "220", "11", "#AC9400", "136", "3"},
-		{"#FFB100", "214", "11", "#C68900", "136", "3"},
-		{"#FF8300", "208", "9", "#E77600", "202", "1"},
-		{"#FF4B00", "202", "9", "#FF4B00", "202", "1"},
+		{"#FFDA00", "220", "11", "#AD9300", "136", "3"},
+		{"#FFA900", "214", "11", "#CC8600", "136", "3"},
+		{"#FF7500", "208", "9", "#F16E00", "202", "1"},
+		{"#FF2800", "196", "9", "#FF2800", "196", "1"},
 	}
 
 	got := Ramp(len(want))
@@ -92,14 +92,35 @@ func TestRampAnchors(t *testing.T) {
 			t.Errorf("Ramp(%d)[0] = %s, want the safe green #03AF7A", n, got)
 		}
 
-		if got := r[n-1].Dark.TrueColor; got != "#FF4B00" {
-			t.Errorf("Ramp(%d)[%d] = %s, want the danger red #FF4B00", n, n-1, got)
+		if got := r[n-1].Dark.TrueColor; got != "#FF2800" {
+			t.Errorf("Ramp(%d)[%d] = %s, want the danger red #FF2800", n, n-1, got)
 		}
 
 		if n%2 == 1 {
 			if got := r[n/2].Dark.TrueColor; got != "#FFF100" {
 				t.Errorf("Ramp(%d)[%d] = %s, want the caution yellow #FFF100", n, n/2, got)
 			}
+		}
+	}
+}
+
+// TestDangerRedSeenByProtan checks the danger red, in 24-bit and 256-color form, keeps
+// the 3:1 non-text contrast against black for protan vision too, the concern that made
+// CUD ver.4 lean its red toward orange. Protan vision is simulated with Machado,
+// Oliveira and Fernandes (2009) at severity 1, a matrix on linear sRGB.
+func TestDangerRedSeenByProtan(t *testing.T) {
+	protan := [3]vec{
+		{0.152286, 1.052583, -0.204868},
+		{0.114503, 0.786281, 0.099216},
+		{-0.003882, -0.048116, 1.051998},
+	}
+
+	red := Ramp(len(anchors))[len(anchors)-1].Dark
+	for _, c := range []srgb{parseHex(t, red.TrueColor), parse256(t, red.ANSI256)} {
+		y := luminance(mul(&protan, c.linear()))
+		if got := (y + flare) / flare; got < minContrast {
+			t.Errorf("danger red %s seen by protan: contrast %.3f < %.1f on black",
+				c.hex(), got, minContrast)
 		}
 	}
 }

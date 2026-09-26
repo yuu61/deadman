@@ -3,13 +3,18 @@
 //
 // The three anchors follow ISO 22324 (color-coded alerts): green is safe, yellow is
 // caution, red is danger, and levels beyond three take colors on the spectrum between
-// red and green. The anchor values are the Color Universal Design (CUD) recommended set
-// ver.4, the colors behind the JIS Z 9103:2018 safety colors, chosen to stay apart for
-// protan and deutan color vision (the green leans blue, the red leans orange). The
-// levels in between are interpolated in Oklab, a perceptual color space, so the steps
-// look even and the green → red half does not pass through the muddy olive an sRGB blend
-// gives. Color is never the only cue: the glyph height (or digit) already encodes the
-// level, as ISO 22324 and WCAG 2 (SC 1.4.1) ask.
+// red and green. The green and yellow are the Color Universal Design (CUD) recommended
+// set ver.4, the colors behind the JIS Z 9103:2018 safety colors, chosen to stay apart
+// for protan and deutan color vision (the green leans blue). The red is CUD ver.3's
+// #FF2800 rather than ver.4's #FF4B00: ver.4 leans the red toward orange so protan
+// vision tells it from black, but at 256 colors that lands on xterm 202 (#FF5F00), an
+// orange beside the orange level below it, and the danger level stops reading as red.
+// #FF2800 lands on 196 (#FF0000) and still keeps 3:1 against black under a protan
+// simulation (Machado et al. 2009, severity 1). The levels in between are interpolated
+// in Oklab, a perceptual color space, so the steps look even and the green → red half
+// does not pass through the muddy olive an sRGB blend gives. Color is never the only
+// cue: the glyph height (or digit) already encodes the level, as ISO 22324 and WCAG 2
+// (SC 1.4.1) ask.
 //
 // Every level carries a color for each terminal color depth and background
 // (lipgloss.CompleteAdaptiveColor), so nothing is left to lipgloss's automatic
@@ -30,8 +35,8 @@
 // A failed probe (X/t/s) gets Failure, magenta, rather than a red: next to the danger
 // red it would read as "very slow", yet no reply is worse than slow. ISO 22324 keeps
 // purple (or black) for such special cases of danger beyond red, and magenta stays
-// apart from the orange-leaning red for protan and deutan vision too (it keeps its
-// blue, where the red turns olive).
+// apart from the danger red for protan and deutan vision too (it keeps its blue, where
+// the red turns olive).
 package palette
 
 import (
@@ -56,11 +61,11 @@ type anchor struct {
 }
 
 // anchors are the safe, caution and danger stops, evenly spaced along the ramp (CUD
-// recommended set ver.4 green #03AF7A, yellow #FFF100 and red #FF4B00).
+// recommended set ver.4 green #03AF7A and yellow #FFF100, ver.3 red #FF2800).
 var anchors = [...]anchor{
 	{srgb{0x03, 0xAF, 0x7A}, "10", "2"}, // green: safe.
 	{srgb{0xFF, 0xF1, 0x00}, "11", "3"}, // yellow: caution.
-	{srgb{0xFF, 0x4B, 0x00}, "9", "1"},  // red: danger.
+	{srgb{0xFF, 0x28, 0x00}, "9", "1"},  // red: danger.
 }
 
 // Oklab's matrices (Björn Ottosson, "A perceptual color space for image processing",
