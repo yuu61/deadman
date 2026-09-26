@@ -262,8 +262,8 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 }
 
 // resultCell renders one RESULT-bar cell: a success as its level's glyph in that
-// level's ramp color (safe green → caution yellow → danger red), a failure as X/t/s in
-// magenta, so it never reads as the slowest band. Glyph and color come from the same
+// level's ramp color (safe green → caution yellow → warning orange), a failure as
+// X/t/s in red, which no success uses. Glyph and color come from the same
 // monitor.Level, so they always agree.
 func (m Model) resultCell(res ping.Result, lnBase float64) string {
 	lv := monitor.Level(res, m.scale, lnBase, m.bar)

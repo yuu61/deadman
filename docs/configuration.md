@@ -61,7 +61,7 @@ glyph digit
 | `auto` | `block` か `ascii` | 起動時に端末を判定し、ブロック文字を表示できなければ `ascii` を使う |
 
 対数表示（`l` キー）では、各段階が等比の帯域になります（`digit` なら 9 帯域 + 超過）。失敗の `X` / `t` / `s` はどの組でも同じです。
-文字の色も同じ段階で決まり、最も速い段階が緑、最も遅い段階が赤になります（[RESULT バーの色](platform_and_font.md#result-バーの色)）。
+文字の色も同じ段階で決まり、最も速い段階が緑、最も遅い段階が橙になります（[RESULT バーの色](platform_and_font.md#result-バーの色)）。
 
 `auto` は次の場合に `ascii` を選びます。どちらにも当てはまらなければ `block` です。
 - ロケール（`LC_ALL` → `LC_CTYPE` → `LANG` のうち最初に設定されている値）が UTF-8 でない（例: `C`, `ja_JP.eucJP`）。何も設定されていない場合と Windows では判定しません。

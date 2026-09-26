@@ -56,10 +56,10 @@ func TestRampReference(t *testing.T) {
 		{"#72C36F", "78", "10", "#5FA45C", "65", "2"},
 		{"#AED65C", "149", "11", "#809F42", "100", "3"},
 		{"#E5E838", "184", "11", "#989A21", "136", "3"},
-		{"#FFDA00", "220", "11", "#AD9300", "136", "3"},
-		{"#FFA900", "214", "11", "#CC8600", "136", "3"},
-		{"#FF7500", "208", "9", "#F16E00", "202", "1"},
-		{"#FF2800", "196", "9", "#FF2800", "196", "1"},
+		{"#FFE100", "220", "11", "#A99500", "136", "3"},
+		{"#FFC200", "214", "11", "#BB8D00", "136", "3"},
+		{"#FFA200", "214", "3", "#D08300", "136", "3"},
+		{"#FF8000", "208", "3", "#E97400", "202", "3"},
 	}
 
 	got := Ramp(len(want))
@@ -82,9 +82,9 @@ func TestRampReference(t *testing.T) {
 	}
 }
 
-// TestRampAnchors checks the stops land exactly on the CUD colors: level 0 is the safe
-// green and the last level the danger red at any size, and an odd-sized ramp puts the
-// caution yellow in the middle. A light background keeps the red (already 3:1 on white).
+// TestRampAnchors checks the stops land exactly on the anchor colors: level 0 is the
+// safe green and the last level the warning orange at any size, and an odd-sized ramp
+// puts the caution yellow in the middle.
 func TestRampAnchors(t *testing.T) {
 	for _, n := range []int{2, 3, 5, 8, 10} {
 		r := Ramp(n)
@@ -92,8 +92,8 @@ func TestRampAnchors(t *testing.T) {
 			t.Errorf("Ramp(%d)[0] = %s, want the safe green #03AF7A", n, got)
 		}
 
-		if got := r[n-1].Dark.TrueColor; got != "#FF2800" {
-			t.Errorf("Ramp(%d)[%d] = %s, want the danger red #FF2800", n, n-1, got)
+		if got := r[n-1].Dark.TrueColor; got != "#FF8000" {
+			t.Errorf("Ramp(%d)[%d] = %s, want the warning orange #FF8000", n, n-1, got)
 		}
 
 		if n%2 == 1 {
@@ -104,23 +104,32 @@ func TestRampAnchors(t *testing.T) {
 	}
 }
 
-// TestDangerRedSeenByProtan checks the danger red, in 24-bit and 256-color form, keeps
-// the 3:1 non-text contrast against black for protan vision too, the concern that made
-// CUD ver.4 lean its red toward orange. Protan vision is simulated with Machado,
-// Oliveira and Fernandes (2009) at severity 1, a matrix on linear sRGB.
-func TestDangerRedSeenByProtan(t *testing.T) {
+// TestSeenByProtan checks the reddest colors, the ramp's warning orange and the failure
+// red, keep the 3:1 non-text contrast against black for protan vision too, in 24-bit
+// and 256-color form. Protan vision loses the long wavelengths, so these are the colors
+// that darken most there. Protan vision is simulated with Machado, Oliveira and
+// Fernandes (2009) at severity 1, a matrix on linear sRGB.
+func TestSeenByProtan(t *testing.T) {
 	protan := [3]vec{
 		{0.152286, 1.052583, -0.204868},
 		{0.114503, 0.786281, 0.099216},
 		{-0.003882, -0.048116, 1.051998},
 	}
 
-	red := Ramp(len(anchors))[len(anchors)-1].Dark
-	for _, c := range []srgb{parseHex(t, red.TrueColor), parse256(t, red.ANSI256)} {
-		y := luminance(mul(&protan, c.linear()))
-		if got := (y + flare) / flare; got < minContrast {
-			t.Errorf("danger red %s seen by protan: contrast %.3f < %.1f on black",
-				c.hex(), got, minContrast)
+	cases := []struct {
+		name string
+		col  lipgloss.CompleteColor
+	}{
+		{"warning orange", Ramp(len(anchors))[len(anchors)-1].Dark},
+		{"failure red", Failure().Dark},
+	}
+	for _, k := range cases {
+		for _, c := range []srgb{parseHex(t, k.col.TrueColor), parse256(t, k.col.ANSI256)} {
+			y := luminance(mul(&protan, c.linear()))
+			if got := (y + flare) / flare; got < minContrast {
+				t.Errorf("%s %s seen by protan: contrast %.3f < %.1f on black",
+					k.name, c.hex(), got, minContrast)
+			}
 		}
 	}
 }
@@ -164,9 +173,9 @@ func TestRampReadable(t *testing.T) {
 	}
 }
 
-// TestRampHueHeadsToDanger checks the ramp moves one way, green → yellow → red, with no
-// hue doubling back: the Oklab hue angle strictly decreases level by level.
-func TestRampHueHeadsToDanger(t *testing.T) {
+// TestRampHueHeadsToWarning checks the ramp moves one way, green → yellow → orange, with
+// no hue doubling back: the Oklab hue angle strictly decreases level by level.
+func TestRampHueHeadsToWarning(t *testing.T) {
 	for _, n := range []int{8, 10} {
 		prev := math.Inf(1)
 
@@ -191,17 +200,18 @@ func TestRampHueHeadsToDanger(t *testing.T) {
 }
 
 // TestRampANSIZones checks the 16-color fallback splits the levels among the three
-// anchors by nearness — green for the fast quarter, red for the slow quarter, yellow
-// between — in the bright colors on a dark background and the normal ones on a light
-// background.
+// anchors by nearness — green for the fast quarter, the orange's stand-in for the slow
+// quarter, yellow between. On a dark background that is the bright green / yellow and
+// the normal yellow; on a light one the normal green / yellow, the yellow covering the
+// slow quarter too. No level falls back to red.
 func TestRampANSIZones(t *testing.T) {
 	cases := []struct {
 		n           int
 		dark, light []string
 	}{
-		{8, zones(2, 4, 2, "10", "11", "9"), zones(2, 4, 2, "2", "3", "1")},
-		{10, zones(3, 4, 3, "10", "11", "9"), zones(3, 4, 3, "2", "3", "1")},
-		{3, zones(1, 1, 1, "10", "11", "9"), zones(1, 1, 1, "2", "3", "1")},
+		{8, zones(2, 4, 2, "10", "11"), zones(2, 4, 2, "2", "3")},
+		{10, zones(3, 4, 3, "10", "11"), zones(3, 4, 3, "2", "3")},
+		{3, zones(1, 1, 1, "10", "11"), zones(1, 1, 1, "2", "3")},
 	}
 	for _, c := range cases {
 		var dark, light []string
@@ -224,12 +234,13 @@ func TestRampANSIZones(t *testing.T) {
 	}
 }
 
-// zones spells out a zone split: g copies of green, y of yellow and r of red.
-func zones(g, y, r int, green, yellow, red string) []string {
+// zones spells out a zone split: g copies of green, y of yellow and o of the orange's
+// stand-in, the normal yellow (3) on either background.
+func zones(g, y, o int, green, yellow string) []string {
 	out := slices.Repeat([]string{green}, g)
 	out = append(out, slices.Repeat([]string{yellow}, y)...)
 
-	return append(out, slices.Repeat([]string{red}, r)...)
+	return append(out, slices.Repeat([]string{"3"}, o)...)
 }
 
 func TestRampDegenerateSizes(t *testing.T) {
@@ -280,22 +291,33 @@ func TestXterm256(t *testing.T) {
 	}
 }
 
-// TestFailureApartFromRamp checks a failure can never share a color with a ramp level:
-// on either background its magenta is none of the 16-color stand-ins the ramp uses, in
-// particular not the danger red a failure used to share.
+// TestFailure pins the failure red: CUD ver.3's #FF2800 and xterm 196 on either
+// background, as both already reach 3:1 against black and white, and at 16 colors the
+// bright red on a dark background and the normal red on a light one.
+func TestFailure(t *testing.T) {
+	want := lipgloss.CompleteAdaptiveColor{
+		Dark:  lipgloss.CompleteColor{TrueColor: "#FF2800", ANSI256: "196", ANSI: "9"},
+		Light: lipgloss.CompleteColor{TrueColor: "#FF2800", ANSI256: "196", ANSI: "1"},
+	}
+	if got := Failure(); got != want {
+		t.Errorf("Failure() = %+v, want %+v", got, want)
+	}
+}
+
+// TestFailureApartFromRamp checks a failure can never share a color with a ramp level,
+// at any color depth on either background: no level uses the red.
 func TestFailureApartFromRamp(t *testing.T) {
 	f := Failure()
 
 	for _, n := range []int{8, 10} {
 		for i, c := range Ramp(n) {
-			if c.Dark.ANSI == f.Dark || c.Light.ANSI == f.Light {
-				t.Errorf("Ramp(%d)[%d] ANSI %s/%s collides with Failure %s/%s",
-					n, i, c.Dark.ANSI, c.Light.ANSI, f.Dark, f.Light)
+			for _, p := range [][2]lipgloss.CompleteColor{{c.Dark, f.Dark}, {c.Light, f.Light}} {
+				level, fail := p[0], p[1]
+				if level.TrueColor == fail.TrueColor || level.ANSI256 == fail.ANSI256 ||
+					level.ANSI == fail.ANSI {
+					t.Errorf("Ramp(%d)[%d] %+v collides with Failure %+v", n, i, level, fail)
+				}
 			}
 		}
-	}
-
-	if f.Dark != "13" || f.Light != "5" {
-		t.Errorf("Failure() = %+v, want bright magenta 13 on dark, magenta 5 on light", f)
 	}
 }

@@ -1,42 +1,20 @@
-// Package palette builds the RESULT bar's RTT color ramp: safe (green) → caution
-// (yellow) → danger (red), one color per bar level.
+// Package palette builds the RESULT bar's colors: the RTT ramp safe (green) → caution
+// (yellow) → warning (orange), one color per bar level, and the red of a failed probe.
 //
-// The three anchors follow ISO 22324 (color-coded alerts): green is safe, yellow is
-// caution, red is danger, and levels beyond three take colors on the spectrum between
-// red and green. The green and yellow are the Color Universal Design (CUD) recommended
-// set ver.4, the colors behind the JIS Z 9103:2018 safety colors, chosen to stay apart
-// for protan and deutan color vision (the green leans blue). The red is CUD ver.3's
-// #FF2800 rather than ver.4's #FF4B00: ver.4 leans the red toward orange so protan
-// vision tells it from black, but at 256 colors that lands on xterm 202 (#FF5F00), an
-// orange beside the orange level below it, and the danger level stops reading as red.
-// #FF2800 lands on 196 (#FF0000) and still keeps 3:1 against black under a protan
-// simulation (Machado et al. 2009, severity 1). The levels in between are interpolated
-// in Oklab, a perceptual color space, so the steps look even and the green → red half
-// does not pass through the muddy olive an sRGB blend gives. Color is never the only
-// cue: the glyph height (or digit) already encodes the level, as ISO 22324 and WCAG 2
-// (SC 1.4.1) ask.
+// Red is Failure's alone, so the ramp stops at orange. The levels between the anchors
+// are interpolated in Oklab so the steps look even. Color is never the only cue, as the
+// glyph already encodes the level.
 //
-// Every level carries a color for each terminal color depth and background
-// (lipgloss.CompleteAdaptiveColor), so nothing is left to lipgloss's automatic
-// down-conversion:
-//   - 24-bit: the ramp itself on a dark background. On a light one it is darkened (same
-//     chromaticity, lower luminance) until it reaches the WCAG 2 non-text contrast of
-//     3:1 (SC 1.4.11) against white, since yellow on white is otherwise unreadable.
-//   - 256 colors: the xterm-256 entry nearest in Oklab that meets the same contrast rule.
-//     The 16 system colors are skipped, as terminal themes redefine them.
-//   - 16 colors: the nearest anchor's ANSI color, leaving the exact shade to the
-//     terminal's theme. On a dark background the bright green / yellow / red (10 / 11 /
-//     9): the Linux console's normal yellow (3) is the VGA brown #AA5500 and its normal
-//     red (1) #AA0000 falls under 3:1 on black. On a light background the normal green
-//     / yellow / red (2 / 3 / 1), as the bright ones wash out on white. (A theme that
-//     remaps the bright slots, like Solarized, normally advertises 256 colors and takes
-//     the tier above.)
+// Every color is given for each terminal color depth and background
+// (lipgloss.CompleteAdaptiveColor) rather than left to lipgloss's down-conversion:
+//   - 24-bit: the color itself on a dark background; on a light one, darkened until it
+//     reaches the WCAG 2 non-text contrast of 3:1 against white.
+//   - 256 colors: the nearest xterm-256 entry that keeps the same 3:1, skipping the 16
+//     system colors, which themes redefine.
+//   - 16 colors: the anchor's ANSI stand-in, whose exact shade the theme decides.
 //
-// A failed probe (X/t/s) gets Failure, magenta, rather than a red: next to the danger
-// red it would read as "very slow", yet no reply is worse than slow. ISO 22324 keeps
-// purple (or black) for such special cases of danger beyond red, and magenta stays
-// apart from the danger red for protan and deutan vision too (it keeps its blue, where
-// the red turns olive).
+// Why each color was chosen (ISO 22324, CUD, color vision) is in
+// docs/platform_and_font.md.
 package palette
 
 import (
@@ -53,20 +31,29 @@ type vec [3]float64
 // srgb is a gamma-encoded 8-bit sRGB color, one int per channel in [0, maxChannel].
 type srgb [3]int
 
-// anchor is a ramp stop: its color and the ANSI (16-color) indices standing in for it
-// on a dark and a light background.
+// anchor is a base color (a ramp stop or the failure red) and its ANSI stand-ins on a
+// dark and a light background.
 type anchor struct {
 	color               srgb
 	ansiDark, ansiLight string
 }
 
-// anchors are the safe, caution and danger stops, evenly spaced along the ramp (CUD
-// recommended set ver.4 green #03AF7A and yellow #FFF100, ver.3 red #FF2800).
+// anchors are the safe, caution and warning stops, evenly spaced along the ramp: CUD
+// recommended set ver.4 green and yellow, and #FF8000, an orange that stays one at 256
+// colors (xterm 208). The ANSI stand-ins are the bright colors on a dark background and
+// the normal ones on a light one, where the bright ones wash out. The 16 colors have no
+// orange, so it borrows the normal yellow (brown on the Linux console).
 var anchors = [...]anchor{
 	{srgb{0x03, 0xAF, 0x7A}, "10", "2"}, // green: safe.
 	{srgb{0xFF, 0xF1, 0x00}, "11", "3"}, // yellow: caution.
-	{srgb{0xFF, 0x28, 0x00}, "9", "1"},  // red: danger.
+	{srgb{0xFF, 0x80, 0x00}, "3", "3"},  // orange: warning.
 }
+
+// failure is the red of a failed probe, CUD recommended set ver.3 #FF2800 (xterm 196),
+// readable on both backgrounds. It is given explicitly, not as the terminal's red, which
+// some themes (Solarized) make an orange. On a dark background it takes the bright red,
+// as the Linux console's normal red falls under 3:1 on black.
+var failure = anchor{srgb{0xFF, 0x28, 0x00}, "9", "1"}
 
 // Oklab's matrices (Björn Ottosson, "A perceptual color space for image processing",
 // 2020): linear sRGB → LMS → (cube root) → Lab, and back.
@@ -132,20 +119,12 @@ const (
 // cubeLevels are the channel values of the xterm-256 color cube.
 var cubeLevels = [cubeSide]int{0x00, 0x5F, 0x87, 0xAF, 0xD7, 0xFF}
 
-// The terminal's own magenta for Failure: bright on a dark background, normal on a
-// light one, where the bright one falls under 3:1 on white.
-const (
-	failureDark  = "13"
-	failureLight = "5"
-)
-
-// Failure returns the color of a failed probe (X/t/s). It is the terminal's magenta at
-// every color depth, as the theme knows best how to show it on its own background.
-func Failure() lipgloss.AdaptiveColor {
-	return lipgloss.AdaptiveColor{Dark: failureDark, Light: failureLight}
+// Failure returns the color of a failed probe (X/t/s). No ramp level uses it.
+func Failure() lipgloss.CompleteAdaptiveColor {
+	return adaptive(failure.color, failure)
 }
 
-// Ramp returns the color of each of levels bar levels, from safe (level 0) to danger
+// Ramp returns the color of each of levels bar levels, from safe (level 0) to warning
 // (level levels-1). A single level gets the safe color.
 func Ramp(levels int) []lipgloss.CompleteAdaptiveColor {
 	out := make([]lipgloss.CompleteAdaptiveColor, max(levels, 0))
@@ -164,9 +143,13 @@ func Ramp(levels int) []lipgloss.CompleteAdaptiveColor {
 // swatch builds the ramp color at position t in [0, 1] for every color depth and
 // background.
 func swatch(t float64) lipgloss.CompleteAdaptiveColor {
-	dark := rampAt(t)
+	return adaptive(rampAt(t), anchors[int(math.Round(t*float64(len(anchors)-1)))])
+}
+
+// adaptive expands dark, a color for a dark background, to every color depth and
+// background, with near's ANSI stand-ins for 16 colors.
+func adaptive(dark srgb, near anchor) lipgloss.CompleteAdaptiveColor {
 	light := darkenForLight(dark)
-	near := anchors[int(math.Round(t*float64(len(anchors)-1)))]
 
 	return lipgloss.CompleteAdaptiveColor{
 		Dark: lipgloss.CompleteColor{

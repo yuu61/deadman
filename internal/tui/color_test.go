@@ -31,10 +31,11 @@ func withColor(t *testing.T, p termenv.Profile, dark bool) {
 
 // TestResultBarColorsByLevel feeds a fast, a middling and an overflowing RTT plus a
 // failure, and checks each cell's color at every depth: the ramp runs from the safe
-// green through the caution yellow to the danger red, the light background gets the
-// darkened variant, 16 colors fall back to the ANSI green/yellow/red (bright on a dark
-// background), and a failure is the terminal's magenta (bright on a dark background),
-// never the danger red. At scale 10 the RTTs 0.5 / 35 / 5000 are levels 0 / 3 / 7.
+// green through the caution yellow to the warning orange, the light background gets
+// the darkened variant, 16 colors fall back to the ANSI green/yellow with the normal
+// yellow for the orange (bright green/yellow on a dark background), and a failure is
+// the danger red, which no level uses (the bright red at 16 colors on a dark
+// background). At scale 10 the RTTs 0.5 / 35 / 5000 are levels 0 / 3 / 7.
 //
 // The expected escapes come from termenv itself: it quantizes a hex color on its own
 // (#03AF7A is sent as 3;175;121), and what matters here is which palette color each
@@ -51,20 +52,20 @@ func TestResultBarColorsByLevel(t *testing.T) {
 			"truecolor_dark",
 			termenv.TrueColor,
 			true,
-			[3]string{"#03AF7A", "#E5E838", "#FF2800"},
-			"13",
+			[3]string{"#03AF7A", "#E5E838", "#FF8000"},
+			"#FF2800",
 		},
 		{
 			"truecolor_light",
 			termenv.TrueColor,
 			false,
-			[3]string{"#02A976", "#989A21", "#FF2800"},
-			"5",
+			[3]string{"#02A976", "#989A21", "#E97400"},
+			"#FF2800",
 		},
-		{"256_dark", termenv.ANSI256, true, [3]string{"36", "184", "196"}, "13"},
-		{"256_light", termenv.ANSI256, false, [3]string{"65", "136", "196"}, "5"},
-		{"ansi_dark", termenv.ANSI, true, [3]string{"10", "11", "9"}, "13"},
-		{"ansi_light", termenv.ANSI, false, [3]string{"2", "3", "1"}, "5"},
+		{"256_dark", termenv.ANSI256, true, [3]string{"36", "184", "208"}, "196"},
+		{"256_light", termenv.ANSI256, false, [3]string{"65", "136", "202"}, "196"},
+		{"ansi_dark", termenv.ANSI, true, [3]string{"10", "11", "3"}, "9"},
+		{"ansi_light", termenv.ANSI, false, [3]string{"2", "3", "3"}, "1"},
 	}
 
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
