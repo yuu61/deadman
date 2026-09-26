@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/mattn/go-runewidth v0.0.30
+	github.com/muesli/termenv v0.16.0
 	github.com/prometheus-community/pro-bing v0.9.1
 	github.com/quic-go/quic-go v0.63.0
 	golang.org/x/net v0.59.0
@@ -27,7 +28,6 @@ require (
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v1.2.0 // indirect
 	golang.org/x/crypto v0.57.0 // indirect

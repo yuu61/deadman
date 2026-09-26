@@ -90,7 +90,7 @@ func New(specs []config.TargetSpec, opts Options) (Model, error) {
 
 	// Normalize the scale like Cols: a caller bypassing resolveScale (a test or an
 	// embedding) may pass a zero/degenerate Options.Scale, which would otherwise make
-	// rttGlyph's scale<=0 guard flatten every bar to ▁. config.ScaleOrDefault is the same
+	// monitor's scale<=0 guard flatten every bar to ▁. config.ScaleOrDefault is the same
 	// "invalid → default" helper the CLI resolver's fallback uses, so behavior is uniform.
 	scale := config.ScaleOrDefault(opts.Scale)
 
@@ -413,7 +413,7 @@ type logFactor struct {
 	// LnBase is the ln of the per-step bucket base, i.e. the divisor in
 	// ln(rtt/scale)/LnBase handed to monitor.Glyph: 0 = linear (no log), 1 = base e,
 	// 2 = base e². Because it is data, not the index, a new factor is just a row — base
-	// 10 would be {"x10", math.Log(10)} — with no rttGlyph change. Labels stay ASCII
+	// 10 would be {"x10", math.Log(10)} — with no monitor change. Labels stay ASCII
 	// (narrow): "×"/"²" are East-Asian-ambiguous and render 2 cells on CJK terminals,
 	// desyncing the keys-line width from the renderer's measure.
 	LnBase float64

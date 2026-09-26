@@ -294,6 +294,20 @@ func (b Bar) Chars() string {
 	return strings.Join(b.glyphs(), "")
 }
 
+// Levels returns how many levels the set draws: its bands plus the overflow. Level
+// reports a success as an index in [0, Levels()).
+func (b Bar) Levels() int {
+	return len(b.glyphs())
+}
+
+// GlyphAt returns the set's glyph for a level from Level, clamping an out-of-range
+// level to the nearest end so a stale index can never panic the render.
+func (b Bar) GlyphAt(level int) string {
+	g := b.glyphs()
+
+	return g[min(max(level, 0), len(g)-1)]
+}
+
 // glyphs returns the set's glyphs, falling back to BarBlock for an out-of-range Bar so
 // a value not built through ParseBar can never panic the render.
 func (b Bar) glyphs() []string {
@@ -331,14 +345,17 @@ func BarNames() []string {
 // render a hair below it (rtt/scale for rtt=0.3, scale=0.1 is 2.9999999999999996, not
 // 3.0) — lands in the band it opens rather than the one below. The trade-off is
 // deliberate: an RTT within ~1e-9 in step space just under a boundary rounds up too, a
-// sliver far below display resolution. barForStep applies it, so every caller shares
+// sliver far below display resolution. levelForStep applies it, so every caller shares
 // the nudge-then-truncate protocol without re-adding it.
 const boundaryEpsilon = 1e-9
 
+// NoLevel is Level's result for a failed probe, which has no place on the RTT scale.
+const NoLevel = -1
+
 // Glyph maps a result to its result-bar character. Failures map to X/t/s; a
-// success maps to a glyph of bar bucketed by rttGlyph (logarithmic when lnBase is
-// positive, linear otherwise). The TUI calls this at render time, so the bar re-buckets
-// when the scale, log factor or glyph set changes.
+// success maps to the glyph of bar at its Level (logarithmic when lnBase is positive,
+// linear otherwise). The TUI calls this at render time, so the bar re-buckets when the
+// scale, log factor or glyph set changes.
 func Glyph(res ping.Result, scale, lnBase float64, bar Bar) string {
 	switch res.Code {
 	case ping.SSHTimeout:
@@ -350,23 +367,35 @@ func Glyph(res ping.Result, scale, lnBase float64, bar Bar) string {
 			return "X"
 		}
 
-		return rttGlyph(res.RTT, scale, lnBase, bar.glyphs())
+		return bar.GlyphAt(rttLevel(res.RTT, scale, lnBase, bar.Levels()))
 	default:
 		// unknown code: treat as a plain failure.
 		return "X"
 	}
 }
 
-// rttGlyph picks the glyph for a successful probe's RTT. The bucket index is computed
-// in "step space" — rtt/scale for the linear scale (lnBase <= 0) or ln(rtt/scale)/lnBase
-// for the logarithmic scale (a base-e^lnBase log) — then clamped by barForStep. Both
-// regimes share the half-open, left-closed band inclusion: band i covers
-// [scale*i, scale*(i+1)) linearly, [scale*aⁱ, scale*a^(i+1)) logarithmically
-// (a = e^lnBase). A degenerate scale or a non-positive RTT (where the ratio/log is
-// undefined) falls back to the lowest glyph.
-func rttGlyph(rtt, scale, lnBase float64, glyphs []string) string {
+// Level returns where a result sits on the RTT scale: for a success, the index of the
+// band Glyph draws it in (0 is the fastest band, bar.Levels()-1 the overflow); for a
+// failure (any result Glyph draws as X/t/s), NoLevel. The TUI colors a cell by it, so
+// the color and the glyph always agree on the band.
+func Level(res ping.Result, scale, lnBase float64, bar Bar) int {
+	if !res.Success || (res.Code != ping.Success && res.Code != ping.Failed) {
+		return NoLevel
+	}
+
+	return rttLevel(res.RTT, scale, lnBase, bar.Levels())
+}
+
+// rttLevel picks the level of a successful probe's RTT on a bar of the given number of
+// levels. The bucket index is computed in "step space" — rtt/scale for the linear
+// scale (lnBase <= 0) or ln(rtt/scale)/lnBase for the logarithmic scale (a
+// base-e^lnBase log) — then clamped by levelForStep. Both regimes share the half-open,
+// left-closed band inclusion: band i covers [scale*i, scale*(i+1)) linearly,
+// [scale*aⁱ, scale*a^(i+1)) logarithmically (a = e^lnBase). A degenerate scale or a
+// non-positive RTT (where the ratio/log is undefined) falls back to the lowest level.
+func rttLevel(rtt, scale, lnBase float64, levels int) int {
 	if scale <= 0 || rtt <= 0 {
-		return glyphs[0]
+		return 0
 	}
 
 	step := rtt / scale
@@ -374,30 +403,31 @@ func rttGlyph(rtt, scale, lnBase float64, glyphs []string) string {
 		step = math.Log(step) / lnBase
 	}
 
-	return barForStep(step, glyphs)
+	return levelForStep(step, levels)
 }
 
-// barForStep maps a bucket index to one of glyphs, whose last entry is the overflow:
-// the bands are glyphs[:n] with n = len(glyphs)-1, and the index is clamped to [0, n].
-// A negative index (RTT below the first band) or NaN yields the lowest glyph, and an
-// index at or above n overflows to glyphs[n]. It applies boundaryEpsilon itself so the
-// nudge-then-truncate protocol lives in one place rather than across the call boundary.
-func barForStep(step float64, glyphs []string) string {
-	bands := len(glyphs) - 1
+// levelForStep maps a bucket index to a level in [0, levels), whose last level is the
+// overflow: the bands are levels 0..n-1 with n = levels-1, and the index is clamped to
+// [0, n]. A negative index (RTT below the first band) or NaN yields the lowest level,
+// and an index at or above n overflows to level n. It applies boundaryEpsilon itself so
+// the nudge-then-truncate protocol lives in one place rather than across the call
+// boundary.
+func levelForStep(step float64, levels int) int {
+	bands := levels - 1
 
 	step += boundaryEpsilon
 	switch {
 	case math.IsNaN(step) || step < 0:
-		return glyphs[0]
+		return 0
 	case step >= float64(bands):
-		return glyphs[bands]
+		return bands
 	default:
 		// step is in [0, bands) here, so the truncation is a valid band index.
-		return glyphs[int(step)]
+		return int(step)
 	}
 }
 
-// IsFailGlyph reports whether a glyph represents a failure (rendered in red).
+// IsFailGlyph reports whether a glyph represents a failure (X/t/s).
 func IsFailGlyph(g string) bool {
 	return g == "X" || g == "t" || g == "s"
 }
