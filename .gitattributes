@@ -1,0 +1,9 @@
+# 改行コードを LF に統一する。Windows 側のエディタや core.autocrlf=true の Git から
+# 触っても、コミット時に LF へ正規化され、チェックアウトも LF になる
+# (CRLF が混ざると make check の fmt-check / lint が落ちる)。
+* text=auto eol=lf
+
+# バイナリ (改行変換・テキスト差分の対象外)
+*.gif binary
+*.png binary
+*.jpg binary
