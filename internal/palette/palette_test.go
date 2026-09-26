@@ -258,3 +258,23 @@ func TestXterm256(t *testing.T) {
 		}
 	}
 }
+
+// TestFailureApartFromRamp checks a failure can never share a color with a ramp level:
+// on either background its magenta is none of the 16-color stand-ins the ramp uses, in
+// particular not the danger red a failure used to share.
+func TestFailureApartFromRamp(t *testing.T) {
+	f := Failure()
+
+	for _, n := range []int{8, 10} {
+		for i, c := range Ramp(n) {
+			if c.Dark.ANSI == f.Dark || c.Light.ANSI == f.Light {
+				t.Errorf("Ramp(%d)[%d] ANSI %s/%s collides with Failure %s/%s",
+					n, i, c.Dark.ANSI, c.Light.ANSI, f.Dark, f.Light)
+			}
+		}
+	}
+
+	if f.Dark != "13" || f.Light != "5" {
+		t.Errorf("Failure() = %+v, want bright magenta 13 on dark, magenta 5 on light", f)
+	}
+}

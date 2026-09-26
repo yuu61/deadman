@@ -33,7 +33,8 @@ func withColor(t *testing.T, p termenv.Profile, dark bool) {
 // failure, and checks each cell's color at every depth: the ramp runs from the safe
 // green through the caution yellow to the danger red, the light background gets the
 // darkened variant, 16 colors fall back to the ANSI green/yellow/red (bright on a dark
-// background), and a failure keeps the plain ANSI red. At scale 10 the RTTs 0.5 / 35 / 5000 are levels 0 / 3 / 7.
+// background), and a failure is the terminal's magenta (bright on a dark background),
+// never the danger red. At scale 10 the RTTs 0.5 / 35 / 5000 are levels 0 / 3 / 7.
 //
 // The expected escapes come from termenv itself: it quantizes a hex color on its own
 // (#03AF7A is sent as 3;175;121), and what matters here is which palette color each
@@ -44,13 +45,26 @@ func TestResultBarColorsByLevel(t *testing.T) {
 		profile termenv.Profile
 		dark    bool
 		colors  [3]string // levels 0, 3 and 7 (palette.Ramp(8)).
+		fail    string
 	}{
-		{"truecolor_dark", termenv.TrueColor, true, [3]string{"#03AF7A", "#E5E838", "#FF4B00"}},
-		{"truecolor_light", termenv.TrueColor, false, [3]string{"#02A976", "#989A21", "#FF4B00"}},
-		{"256_dark", termenv.ANSI256, true, [3]string{"36", "184", "202"}},
-		{"256_light", termenv.ANSI256, false, [3]string{"65", "136", "202"}},
-		{"ansi_dark", termenv.ANSI, true, [3]string{"10", "11", "9"}},
-		{"ansi_light", termenv.ANSI, false, [3]string{"2", "3", "1"}},
+		{
+			"truecolor_dark",
+			termenv.TrueColor,
+			true,
+			[3]string{"#03AF7A", "#E5E838", "#FF4B00"},
+			"13",
+		},
+		{
+			"truecolor_light",
+			termenv.TrueColor,
+			false,
+			[3]string{"#02A976", "#989A21", "#FF4B00"},
+			"5",
+		},
+		{"256_dark", termenv.ANSI256, true, [3]string{"36", "184", "202"}, "13"},
+		{"256_light", termenv.ANSI256, false, [3]string{"65", "136", "202"}, "5"},
+		{"ansi_dark", termenv.ANSI, true, [3]string{"10", "11", "9"}, "13"},
+		{"ansi_light", termenv.ANSI, false, [3]string{"2", "3", "1"}, "5"},
 	}
 
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
@@ -77,7 +91,7 @@ func TestResultBarColorsByLevel(t *testing.T) {
 				sgr(c.colors[0]) + "▁",
 				sgr(c.colors[1]) + "▄",
 				sgr(c.colors[2]) + "█",
-				sgr("1") + "X",
+				sgr(c.fail) + "X",
 			}
 
 			row := lineWith(out, "1.2.3.4")

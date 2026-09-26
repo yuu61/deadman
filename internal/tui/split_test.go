@@ -342,7 +342,7 @@ func TestPadCellFitsWidth(t *testing.T) {
 		monitor.BarBlock,
 		0,
 	).Render("▁▂▃▄▅▆▇█") +
-		styleDown.Render(
+		styleFail.Render(
 			"XXXXXX",
 		) // 14 glyphs wide.
 	if got := lipgloss.Width(padCell(long, 6)); got != 6 {

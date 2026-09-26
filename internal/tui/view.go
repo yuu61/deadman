@@ -263,11 +263,12 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 
 // resultCell renders one RESULT-bar cell: a success as its level's glyph in that
 // level's ramp color (safe green → caution yellow → danger red), a failure as X/t/s in
-// red. Glyph and color come from the same monitor.Level, so they always agree.
+// magenta, so it never reads as the slowest band. Glyph and color come from the same
+// monitor.Level, so they always agree.
 func (m Model) resultCell(res ping.Result, lnBase float64) string {
 	lv := monitor.Level(res, m.scale, lnBase, m.bar)
 	if lv == monitor.NoLevel {
-		return styleDown.Render(monitor.Glyph(res, m.scale, lnBase, m.bar))
+		return styleFail.Render(monitor.Glyph(res, m.scale, lnBase, m.bar))
 	}
 
 	return rttStyle(m.bar, lv).Render(m.bar.GlyphAt(lv))
@@ -342,7 +343,7 @@ func joinColumns(blocks [][]string) string {
 }
 
 // padCell fits s to exactly w display columns, measuring width ANSI-aware
-// (lipgloss.Width ignores the SGR escapes styleBold/styleDown/rttStyle add, and
+// (lipgloss.Width ignores the SGR escapes styleBold/styleFail/rttStyle add, and
 // ansi.Truncate never cuts mid-escape) so the colored glyphs and bold header stay
 // intact — unlike padRight, whose runewidth basis would count the escape bytes.
 // Cells are normally <= w (effectiveCols budgets the result bar), but a long-uptime

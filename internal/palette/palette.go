@@ -26,6 +26,12 @@
 //     / yellow / red (2 / 3 / 1), as the bright ones wash out on white. (A theme that
 //     remaps the bright slots, like Solarized, normally advertises 256 colors and takes
 //     the tier above.)
+//
+// A failed probe (X/t/s) gets Failure, magenta, rather than a red: next to the danger
+// red it would read as "very slow", yet no reply is worse than slow. ISO 22324 keeps
+// purple (or black) for such special cases of danger beyond red, and magenta stays
+// apart from the orange-leaning red for protan and deutan vision too (it keeps its
+// blue, where the red turns olive).
 package palette
 
 import (
@@ -120,6 +126,19 @@ const (
 
 // cubeLevels are the channel values of the xterm-256 color cube.
 var cubeLevels = [cubeSide]int{0x00, 0x5F, 0x87, 0xAF, 0xD7, 0xFF}
+
+// The terminal's own magenta for Failure: bright on a dark background, normal on a
+// light one, where the bright one falls under 3:1 on white.
+const (
+	failureDark  = "13"
+	failureLight = "5"
+)
+
+// Failure returns the color of a failed probe (X/t/s). It is the terminal's magenta at
+// every color depth, as the theme knows best how to show it on its own background.
+func Failure() lipgloss.AdaptiveColor {
+	return lipgloss.AdaptiveColor{Dark: failureDark, Light: failureLight}
+}
 
 // Ramp returns the color of each of levels bar levels, from safe (level 0) to danger
 // (level levels-1). A single level gets the safe color.

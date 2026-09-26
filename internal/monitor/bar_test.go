@@ -17,7 +17,7 @@ func okRTT(rtt float64) ping.Result {
 // TestBarSetsWellFormed pins the invariants every glyph set relies on: at least one band
 // plus the overflow, one rune per glyph (so each is one result-bar cell), no duplicate
 // glyph (a repeat would make two buckets indistinguishable), and no collision with the
-// failure glyphs IsFailGlyph colors red. The ASCII and digit sets must stay pure ASCII,
+// failure glyphs IsFailGlyph picks out. The ASCII and digit sets must stay pure ASCII,
 // which is the whole point of offering them on fonts without block elements.
 func TestBarSetsWellFormed(t *testing.T) {
 	for _, bar := range []Bar{BarBlock, BarASCII, BarDigit} {

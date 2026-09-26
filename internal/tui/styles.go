@@ -50,7 +50,9 @@ const spinnerChars = `|/-\`
 
 var (
 	styleBold = lipgloss.NewStyle().Bold(true)
-	styleDown = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // red.
+	styleDown = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // red: warning lines.
+	// styleFail draws failed probes (X/t/s) in magenta, apart from the ramp's danger red.
+	styleFail = lipgloss.NewStyle().Foreground(palette.Failure())
 )
 
 // rttStyles holds the RESULT bar's per-level styles, colored safe → caution → danger
