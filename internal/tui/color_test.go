@@ -31,11 +31,11 @@ func withColor(t *testing.T, p termenv.Profile, dark bool) {
 
 // TestResultBarColorsByLevel feeds a fast, a middling and an overflowing RTT plus a
 // failure, and checks each cell's color at every depth: the ramp runs from the safe
-// green through the caution yellow to the warning orange, the light background gets
-// the darkened variant, 16 colors fall back to the ANSI green/yellow with the normal
-// yellow for the orange (bright green/yellow on a dark background), and a failure is
-// the danger red, which no level uses (the bright red at 16 colors on a dark
-// background). At scale 10 the RTTs 0.5 / 35 / 5000 are levels 0 / 3 / 7.
+// cyan through the caution yellow to the warning orange, the light background gets the
+// darkened variant, 16 colors fall back to the ANSI cyan/yellow with the normal yellow
+// for the orange (the bright yellow on a dark background), and a failure is white on a
+// red fill, which no level has. At scale 10 the RTTs 0.5 / 35 / 5000 are levels
+// 0 / 3 / 7.
 //
 // The expected escapes come from termenv itself: it quantizes a hex color on its own
 // (#03AF7A is sent as 3;175;121), and what matters here is which palette color each
@@ -46,26 +46,29 @@ func TestResultBarColorsByLevel(t *testing.T) {
 		profile termenv.Profile
 		dark    bool
 		colors  [3]string // levels 0, 3 and 7 (palette.Ramp(8)).
-		fail    string
+		fail    string    // the failure glyph's color, on failBg.
+		failBg  string
 	}{
 		{
 			"truecolor_dark",
 			termenv.TrueColor,
 			true,
-			[3]string{"#03AF7A", "#E5E838", "#FF8000"},
-			"#FF2800",
+			[3]string{"#00AAAA", "#D0E161", "#FF8000"},
+			"#FFFFFF",
+			"#E72300",
 		},
 		{
 			"truecolor_light",
 			termenv.TrueColor,
 			false,
-			[3]string{"#02A976", "#989A21", "#E97400"},
-			"#FF2800",
+			[3]string{"#00A5A5", "#838E3A", "#BB5C00"},
+			"#FFFFFF",
+			"#E72300",
 		},
-		{"256_dark", termenv.ANSI256, true, [3]string{"36", "184", "208"}, "196"},
-		{"256_light", termenv.ANSI256, false, [3]string{"65", "136", "202"}, "196"},
-		{"ansi_dark", termenv.ANSI, true, [3]string{"10", "11", "3"}, "9"},
-		{"ansi_light", termenv.ANSI, false, [3]string{"2", "3", "3"}, "1"},
+		{"256_dark", termenv.ANSI256, true, [3]string{"37", "185", "208"}, "231", "160"},
+		{"256_light", termenv.ANSI256, false, [3]string{"66", "100", "130"}, "231", "160"},
+		{"ansi_dark", termenv.ANSI, true, [3]string{"6", "11", "3"}, "15", "1"},
+		{"ansi_light", termenv.ANSI, false, [3]string{"6", "3", "3"}, "15", "1"},
 	}
 
 	specs := []config.TargetSpec{{Name: "h", Addr: "1.2.3.4", Relay: map[string]string{}}}
@@ -88,11 +91,14 @@ func TestResultBarColorsByLevel(t *testing.T) {
 				return "\x1b[" + c.profile.Color(color).Sequence(false) + "m"
 			}
 
+			failSGR := "\x1b[" + c.profile.Color(c.fail).Sequence(false) + ";" +
+				c.profile.Color(c.failBg).Sequence(true) + "m"
+
 			want := []string{
 				sgr(c.colors[0]) + "▁",
 				sgr(c.colors[1]) + "▄",
 				sgr(c.colors[2]) + "█",
-				sgr(c.fail) + "X",
+				failSGR + "X",
 			}
 
 			row := lineWith(out, "1.2.3.4")
