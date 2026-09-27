@@ -175,8 +175,9 @@ func TestBarOutOfRangeFallsBackToBlock(t *testing.T) {
 }
 
 // TestLevelMatchesGlyph guards the contract the TUI's coloring relies on: Level names the
-// very band Glyph draws, for every set in linear and log mode, and NoLevel exactly when
-// Glyph draws a failure — so a cell's color can never disagree with its glyph.
+// very band Glyph draws, for every set in linear and log mode, and NoLevel (and
+// IsFailure) exactly when Glyph draws a failure — so a cell's color, and whether the row
+// counts a failure in its bar, can never disagree with its glyph.
 func TestLevelMatchesGlyph(t *testing.T) {
 	results := []ping.Result{
 		{Code: ping.Failed},
@@ -197,6 +198,11 @@ func TestLevelMatchesGlyph(t *testing.T) {
 			for _, res := range results {
 				g := Glyph(res, 10, lnBase, bar)
 				lv := Level(res, 10, lnBase, bar)
+
+				if IsFailure(res) != IsFailGlyph(g) {
+					t.Errorf("%s lnBase=%g %+v: IsFailure = %v, but Glyph is %q",
+						bar, lnBase, res, IsFailure(res), g)
+				}
 
 				switch {
 				case IsFailGlyph(g):

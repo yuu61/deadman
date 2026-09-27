@@ -230,17 +230,32 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 
 	stats := m.statsLine(t)
 
+	// A target not answering is bold. One answering again while its bar still shows a
+	// failure gets the milder mark: its first shown identity column is underlined.
+	mark := ""
+	if t.State == monitor.Up && m.failShown(t) {
+		mark = m.markColumn()
+	}
+
+	cell := func(key, s string, w int) string {
+		if key == mark {
+			return markedCell(s, w)
+		}
+
+		return padRight(s, w)
+	}
+
 	text := ar
 	if m.columnVisible(colHost) {
-		text += padRight(t.Name, m.hostW) + " "
+		text += cell(colHost, t.Name, m.hostW) + " "
 	}
 
 	if m.columnVisible(colAddr) {
-		text += padRight(t.Addr, m.addrW) + " "
+		text += cell(colAddr, t.Addr, m.addrW) + " "
 	}
 
 	if m.columnVisible(colVia) {
-		text += padRight(t.Via, m.viaW) + " "
+		text += cell(colVia, t.Via, m.viaW) + " "
 	}
 
 	text += stats
@@ -259,6 +274,39 @@ func (m Model) targetLine(idx int, t *monitor.Target) string {
 	}
 
 	return text + g.String()
+}
+
+// failShown reports whether t's RESULT bar, as far as targetLine draws it, shows a
+// failure (X/t/s). A failure scrolled past the bar's width no longer counts.
+func (m Model) failShown(t *monitor.Target) bool {
+	for i := range min(t.Len(), m.resW) {
+		if monitor.IsFailure(t.At(i)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// markColumn returns the identity column that carries the recent-failure underline:
+// the first one shown of HOSTNAME, ADDRESS and VIA, so hiding the name moves the mark
+// rather than dropping it. It is "" when all three are hidden.
+func (m Model) markColumn() string {
+	for _, k := range structuralCols {
+		if m.columnVisible(k) {
+			return k
+		}
+	}
+
+	return ""
+}
+
+// markedCell is padRight with the recent-failure underline on the text but not its
+// padding, so the underline is as long as the name.
+func markedCell(s string, w int) string {
+	s = runewidth.Truncate(s, w, "")
+
+	return markRecentFail(s) + strings.Repeat(" ", max(w-displayWidth(s), 0))
 }
 
 // resultCell renders one RESULT-bar cell: a success as its level's glyph in that
@@ -343,9 +391,10 @@ func joinColumns(blocks [][]string) string {
 }
 
 // padCell fits s to exactly w display columns, measuring width ANSI-aware
-// (lipgloss.Width ignores the SGR escapes styleBold/styleFail/rttStyle add, and
-// ansi.Truncate never cuts mid-escape) so the colored glyphs and bold header stay
-// intact — unlike padRight, whose runewidth basis would count the escape bytes.
+// (lipgloss.Width ignores the SGR escapes styleBold/styleFail/rttStyle/markRecentFail
+// add, and ansi.Truncate never cuts mid-escape) so the colored glyphs, bold rows and
+// underlined names stay intact — unlike padRight, whose runewidth basis would count
+// the escape bytes.
 // Cells are normally <= w (effectiveCols budgets the result bar), but a long-uptime
 // SNT/FAIL count can widen the stats past their fixed header budget; the over-width
 // branch then trims the cell from the right (cutting the result bar's oldest glyphs,

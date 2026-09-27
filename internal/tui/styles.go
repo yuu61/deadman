@@ -56,6 +56,15 @@ var (
 	styleFail = failStyle()
 )
 
+// markRecentFail underlines the name of a target that answers again but still shows a
+// failure in its RESULT bar: milder than the bold of a target not answering, and, like
+// bold, the same at every color depth, background and color vision. It is a termenv
+// style at lipgloss's color profile rather than a lipgloss style, which would wrap every
+// rune of an underlined string in its own escape; NO_COLOR still drops it like the rest.
+func markRecentFail(s string) string {
+	return lipgloss.ColorProfile().String().Underline().Styled(s)
+}
+
 func failStyle() lipgloss.Style {
 	f := palette.Failure()
 

@@ -379,11 +379,17 @@ func Glyph(res ping.Result, scale, lnBase float64, bar Bar) string {
 // failure (any result Glyph draws as X/t/s), NoLevel. The TUI colors a cell by it, so
 // the color and the glyph always agree on the band.
 func Level(res ping.Result, scale, lnBase float64, bar Bar) int {
-	if !res.Success || (res.Code != ping.Success && res.Code != ping.Failed) {
+	if IsFailure(res) {
 		return NoLevel
 	}
 
 	return rttLevel(res.RTT, scale, lnBase, bar.Levels())
+}
+
+// IsFailure reports whether a result is a failure: one Glyph draws as X/t/s and Level
+// places at NoLevel. It needs no scale, since a failure has no place on it.
+func IsFailure(res ping.Result) bool {
+	return !res.Success || (res.Code != ping.Success && res.Code != ping.Failed)
 }
 
 // rttLevel picks the level of a successful probe's RTT on a bar of the given number of
