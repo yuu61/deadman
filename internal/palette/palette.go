@@ -1,19 +1,20 @@
-// Package palette builds the RESULT bar's colors: the RTT ramp safe (green) → caution
+// Package palette builds the RESULT bar's colors: the RTT ramp safe (cyan) → caution
 // (yellow) → warning (orange), one color per bar level, and how a failed probe is drawn
-// (red).
+// (white on a red fill).
 //
 // Red is Failure's alone, so the ramp stops at orange. The levels between the anchors
-// are interpolated in Oklab so the steps look even. Color is never the only cue, as the
-// glyph already encodes the level.
+// are interpolated in Oklab and spaced by distance along the path, so the steps look
+// even. Color is never the only cue: the glyph already encodes the level, and a failure
+// is a filled cell, which no level is.
 //
 // Every color is given for each terminal color depth and background
 // (lipgloss.CompleteAdaptiveColor) rather than left to lipgloss's down-conversion:
-//   - 24-bit: the color itself on a dark background; on a light one, darkened until it
-//     reaches the WCAG 2 non-text contrast of 3:1 against white.
-//   - 256 colors: the nearest xterm-256 entry that keeps the same 3:1, skipping the 16
-//     system colors, which themes redefine.
-//   - 16 colors: the anchor's ANSI stand-in, whose exact shade the theme decides, and
-//     a failure drawn as a filled cell.
+//   - 24-bit: the color itself on a dark background. On a light one it is darkened, the
+//     slower the level the darker: from the WCAG 2 non-text contrast of 3:1 against
+//     white at the fastest level to the text contrast of 4.5:1 at the slowest.
+//   - 256 colors: the nearest xterm-256 entry that keeps 3:1 against the background,
+//     skipping the 16 system colors, which themes redefine.
+//   - 16 colors: the anchor's ANSI stand-in, whose exact shade the theme decides.
 //
 // Why each color was chosen (ISO 22324, CUD, color vision) is in
 // docs/platform_and_font.md.
@@ -39,37 +40,45 @@ type anchor struct {
 	ansiDark, ansiLight string
 }
 
-// anchors are the safe, caution and warning stops, evenly spaced along the ramp: CUD
-// recommended set ver.4 green and yellow, and #FF8000, an orange that stays one at 256
-// colors (xterm 208).
+// anchors are the safe, caution and warning stops of the ramp: #00AAAA, a cyan, CUD
+// recommended set ver.4 yellow, and #FF8000, an orange that stays one at 256 colors
+// (xterm 208).
 //
-// The green's ANSI stand-in is the cyan: CUD's green leans blue so red-green color
-// vision can tell it from yellow, and of the 16 colors the cyan is the one nearest it
-// (the ANSI green is as yellow as the yellow to protan and deutan vision). The yellow's
-// is the bright yellow on a dark background and the normal one on a light one, where
-// the bright one washes out. The 16 colors have no orange, so it borrows the normal
-// yellow (brown on the Linux console).
+// The safe stop is a cyan rather than a green so that protan and deutan vision, which
+// lose the red-green axis, still tell the fast end from the slow one by the blue-yellow
+// axis: a green, even CUD's bluish #03AF7A, turns a dull yellow close to the orange's
+// there. It is the Linux console's cyan, so its 16-color stand-in is the very same
+// color. The yellow's stand-in is the bright yellow on a dark background and the normal
+// one on a light one, where the bright one washes out. The 16 colors have no orange, so
+// it borrows the normal yellow (brown on the Linux console).
 var anchors = [...]anchor{
-	{srgb{0x03, 0xAF, 0x7A}, "6", "6"},  // green: safe.
+	{srgb{0x00, 0xAA, 0xAA}, "6", "6"},  // cyan: safe.
 	{srgb{0xFF, 0xF1, 0x00}, "11", "3"}, // yellow: caution.
 	{srgb{0xFF, 0x80, 0x00}, "3", "3"},  // orange: warning.
 }
 
-// failureRed is the red of a failed probe, CUD recommended set ver.3 #FF2800 (xterm 196),
-// readable on both backgrounds. It is given explicitly, not as the terminal's red, which
-// some themes (Solarized) make an orange.
+// failureRed is the red a failure is drawn in, CUD recommended set ver.3 #FF2800. It is
+// given explicitly, not as the terminal's red, which some themes (Solarized) make an
+// orange.
 var failureRed = srgb{0xFF, 0x28, 0x00}
 
-// At 16 colors a failure is a filled cell instead: the bright white on the normal red,
-// on either background. The fill tells a failure from every level by shape, whatever
-// the color vision, which the 16 colors cannot do by hue alone. The white keeps the
-// glyph readable on the fill (7.8:1 on the Linux console); the fill itself is 2.7:1
-// against the console's black, under the 3:1 the glyph colors keep, but it covers the
-// whole cell and does not have to be read.
+// A failure is a filled cell, a white glyph on a red fill, on either background. The fill
+// tells a failure from every level by shape, whatever the color vision. At 24 bits the
+// fill is failureRed darkened until the white reaches the text contrast of 4.5:1
+// (#E72300; xterm 160 at 256 colors), which leaves it over 3:1 against black and white
+// alike. At 16 colors it is the bright white on the normal red: 7.8:1 on the Linux
+// console, whose red is only 2.7:1 against its black, but the fill covers the whole cell
+// and does not have to be read.
 const (
 	failureANSIGlyph = "15"
 	failureANSIFill  = "1"
 )
+
+// white is the failure glyph's color, and white256 its xterm-256 entry, the cube's
+// last.
+var white = srgb{maxChannel, maxChannel, maxChannel}
+
+const white256 = cubeFirst + cubeSide*cubeSide*cubeSide - 1
 
 // Oklab's matrices (Björn Ottosson, "A perceptual color space for image processing",
 // 2020): linear sRGB → LMS → (cube root) → Lab, and back.
@@ -113,12 +122,16 @@ const (
 
 // WCAG 2 contrast: (Y1 + flare) / (Y2 + flare) must reach minContrast. Against white
 // (Y = 1) that caps a color's luminance at maxLumOnLight (0.3); against black (Y = 0) it
-// floors it at minLumOnDark (0.1).
+// floors it at minLumOnDark (0.1). The text contrast caps it at maxLumTextOnLight
+// (0.183) against white: the slowest level on a light background, and the failure fill
+// under its white glyph.
 const (
-	minContrast   = 3.0 // SC 1.4.11 non-text contrast.
-	flare         = 0.05
-	maxLumOnLight = (1+flare)/minContrast - flare
-	minLumOnDark  = minContrast*flare - flare
+	minContrast       = 3.0 // SC 1.4.11 non-text contrast.
+	minTextContrast   = 4.5 // SC 1.4.3 text contrast.
+	flare             = 0.05
+	maxLumOnLight     = (1+flare)/minContrast - flare
+	minLumOnDark      = minContrast*flare - flare
+	maxLumTextOnLight = (1+flare)/minTextContrast - flare
 )
 
 // The xterm-256 palette past the 16 system colors: a 6×6×6 cube (16–231) and a gray
@@ -136,19 +149,30 @@ const (
 var cubeLevels = [cubeSide]int{0x00, 0x5F, 0x87, 0xAF, 0xD7, 0xFF}
 
 // Cell is how a RESULT-bar cell is drawn: its glyph's color and the fill behind it. A
-// fill left empty at some depth (all but 16 colors) keeps the terminal's background.
+// fill left empty keeps the terminal's background.
 type Cell struct {
 	Fg, Bg lipgloss.CompleteAdaptiveColor
 }
 
-// Failure returns how a failed probe (X/t/s) is drawn: in the red, which no ramp level
-// uses, and at 16 colors as the bright white on a red fill, which no level has.
+// Failure returns how a failed probe (X/t/s) is drawn: a white glyph on a red fill at
+// every depth, which no ramp level has.
 func Failure() Cell {
-	fill := lipgloss.CompleteColor{ANSI: failureANSIFill}
+	fill := capLuminance(failureRed, maxLumTextOnLight)
+
+	glyph := lipgloss.CompleteColor{
+		TrueColor: white.hex(),
+		ANSI256:   strconv.Itoa(white256),
+		ANSI:      failureANSIGlyph,
+	}
+	bg := lipgloss.CompleteColor{
+		TrueColor: fill.hex(),
+		ANSI256:   strconv.Itoa(nearest256(fill, underWhiteText)),
+		ANSI:      failureANSIFill,
+	}
 
 	return Cell{
-		Fg: adaptive(failureRed, failureANSIGlyph, failureANSIGlyph),
-		Bg: lipgloss.CompleteAdaptiveColor{Dark: fill, Light: fill},
+		Fg: lipgloss.CompleteAdaptiveColor{Dark: glyph, Light: glyph},
+		Bg: lipgloss.CompleteAdaptiveColor{Dark: bg, Light: bg},
 	}
 }
 
@@ -169,60 +193,85 @@ func Ramp(levels int) []lipgloss.CompleteAdaptiveColor {
 }
 
 // swatch builds the ramp color at position t in [0, 1] for every color depth and
-// background.
+// background. The 16-color stand-in goes by position alone, as if the anchors were
+// evenly spaced: the fast and the slow quarter take the safe and the warning stand-in,
+// the middle half the caution one.
 func swatch(t float64) lipgloss.CompleteAdaptiveColor {
 	near := anchors[int(math.Round(t*float64(len(anchors)-1)))]
-
-	return adaptive(rampAt(t), near.ansiDark, near.ansiLight)
-}
-
-// adaptive expands dark, a color for a dark background, to every color depth and
-// background, with the given ANSI colors for 16 colors.
-func adaptive(dark srgb, ansiDark, ansiLight string) lipgloss.CompleteAdaptiveColor {
-	light := darkenForLight(dark)
+	dark := rampAt(t)
+	light := capLuminance(dark, lightCap(t))
 
 	return lipgloss.CompleteAdaptiveColor{
 		Dark: lipgloss.CompleteColor{
 			TrueColor: dark.hex(),
 			ANSI256:   strconv.Itoa(nearest256(dark, readableOnDark)),
-			ANSI:      ansiDark,
+			ANSI:      near.ansiDark,
 		},
 		Light: lipgloss.CompleteColor{
 			TrueColor: light.hex(),
 			ANSI256:   strconv.Itoa(nearest256(light, readableOnLight)),
-			ANSI:      ansiLight,
+			ANSI:      near.ansiLight,
 		},
 	}
 }
 
-// rampAt interpolates the anchors at position t in [0, 1] in Oklab.
+// rampAt returns the color at position t in [0, 1] along the path through the anchors in
+// Oklab. The position is measured by distance along the path, so evenly spaced
+// positions give evenly spaced colors although the segments differ in length.
 func rampAt(t float64) srgb {
-	pos := t * float64(len(anchors)-1)
-	seg := min(max(int(pos), 0), len(anchors)-2)
-	f := pos - float64(seg)
+	var stops [len(anchors)]vec
+	for i, a := range anchors {
+		stops[i] = a.color.oklab()
+	}
 
-	from, to := anchors[seg].color.oklab(), anchors[seg+1].color.oklab()
+	var lengths [len(anchors) - 1]float64
+
+	total := 0.0
+
+	for i := range lengths {
+		lengths[i] = math.Sqrt(distSq(stops[i], stops[i+1]))
+		total += lengths[i]
+	}
+
+	d, seg := min(max(t, 0), 1)*total, 0
+	for seg < len(lengths)-1 && d > lengths[seg] {
+		d -= lengths[seg]
+		seg++
+	}
+
+	f := d / lengths[seg]
 
 	var mixed vec
 	for i := range mixed {
-		mixed[i] = from[i] + (to[i]-from[i])*f
+		mixed[i] = stops[seg][i] + (stops[seg+1][i]-stops[seg][i])*f
 	}
 
 	return fromLinear(oklabToLinear(mixed), math.Round)
 }
 
-// darkenForLight scales c's linear light down, keeping its chromaticity, until it
-// reaches the minimum contrast against white. The channels are floored when
-// re-encoded so rounding cannot push the luminance back over the cap.
-func darkenForLight(c srgb) srgb {
+// lightCap is the luminance a level at position t may reach on a light background: the
+// 3:1 cap at the fastest level, the 4.5:1 cap at the slowest, and evenly spaced in
+// lightness between them (a gray's Oklab lightness is the cube root of its luminance).
+// The slower a level, the darker it reads, to any color vision.
+func lightCap(t float64) float64 {
+	from, to := math.Cbrt(maxLumOnLight), math.Cbrt(maxLumTextOnLight)
+	l := from + (to-from)*t
+
+	return l * l * l
+}
+
+// capLuminance scales c's linear light down, keeping its chromaticity, until its
+// luminance is at most yMax. The channels are floored when re-encoded so rounding cannot
+// push the luminance back over the cap.
+func capLuminance(c srgb, yMax float64) srgb {
 	lin := c.linear()
 
 	y := luminance(lin)
-	if y <= maxLumOnLight {
+	if y <= yMax {
 		return c
 	}
 
-	k := maxLumOnLight / y
+	k := yMax / y
 	for i := range lin {
 		lin[i] *= k
 	}
@@ -231,10 +280,13 @@ func darkenForLight(c srgb) srgb {
 }
 
 // readableOnDark and readableOnLight report whether c reaches the minimum contrast
-// against black and white respectively.
+// against black and white respectively; underWhiteText, whether white text on c reaches
+// the text contrast.
 func readableOnDark(c srgb) bool { return luminance(c.linear()) >= minLumOnDark }
 
 func readableOnLight(c srgb) bool { return luminance(c.linear()) <= maxLumOnLight }
+
+func underWhiteText(c srgb) bool { return luminance(c.linear()) <= maxLumTextOnLight }
 
 // nearest256 returns the xterm-256 index (16–255) nearest to c in Oklab among those
 // readable says pass.

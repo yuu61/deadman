@@ -57,14 +57,14 @@ func TestRampReference(t *testing.T) {
 	want := []struct {
 		dark, dark256, ansiDark, light, light256, ansiLight string
 	}{
-		{"#03AF7A", "36", "6", "#02A976", "65", "6"},
-		{"#72C36F", "78", "6", "#5FA45C", "65", "6"},
-		{"#AED65C", "149", "11", "#809F42", "100", "3"},
-		{"#E5E838", "184", "11", "#989A21", "136", "3"},
-		{"#FFE100", "220", "11", "#A99500", "136", "3"},
-		{"#FFC200", "214", "11", "#BB8D00", "136", "3"},
-		{"#FFA200", "214", "3", "#D08300", "136", "3"},
-		{"#FF8000", "208", "3", "#E97400", "202", "3"},
+		{"#00AAAA", "37", "6", "#00A5A5", "66", "6"},
+		{"#68BE99", "72", "6", "#559E7F", "65", "6"},
+		{"#9FD083", "150", "11", "#72965D", "101", "3"},
+		{"#D0E161", "185", "11", "#838E3A", "100", "3"},
+		{"#FFF000", "226", "11", "#8E8600", "100", "3"},
+		{"#FFCC00", "220", "11", "#9B7B00", "100", "3"},
+		{"#FFA700", "214", "3", "#AA6E00", "130", "3"},
+		{"#FF8000", "208", "3", "#BB5C00", "130", "3"},
 	}
 
 	got := Ramp(len(want))
@@ -87,54 +87,101 @@ func TestRampReference(t *testing.T) {
 	}
 }
 
-// TestRampAnchors checks the stops land exactly on the anchor colors: level 0 is the
-// safe green and the last level the warning orange at any size, and an odd-sized ramp
-// puts the caution yellow in the middle.
+// TestRampAnchors checks the ends land exactly on the anchor colors, level 0 on the
+// safe cyan and the last level on the warning orange at any size, and that the path
+// runs through the caution yellow: a fine ramp has a level within 0.01 of it in Oklab.
+// (Spacing by distance puts the yellow where the path's length says, not at the middle
+// level.)
 func TestRampAnchors(t *testing.T) {
 	for _, n := range []int{2, 3, 5, 8, 10} {
 		r := Ramp(n)
-		if got := r[0].Dark.TrueColor; got != "#03AF7A" {
-			t.Errorf("Ramp(%d)[0] = %s, want the safe green #03AF7A", n, got)
+		if got := r[0].Dark.TrueColor; got != "#00AAAA" {
+			t.Errorf("Ramp(%d)[0] = %s, want the safe cyan #00AAAA", n, got)
 		}
 
 		if got := r[n-1].Dark.TrueColor; got != "#FF8000" {
 			t.Errorf("Ramp(%d)[%d] = %s, want the warning orange #FF8000", n, n-1, got)
 		}
+	}
 
-		if n%2 == 1 {
-			if got := r[n/2].Dark.TrueColor; got != "#FFF100" {
-				t.Errorf("Ramp(%d)[%d] = %s, want the caution yellow #FFF100", n, n/2, got)
-			}
+	const fine, near = 101, 0.01
+
+	yellow := anchors[1].color.oklab()
+
+	closest := math.Inf(1)
+	for _, c := range Ramp(fine) {
+		closest = min(closest, math.Sqrt(distSq(parseHex(t, c.Dark.TrueColor).oklab(), yellow)))
+	}
+
+	if closest > near {
+		t.Errorf("Ramp(%d) comes no closer than %.3f to the caution yellow", fine, closest)
+	}
+}
+
+// TestRampEvenSteps checks the levels are spaced by distance along the path: for the bar
+// sizes (8 and 10 levels), the smallest step between neighbors is at least 3/4 of the
+// largest. The one short step straddles the caution yellow, where the path turns and
+// the orange segment clips at the edge of sRGB; spacing by the anchors instead left two
+// near-identical levels there (a ratio of 0.4).
+func TestRampEvenSteps(t *testing.T) {
+	const minRatio = 0.75
+
+	for _, n := range []int{8, 10} {
+		r := Ramp(n)
+
+		lo, hi := math.Inf(1), 0.0
+
+		for i := 1; i < n; i++ {
+			d := math.Sqrt(distSq(
+				parseHex(t, r[i-1].Dark.TrueColor).oklab(),
+				parseHex(t, r[i].Dark.TrueColor).oklab(),
+			))
+			lo, hi = min(lo, d), max(hi, d)
+		}
+
+		if lo < minRatio*hi {
+			t.Errorf("Ramp(%d) steps range %.4f..%.4f, want the smallest >= %.2f of the largest",
+				n, lo, hi, minRatio)
 		}
 	}
 }
 
-// TestSeenByProtan checks the reddest colors, the ramp's warning orange and the failure
-// red, keep the 3:1 non-text contrast against black for protan vision too, in 24-bit
-// and 256-color form. Protan vision loses the long wavelengths, so these are the colors
-// that darken most there. Protan vision is simulated with Machado, Oliveira and
-// Fernandes (2009) at severity 1, a matrix on linear sRGB.
-func TestSeenByProtan(t *testing.T) {
-	protan := [3]vec{
-		{0.152286, 1.052583, -0.204868},
-		{0.114503, 0.786281, 0.099216},
-		{-0.003882, -0.048116, 1.051998},
-	}
+// TestRampDarkensOnLight checks the light variant reads darker level by level: its
+// luminance strictly falls, from the 3:1 non-text contrast against white at the fastest
+// level to the 4.5:1 text contrast at the slowest.
+func TestRampDarkensOnLight(t *testing.T) {
+	for n := 2; n <= 12; n++ {
+		r := Ramp(n)
 
-	cases := []struct {
-		name string
-		col  lipgloss.CompleteColor
-	}{
-		{"warning orange", Ramp(len(anchors))[len(anchors)-1].Dark},
-		{"failure red", Failure().Fg.Dark},
-	}
-	for _, k := range cases {
-		for _, c := range []srgb{parseHex(t, k.col.TrueColor), parse256(t, k.col.ANSI256)} {
-			y := luminance(mul(&protan, c.linear()))
-			if got := (y + flare) / flare; got < minContrast {
-				t.Errorf("%s %s seen by protan: contrast %.3f < %.1f on black",
-					k.name, c.hex(), got, minContrast)
+		prev := math.Inf(1)
+
+		for i, c := range r {
+			y := luminance(parseHex(t, c.Light.TrueColor).linear())
+			if y >= prev {
+				t.Errorf("Ramp(%d)[%d] light %s: luminance %.4f does not fall from %.4f",
+					n, i, c.Light.TrueColor, y, prev)
 			}
+
+			prev = y
+		}
+
+		last := luminance(parseHex(t, r[n-1].Light.TrueColor).linear())
+		if got := contrast(last, 1); got < minTextContrast {
+			t.Errorf("Ramp(%d) slowest light level: contrast %.3f < %.1f", n, got, minTextContrast)
+		}
+	}
+}
+
+// TestSeenByProtan checks the reddest level, the warning orange, keeps the 3:1 non-text
+// contrast against black for protan vision too, in 24-bit and 256-color form. Protan
+// vision loses the long wavelengths, so it is the level that darkens most there.
+func TestSeenByProtan(t *testing.T) {
+	col := Ramp(len(anchors))[len(anchors)-1].Dark
+	for _, c := range []srgb{parseHex(t, col.TrueColor), parse256(t, col.ANSI256)} {
+		y := luminance(mul(&protanSim, c.linear()))
+		if got := contrast(y, 0); got < minContrast {
+			t.Errorf("warning orange %s seen by protan: contrast %.3f < %.1f on black",
+				c.hex(), got, minContrast)
 		}
 	}
 }
@@ -174,8 +221,9 @@ func TestRampReadable(t *testing.T) {
 	}
 }
 
-// TestRampHueHeadsToWarning checks the ramp moves one way, green → yellow → orange, with
-// no hue doubling back: the Oklab hue angle strictly decreases level by level.
+// TestRampHueHeadsToWarning checks the ramp moves one way, cyan → yellow → orange, with no
+// hue doubling back: the Oklab hue angle, taken in [0, 2π) since the cyan sits past π,
+// strictly decreases level by level.
 func TestRampHueHeadsToWarning(t *testing.T) {
 	for _, n := range []int{8, 10} {
 		prev := math.Inf(1)
@@ -183,7 +231,7 @@ func TestRampHueHeadsToWarning(t *testing.T) {
 		for i, c := range Ramp(n) {
 			lab := parseHex(t, c.Dark.TrueColor).oklab()
 
-			h := math.Atan2(lab[2], lab[1])
+			h := math.Mod(math.Atan2(lab[2], lab[1])+2*math.Pi, 2*math.Pi)
 			if h >= prev {
 				t.Errorf(
 					"Ramp(%d)[%d] %s: hue %.3f rad does not decrease from %.3f",
@@ -251,8 +299,8 @@ func TestRampDegenerateSizes(t *testing.T) {
 		}
 	}
 
-	if got := Ramp(1); len(got) != 1 || got[0].Dark.TrueColor != "#03AF7A" {
-		t.Errorf("Ramp(1) = %+v, want the single safe green", got)
+	if got := Ramp(1); len(got) != 1 || got[0].Dark.TrueColor != "#00AAAA" {
+		t.Errorf("Ramp(1) = %+v, want the single safe cyan", got)
 	}
 }
 
@@ -292,17 +340,15 @@ func TestXterm256(t *testing.T) {
 	}
 }
 
-// TestFailure pins how a failure is drawn: CUD ver.3's #FF2800 and xterm 196 with no
-// fill on either background, as both already reach 3:1 against black and white, and at
-// 16 colors the bright white on the normal red.
+// TestFailure pins how a failure is drawn: white on #E72300 (#FF2800 darkened to 4.5:1
+// under white), xterm 231 on 160 at 256 colors and the bright white on the normal red at
+// 16 colors, the same on either background.
 func TestFailure(t *testing.T) {
-	fill := lipgloss.CompleteColor{ANSI: "1"}
+	glyph := lipgloss.CompleteColor{TrueColor: "#FFFFFF", ANSI256: "231", ANSI: "15"}
+	fill := lipgloss.CompleteColor{TrueColor: "#E72300", ANSI256: "160", ANSI: "1"}
 
 	want := Cell{
-		Fg: lipgloss.CompleteAdaptiveColor{
-			Dark:  lipgloss.CompleteColor{TrueColor: "#FF2800", ANSI256: "196", ANSI: "15"},
-			Light: lipgloss.CompleteColor{TrueColor: "#FF2800", ANSI256: "196", ANSI: "15"},
-		},
+		Fg: lipgloss.CompleteAdaptiveColor{Dark: glyph, Light: glyph},
 		Bg: lipgloss.CompleteAdaptiveColor{Dark: fill, Light: fill},
 	}
 	if got := Failure(); got != want {
@@ -310,14 +356,53 @@ func TestFailure(t *testing.T) {
 	}
 }
 
+// TestFailureReadable checks the failure cell in 24-bit and 256-color form: the glyph
+// keeps the 4.5:1 text contrast on its fill, and 3:1 to protan and deutan vision; the
+// fill keeps 3:1 against both black and white, so it shows on either background.
+func TestFailureReadable(t *testing.T) {
+	f := Failure()
+
+	pairs := []struct {
+		name        string
+		glyph, fill srgb
+	}{
+		{"24-bit", parseHex(t, f.Fg.Dark.TrueColor), parseHex(t, f.Bg.Dark.TrueColor)},
+		{"256", parse256(t, f.Fg.Dark.ANSI256), parse256(t, f.Bg.Dark.ANSI256)},
+	}
+	for _, p := range pairs {
+		g, b := luminance(p.glyph.linear()), luminance(p.fill.linear())
+		if got := contrast(g, b); got < minTextContrast {
+			t.Errorf("%s glyph %s on %s: contrast %.3f < %.1f",
+				p.name, p.glyph.hex(), p.fill.hex(), got, minTextContrast)
+		}
+
+		for _, bg := range []float64{0, 1} {
+			if got := contrast(b, bg); got < minContrast {
+				t.Errorf("%s fill %s: contrast %.3f < %.1f against Y=%.0f",
+					p.name, p.fill.hex(), got, minContrast, bg)
+			}
+		}
+
+		for name, m := range map[string]*[3]vec{"protan": &protanSim, "deutan": &deutanSim} {
+			g, b := luminance(mul(m, p.glyph.linear())), luminance(mul(m, p.fill.linear()))
+			if got := contrast(g, b); got < minContrast {
+				t.Errorf("%s glyph on fill seen by %s: contrast %.3f < %.1f",
+					p.name, name, got, minContrast)
+			}
+		}
+	}
+}
+
 // TestFailureApartFromRamp checks a failure never looks like a ramp level, at any color
-// depth on either background: its glyph color is one no level uses, and at 16 colors it
-// is also a filled cell, which no level is (Ramp gives glyph colors only).
+// depth on either background: it is a filled cell, which no level is (Ramp gives glyph
+// colors only), and its glyph color is one no level uses.
 func TestFailureApartFromRamp(t *testing.T) {
 	f := Failure()
 
-	if f.Bg.Dark.ANSI == "" || f.Bg.Light.ANSI == "" {
-		t.Errorf("Failure() fill %+v is empty at 16 colors", f.Bg)
+	for _, fill := range []lipgloss.CompleteColor{f.Bg.Dark, f.Bg.Light} {
+		if fill.TrueColor == "" || fill.ANSI256 == "" || fill.ANSI == "" {
+			t.Errorf("Failure() fill %+v is empty at some depth", fill)
+		}
 	}
 
 	for _, n := range []int{8, 10} {

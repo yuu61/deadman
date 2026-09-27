@@ -51,8 +51,8 @@ const spinnerChars = `|/-\`
 var (
 	styleBold = lipgloss.NewStyle().Bold(true)
 	styleDown = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // red: warning lines.
-	// styleFail draws failed probes (X/t/s) in the danger red, which no ramp level uses
-	// (at 16 colors as white on a red fill).
+	// styleFail draws failed probes (X/t/s) as white on a red fill, which no ramp level
+	// has.
 	styleFail = failStyle()
 )
 
