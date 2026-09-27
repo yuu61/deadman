@@ -44,6 +44,11 @@ func parse256(t *testing.T, s string) srgb {
 	return xterm256(i)
 }
 
+// contrast is the WCAG 2 contrast ratio between two relative luminances.
+func contrast(y1, y2 float64) float64 {
+	return (max(y1, y2) + flare) / (min(y1, y2) + flare)
+}
+
 // TestRampReference pins the 8-level ramp (the block and ascii bars) at every depth and
 // background. The 24-bit and 256-color values were computed independently (a Python
 // Oklab/WCAG prototype), so this cross-checks the Go math as well as guarding the
@@ -52,8 +57,8 @@ func TestRampReference(t *testing.T) {
 	want := []struct {
 		dark, dark256, ansiDark, light, light256, ansiLight string
 	}{
-		{"#03AF7A", "36", "10", "#02A976", "65", "2"},
-		{"#72C36F", "78", "10", "#5FA45C", "65", "2"},
+		{"#03AF7A", "36", "6", "#02A976", "65", "6"},
+		{"#72C36F", "78", "6", "#5FA45C", "65", "6"},
 		{"#AED65C", "149", "11", "#809F42", "100", "3"},
 		{"#E5E838", "184", "11", "#989A21", "136", "3"},
 		{"#FFE100", "220", "11", "#A99500", "136", "3"},
@@ -121,7 +126,7 @@ func TestSeenByProtan(t *testing.T) {
 		col  lipgloss.CompleteColor
 	}{
 		{"warning orange", Ramp(len(anchors))[len(anchors)-1].Dark},
-		{"failure red", Failure().Dark},
+		{"failure red", Failure().Fg.Dark},
 	}
 	for _, k := range cases {
 		for _, c := range []srgb{parseHex(t, k.col.TrueColor), parse256(t, k.col.ANSI256)} {
@@ -138,10 +143,6 @@ func TestSeenByProtan(t *testing.T) {
 // of 3:1 on its background: against black for the dark variant, against white for the
 // light one, in both 24-bit and 256-color form.
 func TestRampReadable(t *testing.T) {
-	contrast := func(y1, y2 float64) float64 {
-		return (max(y1, y2) + flare) / (min(y1, y2) + flare)
-	}
-
 	for n := 1; n <= 12; n++ {
 		for i, c := range Ramp(n) {
 			checks := []struct {
@@ -200,18 +201,18 @@ func TestRampHueHeadsToWarning(t *testing.T) {
 }
 
 // TestRampANSIZones checks the 16-color fallback splits the levels among the three
-// anchors by nearness — green for the fast quarter, the orange's stand-in for the slow
-// quarter, yellow between. On a dark background that is the bright green / yellow and
-// the normal yellow; on a light one the normal green / yellow, the yellow covering the
-// slow quarter too. No level falls back to red.
+// anchors by nearness — the green's stand-in for the fast quarter, the orange's for the
+// slow quarter, the yellow's between. The green's is the cyan on either background; the
+// yellow's is the bright yellow on a dark background and the normal one on a light one,
+// where it covers the slow quarter too. No level falls back to red.
 func TestRampANSIZones(t *testing.T) {
 	cases := []struct {
 		n           int
 		dark, light []string
 	}{
-		{8, zones(2, 4, 2, "10", "11"), zones(2, 4, 2, "2", "3")},
-		{10, zones(3, 4, 3, "10", "11"), zones(3, 4, 3, "2", "3")},
-		{3, zones(1, 1, 1, "10", "11"), zones(1, 1, 1, "2", "3")},
+		{8, zones(2, 4, 2, "11"), zones(2, 4, 2, "3")},
+		{10, zones(3, 4, 3, "11"), zones(3, 4, 3, "3")},
+		{3, zones(1, 1, 1, "11"), zones(1, 1, 1, "3")},
 	}
 	for _, c := range cases {
 		var dark, light []string
@@ -234,10 +235,10 @@ func TestRampANSIZones(t *testing.T) {
 	}
 }
 
-// zones spells out a zone split: g copies of green, y of yellow and o of the orange's
-// stand-in, the normal yellow (3) on either background.
-func zones(g, y, o int, green, yellow string) []string {
-	out := slices.Repeat([]string{green}, g)
+// zones spells out a zone split: g copies of the green's stand-in (the cyan, 6), y of
+// the yellow's and o of the orange's (the normal yellow, 3), on either background.
+func zones(g, y, o int, yellow string) []string {
+	out := slices.Repeat([]string{"6"}, g)
 	out = append(out, slices.Repeat([]string{yellow}, y)...)
 
 	return append(out, slices.Repeat([]string{"3"}, o)...)
@@ -291,31 +292,143 @@ func TestXterm256(t *testing.T) {
 	}
 }
 
-// TestFailure pins the failure red: CUD ver.3's #FF2800 and xterm 196 on either
-// background, as both already reach 3:1 against black and white, and at 16 colors the
-// bright red on a dark background and the normal red on a light one.
+// TestFailure pins how a failure is drawn: CUD ver.3's #FF2800 and xterm 196 with no
+// fill on either background, as both already reach 3:1 against black and white, and at
+// 16 colors the bright white on the normal red.
 func TestFailure(t *testing.T) {
-	want := lipgloss.CompleteAdaptiveColor{
-		Dark:  lipgloss.CompleteColor{TrueColor: "#FF2800", ANSI256: "196", ANSI: "9"},
-		Light: lipgloss.CompleteColor{TrueColor: "#FF2800", ANSI256: "196", ANSI: "1"},
+	fill := lipgloss.CompleteColor{ANSI: "1"}
+
+	want := Cell{
+		Fg: lipgloss.CompleteAdaptiveColor{
+			Dark:  lipgloss.CompleteColor{TrueColor: "#FF2800", ANSI256: "196", ANSI: "15"},
+			Light: lipgloss.CompleteColor{TrueColor: "#FF2800", ANSI256: "196", ANSI: "15"},
+		},
+		Bg: lipgloss.CompleteAdaptiveColor{Dark: fill, Light: fill},
 	}
 	if got := Failure(); got != want {
 		t.Errorf("Failure() = %+v, want %+v", got, want)
 	}
 }
 
-// TestFailureApartFromRamp checks a failure can never share a color with a ramp level,
-// at any color depth on either background: no level uses the red.
+// TestFailureApartFromRamp checks a failure never looks like a ramp level, at any color
+// depth on either background: its glyph color is one no level uses, and at 16 colors it
+// is also a filled cell, which no level is (Ramp gives glyph colors only).
 func TestFailureApartFromRamp(t *testing.T) {
 	f := Failure()
 
+	if f.Bg.Dark.ANSI == "" || f.Bg.Light.ANSI == "" {
+		t.Errorf("Failure() fill %+v is empty at 16 colors", f.Bg)
+	}
+
 	for _, n := range []int{8, 10} {
 		for i, c := range Ramp(n) {
-			for _, p := range [][2]lipgloss.CompleteColor{{c.Dark, f.Dark}, {c.Light, f.Light}} {
+			for _, p := range [][2]lipgloss.CompleteColor{{c.Dark, f.Fg.Dark}, {c.Light, f.Fg.Light}} {
 				level, fail := p[0], p[1]
 				if level.TrueColor == fail.TrueColor || level.ANSI256 == fail.ANSI256 ||
 					level.ANSI == fail.ANSI {
 					t.Errorf("Ramp(%d)[%d] %+v collides with Failure %+v", n, i, level, fail)
+				}
+			}
+		}
+	}
+}
+
+// linuxConsole is the Linux virtual console's default palette, indexed by ANSI color
+// (drivers/tty/vt/vt.c default_red/grn/blu): the one 16-color terminal whose shades are
+// known, and deadman's usual 16-color home. Its background is always dark.
+var linuxConsole = [16]srgb{
+	{0x00, 0x00, 0x00},
+	{0xAA, 0x00, 0x00},
+	{0x00, 0xAA, 0x00},
+	{0xAA, 0x55, 0x00},
+	{0x00, 0x00, 0xAA},
+	{0xAA, 0x00, 0xAA},
+	{0x00, 0xAA, 0xAA},
+	{0xAA, 0xAA, 0xAA},
+	{0x55, 0x55, 0x55},
+	{0xFF, 0x55, 0x55},
+	{0x55, 0xFF, 0x55},
+	{0xFF, 0xFF, 0x55},
+	{0x55, 0x55, 0xFF},
+	{0xFF, 0x55, 0xFF},
+	{0x55, 0xFF, 0xFF},
+	{0xFF, 0xFF, 0xFF},
+}
+
+// Machado, Oliveira and Fernandes (2009) at severity 1, matrices on linear sRGB.
+var (
+	protanSim = [3]vec{
+		{0.152286, 1.052583, -0.204868},
+		{0.114503, 0.786281, 0.099216},
+		{-0.003882, -0.048116, 1.051998},
+	}
+	deutanSim = [3]vec{
+		{0.367322, 0.860646, -0.227968},
+		{0.280085, 0.672501, 0.047413},
+		{-0.011820, 0.042940, 0.968881},
+	}
+)
+
+// TestANSIOnLinuxConsole checks the dark 16-color variant on the Linux console's palette:
+// every ramp stand-in keeps 3:1 against black, the failure's glyph keeps the WCAG 2 text
+// contrast of 4.5:1 on its fill, and the three stand-ins stay at least 0.1 apart in
+// Oklab to normal, protan and deutan vision alike (the bright green the safe level used
+// to take was 0.03 from the caution yellow to protan vision).
+func TestANSIOnLinuxConsole(t *testing.T) {
+	const (
+		minTextContrast = 4.5
+		minApart        = 0.1
+	)
+
+	vga := func(s string) srgb {
+		i, err := strconv.Atoi(s)
+		if err != nil || i < 0 || i >= len(linuxConsole) {
+			t.Fatalf("ANSI %q is not a 16-color index", s)
+		}
+
+		return linuxConsole[i]
+	}
+
+	stands := make([]srgb, len(anchors))
+	for i, a := range anchors {
+		stands[i] = vga(a.ansiDark)
+		if got := contrast(luminance(stands[i].linear()), 0); got < minContrast {
+			t.Errorf("anchor %d stand-in %s: contrast %.2f < %.1f on black",
+				i, stands[i].hex(), got, minContrast)
+		}
+	}
+
+	f := Failure()
+	glyph, fill := vga(f.Fg.Dark.ANSI), vga(f.Bg.Dark.ANSI)
+
+	if got := contrast(luminance(glyph.linear()), luminance(fill.linear())); got < minTextContrast {
+		t.Errorf(
+			"failure %s on %s: contrast %.2f < %.1f",
+			glyph.hex(),
+			fill.hex(),
+			got,
+			minTextContrast,
+		)
+	}
+
+	visions := []struct {
+		name string
+		m    *[3]vec
+	}{{"normal", nil}, {"protan", &protanSim}, {"deutan", &deutanSim}}
+	for _, v := range visions {
+		seen := func(c srgb) vec {
+			if v.m == nil {
+				return c.oklab()
+			}
+
+			return fromLinear(mul(v.m, c.linear()), math.Round).oklab()
+		}
+
+		for i := range stands {
+			for j := i + 1; j < len(stands); j++ {
+				if d := math.Sqrt(distSq(seen(stands[i]), seen(stands[j]))); d < minApart {
+					t.Errorf("%s: anchors %d %s and %d %s only %.3f apart",
+						v.name, i, stands[i].hex(), j, stands[j].hex(), d)
 				}
 			}
 		}

@@ -1,5 +1,6 @@
 // Package palette builds the RESULT bar's colors: the RTT ramp safe (green) → caution
-// (yellow) → warning (orange), one color per bar level, and the red of a failed probe.
+// (yellow) → warning (orange), one color per bar level, and how a failed probe is drawn
+// (red).
 //
 // Red is Failure's alone, so the ramp stops at orange. The levels between the anchors
 // are interpolated in Oklab so the steps look even. Color is never the only cue, as the
@@ -11,7 +12,8 @@
 //     reaches the WCAG 2 non-text contrast of 3:1 against white.
 //   - 256 colors: the nearest xterm-256 entry that keeps the same 3:1, skipping the 16
 //     system colors, which themes redefine.
-//   - 16 colors: the anchor's ANSI stand-in, whose exact shade the theme decides.
+//   - 16 colors: the anchor's ANSI stand-in, whose exact shade the theme decides, and
+//     a failure drawn as a filled cell.
 //
 // Why each color was chosen (ISO 22324, CUD, color vision) is in
 // docs/platform_and_font.md.
@@ -31,8 +33,7 @@ type vec [3]float64
 // srgb is a gamma-encoded 8-bit sRGB color, one int per channel in [0, maxChannel].
 type srgb [3]int
 
-// anchor is a base color (a ramp stop or the failure red) and its ANSI stand-ins on a
-// dark and a light background.
+// anchor is a ramp stop and its ANSI stand-ins on a dark and a light background.
 type anchor struct {
 	color               srgb
 	ansiDark, ansiLight string
@@ -40,20 +41,35 @@ type anchor struct {
 
 // anchors are the safe, caution and warning stops, evenly spaced along the ramp: CUD
 // recommended set ver.4 green and yellow, and #FF8000, an orange that stays one at 256
-// colors (xterm 208). The ANSI stand-ins are the bright colors on a dark background and
-// the normal ones on a light one, where the bright ones wash out. The 16 colors have no
-// orange, so it borrows the normal yellow (brown on the Linux console).
+// colors (xterm 208).
+//
+// The green's ANSI stand-in is the cyan: CUD's green leans blue so red-green color
+// vision can tell it from yellow, and of the 16 colors the cyan is the one nearest it
+// (the ANSI green is as yellow as the yellow to protan and deutan vision). The yellow's
+// is the bright yellow on a dark background and the normal one on a light one, where
+// the bright one washes out. The 16 colors have no orange, so it borrows the normal
+// yellow (brown on the Linux console).
 var anchors = [...]anchor{
-	{srgb{0x03, 0xAF, 0x7A}, "10", "2"}, // green: safe.
+	{srgb{0x03, 0xAF, 0x7A}, "6", "6"},  // green: safe.
 	{srgb{0xFF, 0xF1, 0x00}, "11", "3"}, // yellow: caution.
 	{srgb{0xFF, 0x80, 0x00}, "3", "3"},  // orange: warning.
 }
 
-// failure is the red of a failed probe, CUD recommended set ver.3 #FF2800 (xterm 196),
+// failureRed is the red of a failed probe, CUD recommended set ver.3 #FF2800 (xterm 196),
 // readable on both backgrounds. It is given explicitly, not as the terminal's red, which
-// some themes (Solarized) make an orange. On a dark background it takes the bright red,
-// as the Linux console's normal red falls under 3:1 on black.
-var failure = anchor{srgb{0xFF, 0x28, 0x00}, "9", "1"}
+// some themes (Solarized) make an orange.
+var failureRed = srgb{0xFF, 0x28, 0x00}
+
+// At 16 colors a failure is a filled cell instead: the bright white on the normal red,
+// on either background. The fill tells a failure from every level by shape, whatever
+// the color vision, which the 16 colors cannot do by hue alone. The white keeps the
+// glyph readable on the fill (7.8:1 on the Linux console); the fill itself is 2.7:1
+// against the console's black, under the 3:1 the glyph colors keep, but it covers the
+// whole cell and does not have to be read.
+const (
+	failureANSIGlyph = "15"
+	failureANSIFill  = "1"
+)
 
 // Oklab's matrices (Björn Ottosson, "A perceptual color space for image processing",
 // 2020): linear sRGB → LMS → (cube root) → Lab, and back.
@@ -119,9 +135,21 @@ const (
 // cubeLevels are the channel values of the xterm-256 color cube.
 var cubeLevels = [cubeSide]int{0x00, 0x5F, 0x87, 0xAF, 0xD7, 0xFF}
 
-// Failure returns the color of a failed probe (X/t/s). No ramp level uses it.
-func Failure() lipgloss.CompleteAdaptiveColor {
-	return adaptive(failure.color, failure)
+// Cell is how a RESULT-bar cell is drawn: its glyph's color and the fill behind it. A
+// fill left empty at some depth (all but 16 colors) keeps the terminal's background.
+type Cell struct {
+	Fg, Bg lipgloss.CompleteAdaptiveColor
+}
+
+// Failure returns how a failed probe (X/t/s) is drawn: in the red, which no ramp level
+// uses, and at 16 colors as the bright white on a red fill, which no level has.
+func Failure() Cell {
+	fill := lipgloss.CompleteColor{ANSI: failureANSIFill}
+
+	return Cell{
+		Fg: adaptive(failureRed, failureANSIGlyph, failureANSIGlyph),
+		Bg: lipgloss.CompleteAdaptiveColor{Dark: fill, Light: fill},
+	}
 }
 
 // Ramp returns the color of each of levels bar levels, from safe (level 0) to warning
@@ -143,24 +171,26 @@ func Ramp(levels int) []lipgloss.CompleteAdaptiveColor {
 // swatch builds the ramp color at position t in [0, 1] for every color depth and
 // background.
 func swatch(t float64) lipgloss.CompleteAdaptiveColor {
-	return adaptive(rampAt(t), anchors[int(math.Round(t*float64(len(anchors)-1)))])
+	near := anchors[int(math.Round(t*float64(len(anchors)-1)))]
+
+	return adaptive(rampAt(t), near.ansiDark, near.ansiLight)
 }
 
 // adaptive expands dark, a color for a dark background, to every color depth and
-// background, with near's ANSI stand-ins for 16 colors.
-func adaptive(dark srgb, near anchor) lipgloss.CompleteAdaptiveColor {
+// background, with the given ANSI colors for 16 colors.
+func adaptive(dark srgb, ansiDark, ansiLight string) lipgloss.CompleteAdaptiveColor {
 	light := darkenForLight(dark)
 
 	return lipgloss.CompleteAdaptiveColor{
 		Dark: lipgloss.CompleteColor{
 			TrueColor: dark.hex(),
 			ANSI256:   strconv.Itoa(nearest256(dark, readableOnDark)),
-			ANSI:      near.ansiDark,
+			ANSI:      ansiDark,
 		},
 		Light: lipgloss.CompleteColor{
 			TrueColor: light.hex(),
 			ANSI256:   strconv.Itoa(nearest256(light, readableOnLight)),
-			ANSI:      near.ansiLight,
+			ANSI:      ansiLight,
 		},
 	}
 }

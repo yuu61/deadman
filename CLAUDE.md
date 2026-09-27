@@ -60,7 +60,8 @@ deadman）から引き継いだものだが、もはや Python 版とのバイ�
 - `internal/palette` — RESULT バーの RTT 配色（緑 = 安全 → 黄 = 注意 → 橙 = 警戒）。3 色の基準点を
   Oklab で補間し、端末の色数（24 ビット / 256 / 16）と背景の明暗ごとの色（`lipgloss.CompleteAdaptiveColor`）を
   生成する。色は `monitor.Level`（グリフと同じ段階）で引くので、グリフと色は必ず一致する。
-  失敗（X/t/s）は `palette.Failure` の赤で、段階の色には赤を使わない。
+  失敗（X/t/s）は `palette.Failure` の赤で、段階の色には赤を使わない。16 色では失敗を赤地に白で塗り
+  （`palette.Cell` の `Bg`）、色相でなく塗りの有無で段階と見分けられるようにしている。
 - `internal/tui` — Bubble Tea のモデル / 更新 / 描画。背景の明暗判定（`tui.DetectBackground`）は
   **Bubble Tea の起動前に**呼ぶこと。lipgloss は初回の描画で端末に問い合わせる（OSC 11）ため、
   起動後にずれ込むと端末の応答がキー入力として読まれうる。
