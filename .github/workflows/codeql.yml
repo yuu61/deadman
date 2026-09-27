@@ -2,7 +2,7 @@ name: "CodeQL"
 
 on:
   push:
-    branches: ["master"]
+    branches: ["main"]
     # 下記のパスのみが変更されたコミットではスキャンを起動しない。
     # （CodeQL の Go 解析対象でないファイル、およびテストコード）
     paths-ignore:
@@ -17,7 +17,7 @@ on:
       - ".gitignore"
       - "LICENSE"
   pull_request:
-    branches: ["master"]
+    branches: ["main"]
     paths-ignore:
       - "**/*_test.go"
       - "**/*.md"
