@@ -51,7 +51,7 @@ jobs:
         run: make test
 
       - name: Build cross-platform archives and checksums
-        # ビルド・アーカイブ・チェックサムは Makefile が単一の情報源 (CLAUDE.md)。
+        # ビルド・アーカイブ・チェックサムは Makefile が単一の情報源。
         # 同一コミットに複数タグがある場合に git describe が別タグを拾わないよう、
         # 公開する tag を VERSION として明示的に渡し tag_name と一致させる。
         run: make package VERSION=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
