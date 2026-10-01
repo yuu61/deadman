@@ -2,53 +2,70 @@ version: "2"
 
 run:
   tests: true
-  # ビルドタグ付きファイル (reload_unix.go など) も検査するため必要に応じて追加
-  # build-tags: []
+  build-tags:
+    - manual
 
 linters:
   default: all
 
   disable:
+    # golangci-lint が非推奨にした旧版。default: all は非推奨の旧版も有効にするため、
+    # 後継 (wsl_v5・gomodguard_v2・exhaustruct_v5) と二重になるのを避けて無効にする。
     - wsl
     - gomodguard
-    - varnamelen
-    # exhaustruct は v2.13 で非推奨となり exhaustruct_v5 に置き換わったが、
-    # default: all は非推奨の旧版も有効にするため両方を無効にする。
     - exhaustruct
-    - exhaustruct_v5
-    - ireturn
-    - err113
-    - wrapcheck
+    # --- 以下は理由付きの例外。---
+    # 非公開の状態機械や変換を直接検証する白箱テストが前提。外部テストパッケージにすると、
+    # 検証のためだけに公開面を広げることになる (58 ファイル)。
     - testpackage
-    - paralleltest
-    - gochecknoglobals
 
   settings:
     errcheck:
       check-type-assertions: true
-      check-blank: false
+      check-blank: true
+      # 後始末の Close のうち、読み取り専用の資源とソケットの Close。結果はすでに決まっていて、失敗しても
+      # 回復できない。*os.File と io.Closer の Close は除外しない: 書き込んだファイルの Close は結果に
+      # 意味があり、`defer f.Close()` の取りこぼしを拾いたい。本体のソケットは prober.discard で明示する。
+      exclude-functions:
+        - (io.ReadCloser).Close
+        - (*os.Root).Close
+        - (net.Conn).Close
+        - (net.PacketConn).Close
+        - (github.com/yuu61/deadman/internal/infrastructure/prober.replyWaiter).close
+        - (*golang.org/x/net/icmp.PacketConn).Close
+        - (*github.com/gosnmp/gosnmp.GoSNMP).Close
+        - (*github.com/quic-go/quic-go.Conn).CloseWithError
+        - golang.org/x/sys/unix.Close
 
     govet:
       enable-all: true
+      settings:
+        # 隠した変数を後で使わなくても報告する。本体だけに課す (テストは exclusions で除く)。
+        shadow:
+          strict: true
       disable:
+        # フィールドを意味のまとまりで並べているので、詰め替えは読みやすさを落とす。
+        # 得られるのはメモリの節約だけで、安全性には効かない。
         - fieldalignment
 
     gocritic:
       enable-all: true
       disabled-checks:
-        # Model は bubbletea の value-Model (Elm) 設計で値レシーバにより状態を
-        # 受け渡すため hugeParam と相反する。
-        - hugeParam
-        # nonamedreturns を有効にしているため、名前付き戻り値を促す
-        # unnamedResult とは方針が衝突する。
+        # nonamedreturns を有効にしているため、名前付き戻り値を促す unnamedResult とは方針が衝突する。
         - unnamedResult
+      settings:
+        hugeParam:
+          # 既定の 80 バイトは、値で持ち回す値オブジェクト (probe.Plan など) まで拾う。
+          # 値渡しは nil の危険がなく、読み手へ切り離したコピーを渡す方針にも沿う。
+          # 256 バイトを超える構造体を値で渡したときだけ報告する。
+          sizeThreshold: 256
 
+    # 半分・対 (x / 2・len(parts) != 2) の 2 は名前を付けても読みやすくならない。
     mnd:
       ignored-numbers:
         - "2"
 
-    # テストのケース名・期待値はモード名と綴りが重なりがちだが定数化は不自然なので、
-    # goconst はテストファイルを数えない (exclusions の test 除外と方針を合わせる)。
+    # テストのケース名・期待値はモード名と綴りが重なりがちだが、定数化は不自然。
     goconst:
       ignore-tests: true
 
@@ -56,23 +73,39 @@ linters:
       checks:
         - all
 
+    forbidigo:
+      forbid:
+        - pattern: 'time\.Sleep'
+        - pattern: 'time\.Tick'
+        # Bubble Tea が端末を握るので、標準出力への直接の書き込みは画面を壊す。
+        - pattern: '^(fmt\.Print(|f|ln)|print|println)$'
+        - pattern: '^log\.(Print|Fatal|Panic)(|f|ln)$'
+        # defer を飛ばして終わる。終了コードを決めるのは cmd/deadman の main だけ (exclusions で許す)。
+        - pattern: '^os\.Exit$'
+
     revive:
       enable-all-rules: true
       rules:
-        - name: add-constant
-          disabled: true
+        # 次の 7 つは専用のリンターと同じ検査で、有効にすると同じ行が二重に報告される。
+        # 閾値は専用側で持つ: lll・mnd と goconst・gocognit・funlen・cyclop と gocyclo・errcheck・nakedret。
         - name: line-length-limit
           disabled: true
-        - name: unhandled-error
+        - name: add-constant
           disabled: true
         - name: cognitive-complexity
           disabled: true
+        - name: function-length
+          disabled: true
         - name: cyclomatic
           disabled: true
-        - name: function-length
+        - name: unhandled-error
           disabled: true
         - name: bare-return
           disabled: true
+        # ProbeWarning と5種類の診断型を、選択規則と同じファイルに置く。
+        # このルールは interface も数えるため、上限を6にする。
+        - name: max-public-structs
+          arguments: [6]
 
     # --- 複雑度・サイズ系 (厳しいが現実的な値。必要に応じて緩める) ---
     cyclop:
@@ -83,12 +116,12 @@ linters:
     gocognit:
       min-complexity: 15
     nestif:
-      min-complexity: 4
+      min-complexity: 3
     funlen:
       lines: 60
       statements: 40
     maintidx:
-      under: 20
+      under: 30
     nakedret:
       max-func-lines: 0
     lll:
@@ -109,17 +142,113 @@ linters:
     misspell:
       locale: US
       # RouterOS (MikroTik) を指す固有名詞。misspell が "routers" の誤字と
-      # 誤検知するため除外する。via 属性値 routeros_api はユーザー向けの契約。
+      # 誤検知するため除外する。probe=routeros はユーザー向けの契約。
       ignore-rules:
         - routeros
+    tagliatelle:
+      case:
+        overrides:
+          # RouterOS REST API の応答は kebab-case の JSON（packet-loss, min-rtt）。
+          - pkg: internal/infrastructure/prober
+            rules:
+              json: kebab
     nolintlint:
       # //nolint には理由コメントと対象リンター名を必須にする
       require-explanation: true
       require-specific: true
+      allow-unused: false
+
+    # --- 理由付きで絞って有効にするもの ---
+    # プローブ・設定・ポートなど、意図して interface を返す箇所だけを許す。新しい interface 返しは報告される。
+    ireturn:
+      allow:
+        - anon
+        - error
+        - empty
+        - stdlib
+        - generic
+        - ^github\.com/yuu61/deadman/internal/domain/probe\.(Params|Pinger)$
+        - ^github\.com/yuu61/deadman/internal/application/config\.Line$
+        - ^github\.com/yuu61/deadman/internal/infrastructure/prober\.(echoFamily|linkTransport|replyWaiter)$
+        - ^golang\.org/x/sys/unix\.Sockaddr$
+        - ^github\.com/charmbracelet/bubbletea\.Model$
+    unparam:
+      check-exported: true
+    reassign:
+      patterns:
+        - ".*"
+    nonamedreturns:
+      report-error-in-defer: true
+    # 全テストが直列で t.Parallel() が 1 つもないので、付けることは求めない。付けたときの誤用
+    # (Setenv との併用、後始末の defer) だけを拾う。
+    paralleltest:
+      ignore-missing: true
+      check-cleanup: true
+    # 単文字の名前を 20 行を超える範囲で使う箇所を本体で縛る (テストは exclusions で除く)。
+    varnamelen:
+      max-distance: 20
+      min-name-length: 2
+      ignore-type-assert-ok: true
+      ignore-map-index-ok: true
+      ignore-chan-recv-ok: true
+      ignore-names:
+        - err
+        - ok
+        - id
+        - ip
+        - fd
+        - tc
+        - tt
+        - wg
+        - mu
+    embeddedstructfieldcheck:
+      empty-line: true
+      forbid-mutex: true
+    usetesting:
+      os-create-temp: true
+      os-mkdir-temp: true
+      os-setenv: true
+      os-temp-dir: true
+      os-chdir: true
+      context-background: true
+      context-todo: true
+    wrapcheck:
+      # 操作名と対象をすでに含むエラー (os の PathError・strconv の NumError・net の OpError・flag の
+      # 誤りの文言) と、利用者にそのまま見せる自前パッケージのエラー (文言は発生源で完結し、CLI と
+      # リロードの失敗が原文のまま報告する) は、包み直さない。包むのは、操作名を持たない生の errno と
+      # サードパーティのエラー。
+      ignore-package-globs:
+        - bufio
+        - flag
+        - net
+        - os
+        - strconv
+        - github.com/yuu61/deadman/*
+      extra-ignore-sigs:
+        # 文脈の取り消し (ctx.Err) は、呼び出し側が取り消しを見分けるために素のまま返す。
+        - (context.Context).Err(
+        # クロージャの結果を返すだけで、クロージャの中で文脈を付けている。
+        - (syscall.RawConn).Control(
+        - (syscall.RawConn).Write(
+    # 構造体は、型に //exhaustruct:enforce を付けたものだけ全フィールドの指定を求める。
+    # 付けるのは、リテラルを書く側が新しいフィールドを無視すると実行時に壊れる型 (組み立て・DTO)。
+    exhaustruct_v5:
+      explicit-mode: true
 
     # --- 列挙・網羅性 ---
+    # check は既定の switch だけ。map は対象にしない: OS は未知の名前をそのまま通す開いた列挙で、
+    # FamilyUnknown は解決時に決まるので、引き表 (sourceFlags・familyNetworks) は部分的であることが
+    # 意図で、テストが網羅を保証している。
     exhaustive:
       default-signifies-exhaustive: false
+    # 閉じた型 (//sumtype:decl の probe.Params / monitoring.Line / monitoring.Diagnostic) の型 switch も、
+    # exhaustive と同じく default 節があっても全ケースの列挙を求める (revive の
+    # enforce-switch-style が default 節を必須にするため、既定のままでは検査が働かない)。
+    # 閉じた型の一部をまとめる閉じた部分型 (monitoring.ProbeWarning) は、1 つの case で受けてから
+    # 内側の switch で網羅してよい (include-shared-interfaces)。部分型も //sumtype:decl にする。
+    gochecksumtype:
+      default-signifies-exhaustive: false
+      include-shared-interfaces: true
 
     # depguard はポリシー指定が必須。
     # デフォルトのままだと「標準ライブラリ以外すべて禁止」になり自前パッケージも弾かれるため、非推奨パッケージのみを禁止するdenyリスト方式 (lax: それ以外は許可) にする。
@@ -135,24 +264,187 @@ linters:
             - pkg: github.com/golang/protobuf
               desc: google.golang.org/protobuf を使う
 
+        # --- DDD レイヤの依存方向 (domain ← application ← presentation / infrastructure) ---
+        # 組み立て (composition root) は cmd/deadman だけが行い、ここでは縛らない。
+        # 依存を内側へ向けたいときは、内側の層にポート (interface / 関数型) を置き、外側で実装する。
+        domain:
+          list-mode: lax
+          files:
+            - "**/internal/domain/**"
+          deny:
+            - pkg: github.com/yuu61/deadman/internal/application
+              desc: domain は他の層に依存しない
+            - pkg: github.com/yuu61/deadman/internal/infrastructure
+              desc: domain は他の層に依存しない (I/O は infrastructure に置き、ポート越しに使う)
+            - pkg: github.com/yuu61/deadman/internal/presentation
+              desc: domain は他の層に依存しない
+            - pkg: github.com/charmbracelet
+              desc: TUI ライブラリは presentation だけが使う
+            - pkg: github.com/muesli
+              desc: TUI ライブラリは presentation だけが使う
+            - pkg: github.com/prometheus-community/pro-bing
+              desc: プローブの実装は infrastructure に置く
+            - pkg: github.com/quic-go/quic-go
+              desc: プローブの実装は infrastructure に置く
+            - pkg: github.com/gosnmp/gosnmp
+              desc: プローブの実装は infrastructure に置く
+            - pkg: golang.org/x/net
+              desc: プローブの実装は infrastructure に置く
+            - pkg: golang.org/x/sys
+              desc: OS 依存の処理は infrastructure に置く
+        application:
+          list-mode: lax
+          files:
+            - "**/internal/application/**"
+          deny:
+            - pkg: github.com/yuu61/deadman/internal/infrastructure
+              desc: application は infrastructure をポート (monitoring.Ports) 越しに使う
+            - pkg: github.com/yuu61/deadman/internal/presentation
+              desc: application は presentation に依存しない
+            - pkg: github.com/charmbracelet
+              desc: TUI ライブラリは presentation だけが使う
+            - pkg: github.com/muesli
+              desc: TUI ライブラリは presentation だけが使う
+            - pkg: github.com/prometheus-community/pro-bing
+              desc: プローブの実装は infrastructure に置く
+            - pkg: github.com/quic-go/quic-go
+              desc: プローブの実装は infrastructure に置く
+            - pkg: github.com/gosnmp/gosnmp
+              desc: プローブの実装は infrastructure に置く
+            - pkg: golang.org/x/net
+              desc: プローブの実装は infrastructure に置く
+            - pkg: golang.org/x/sys
+              desc: OS 依存の処理は infrastructure に置く
+        infrastructure:
+          list-mode: lax
+          files:
+            - "**/internal/infrastructure/**"
+          deny:
+            - pkg: github.com/yuu61/deadman/internal/presentation
+              desc: infrastructure は presentation に依存しない
+            - pkg: github.com/charmbracelet
+              desc: TUI ライブラリは presentation だけが使う
+            - pkg: github.com/muesli
+              desc: TUI ライブラリは presentation だけが使う
+            - pkg: github.com/yuu61/deadman/internal/application/monitoring
+              desc: infrastructure はポート (monitoring.Ports) を構造的に満たすだけで、ユースケースを import しない
+        # application を import してよいアダプタは configfile だけ (ConfigSource ポートが返す application/config の DTO を作るため)。
+        # ほかのアダプタが要る語彙や値は domain に置く。
+        infrastructure-adapters:
+          list-mode: lax
+          files:
+            - "**/internal/infrastructure/**"
+            - "!**/internal/infrastructure/configfile/**"
+          deny:
+            - pkg: github.com/yuu61/deadman/internal/application
+              desc: configfile 以外のアダプタは application に依存しない (必要な語彙は domain に置く)
+        presentation:
+          list-mode: lax
+          files:
+            - "**/internal/presentation/**"
+          deny:
+            - pkg: github.com/yuu61/deadman/internal/infrastructure
+              desc: presentation は infrastructure を application のポート越しに使う
+
   exclusions:
     generated: lax
     rules:
-      # テストのテーブル/ヘルパーは構造上「複雑・長大」になりがちだが、
-      # 分割すると可読性が下がるため複雑度・長さ系のみ除外する。
-      - path: _test\.go
-        linters:
-          - gocyclo
-          - gocognit
-          - cyclop
-          - funlen
-          - maintidx
-          - goconst
+      # Windows の Job Object API は型付き構造体を uintptr で受け取る。OS へ渡す
+      # 実在する構造体のアドレスと sizeof だけで、ポインタ演算や寿命外の参照はしない。
+      - linters: [gosec]
+        path: internal/infrastructure/prober/exec_windows\.go
+        text: 'G103: Use of unsafe calls should be audited'
+      # bubbletea の Model は値レシーバで状態を受け渡す (Elm 設計) ので、値渡しの大きさを咎められない。
+      - linters: [gocritic]
+        path: ^(cmd/deadman|internal/presentation/tui)/
+        text: 'hugeParam: m is heavy'
+      # 監視セッションと世代は、自身の寿命を context で持ち、その寿命のタスクへ渡す。
+      # 寿命の持ち主が context を持つのは正当な構造なので、このファイルだけを除外する。
+      - linters: [containedctx]
+        path: internal/application/monitoring/session\.go
+      # 設定の誤りは利用者に見せる文言が目的で、呼び出し側が errors.Is で分岐しない。
+      # 番兵エラーを増やしても得るものがないので、動的エラーの指摘だけを除外する。
+      # エラーを == で比較する指摘は残す。
+      - linters: [err113]
+        text: 'do not define dynamic errors'
+      # テストのヘルパーが interface (Msg・Event など) を返すのは構造上避けられない。
+      - linters: [ireturn]
+        path: _test\.go
+      # パッケージ変数は、書き換えない表と、同期を持つプロセス共有の状態だけを許す。新しいパッケージ変数は、
+      # ここに足す変更として見えるようにする (テストの固定値は除く)。Go には定数にできない表
+      # (配列・スライス・マップ・構造体) があり、以下は読み取り専用。
+      - linters: [gochecknoglobals]
+        path: internal/presentation/palette/palette\.go
+        text: '^(anchors|failureRed|white|linearToLMS|lmsToLab|labToLMS|lmsToLinear|luminanceWeights|cubeLevels) is a global variable$'
+      - linters: [gochecknoglobals]
+        path: internal/presentation/resultbar/bar\.go
+        text: '^barSets is a global variable$'
+      - linters: [gochecknoglobals]
+        path: internal/presentation/tui/(columns|prefs|styles)\.go
+        text: '^(precisionModes|structuralCols|statColumns|logFactors|scaleSteps|styleBold|styleDown|styleFail|rttStyles) is a global variable$'
+      - linters: [gochecknoglobals]
+        path: internal/infrastructure/configfile/(parse|probe)\.go
+        text: '^(directives|readers) is a global variable$'
+      - linters: [gochecknoglobals]
+        path: internal/domain/probe/method\.go
+        text: '^methodNames is a global variable$'
+      - linters: [gochecknoglobals]
+        path: internal/infrastructure/logfile/logging\.go
+        text: '^statusWords is a global variable$'
+      - linters: [gochecknoglobals]
+        path: internal/infrastructure/prober/(match_echo|prober|snmp|subprocess)\.go
+        text: '^(echoKindV4|echoKindV6|familyNetworks|resultColumns|snmpNumberTypes|sourceFlags) is a global variable$'
+      # 同期を持つプロセス共有の状態: ICMP の id の採番 (atomic)、特権で送れるかの 1 回きりの判定、
+      # SNMP の自プロセスの識別子 (起動時に決めて以後は読むだけ)、SNMP の行ごとのロック表 (mutex)。
+      - linters: [gochecknoglobals]
+        path: internal/infrastructure/prober/(icmp|snmp)\.go
+        text: '^(probeCounter|useICMPPrivileged|snmpInstance|snmpEntries) is a global variable$'
+      - linters: [gochecknoglobals]
+        path: _test\.go
+      # テストの後始末 (パイプ・ファイルの Close、フェイクの応答の書き込み) の結果は検査しない。
+      - linters: [errcheck]
+        path: _test\.go
+        text: 'Error return value of `[^`]*\.(Close|Write|WriteTo)` is not checked'
+      # 設定ファイルは読み取り専用に開くので、Close の結果に意味がない。
+      - linters: [errcheck]
+        path: internal/infrastructure/configfile/parse\.go
+        text: 'Error return value of `f\.Close` is not checked'
+      # 終了コードを決めるのは cmd/deadman の main だけ。
+      - linters: [forbidigo]
+        path: cmd/deadman/main\.go
+        text: 'os\.Exit'
+      # テストは標準エラーなどを差し替えて出力を受け取る。
+      - linters: [reassign]
+        path: _test\.go
+      # テストは意図して一部のポートだけを埋めたフェイクを組み立てる。
+      - linters: [exhaustruct_v5]
+        path: _test\.go
+      # メモリ・fd のリーク確認は、強制 GC のあとに数えることが検査そのもの。
+      - linters: [revive]
+        path: _manual_test\.go
+        text: 'call-to-gc'
+      # テストが走らせるコマンドは、テスト自身が書いた定数で、外部の入力を含まない。
+      - linters: [gosec]
+        path: _test\.go
+        text: 'G204'
+      # テストの変数名は、短くても読み手が文脈から読める (表のケース・ヘルパー)。隠した変数も同様。
+      - linters: [varnamelen]
+        path: _test\.go
+      - linters: [govet]
+        path: _test\.go
+        text: 'shadow: declaration of'
+      # テストのテーブルとヘルパーは構造上「複雑・長大」になりがちで、分割すると可読性が下がる。
+      # 複雑度・長さの上限は、本体のコードにだけ課す。
+      - linters: [cyclop, gocyclo, gocognit, funlen, maintidx]
+        path: _test\.go
 
 issues:
   # 同種・同一リンターの指摘を間引かず、すべて表示する (既定は 3 / 50)。
   max-same-issues: 0
   max-issues-per-linter: 0
+  # 同じ行に別のリンターが指摘しても隠さない (既定は 1 行 1 件)。隠れた指摘は、先のものを直した
+  # あとに現れて、修正とレビューの往復を増やす。
+  uniq-by-line: false
 
 formatters:
   enable:

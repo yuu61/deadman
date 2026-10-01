@@ -4,110 +4,30 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
+	"slices"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/yuu61/deadman/internal/config"
-	"github.com/yuu61/deadman/internal/monitor"
-	"github.com/yuu61/deadman/internal/termfont"
-	"github.com/yuu61/deadman/internal/tui"
+	"github.com/yuu61/deadman/internal/application/config"
+	"github.com/yuu61/deadman/internal/application/monitoring"
+	"github.com/yuu61/deadman/internal/infrastructure/configfile"
+	"github.com/yuu61/deadman/internal/infrastructure/hostinfo"
+	"github.com/yuu61/deadman/internal/infrastructure/logfile"
+	"github.com/yuu61/deadman/internal/infrastructure/prober"
+	"github.com/yuu61/deadman/internal/infrastructure/termfont"
+	"github.com/yuu61/deadman/internal/presentation/resultbar"
+	"github.com/yuu61/deadman/internal/presentation/tui"
 )
 
 // version is the build version shown in the TUI title bar. It is overridden at build
 // time via -ldflags "-X main.version=..." (see the Makefile, which derives it from git
 // describe); a plain `go install`/`go build` leaves it at "dev".
 var version = "dev"
-
-// resolveScale picks the effective RTT-bar scale: an explicit, usable CLI -s wins, else a
-// config "scale" directive, else config.DefaultScale. 0 means "unset" for both inputs (the
-// -s flag defaults to 0, and a missing or invalid "scale" directive leaves cfg.Scale at 0),
-// so a config scale can take effect when -s is absent.
-//
-// Both inputs go through the same config.ValidScale predicate the "scale" directive uses,
-// so a non-finite or out-of-range value (e.g. -s Inf, which flag.Float64 accepts) is
-// dropped rather than flattening every bar. The rejection is not fatal and is surfaced as
-// a startup warning by parseArgs (which alone can tell an explicit -s 0 from an unset one).
-func resolveScale(cli, cfg float64) float64 {
-	if config.ValidScale(cli) {
-		return cli
-	}
-
-	return config.ScaleOrDefault(cfg)
-}
-
-// scaleWarning builds the operator-facing warning for an explicitly-passed but unusable -s
-// value (0, negative, inf, nan, or out of range). It names the rejected value and the
-// usable window — formatted from config's bounds so the prose can't drift from the
-// predicate — but deliberately NOT the effective scale: the warning is rendered
-// persistently in the header while the live scale can still change (↑/↓), so embedding
-// "using Nms" would go stale. The footer's "RTT Scale" line always shows the value in
-// effect, so the operator can read the real scale there.
-//
-// The rejected value uses %g while the bounds use FormatFloat 'f' on purpose, not by
-// oversight: the value is arbitrary operator input that may be extreme, and %g keeps
-// -s 1e-300 a compact "1e-300" rather than the ~300-digit decimal 'f' would emit (the
-// very label ballooning MinScale exists to reject); the bounds are known round numbers
-// that read cleanest in plain 'f' (0.0001..1000000, no "1e+06").
-func scaleWarning(cli float64) string {
-	return fmt.Sprintf(
-		"-s %g ignored: not a usable RTT-bar scale (%s..%s ms); using the configured or default scale",
-		cli,
-		strconv.FormatFloat(config.MinScale, 'f', -1, 64),
-		strconv.FormatFloat(config.MaxScale, 'f', -1, 64),
-	)
-}
-
-// glyphAuto is the -g / "glyph" value that lets the terminal decide the RESULT-bar glyph
-// set: the block elements where they can render, else ASCII (see resolveGlyph).
-const glyphAuto = "auto"
-
-// glyphChoices lists every -g / "glyph" value for the usage and error text: auto first,
-// then the glyph sets from monitor, so the list cannot drift from ParseBar.
-func glyphChoices() string {
-	return strings.Join(append([]string{glyphAuto}, monitor.BarNames()...), ", ")
-}
-
-// validGlyph reports whether s is a -g value: auto or a monitor glyph-set name (both
-// case-insensitive, like the config directive keywords).
-func validGlyph(s string) bool {
-	if strings.EqualFold(s, glyphAuto) {
-		return true
-	}
-
-	_, ok := monitor.ParseBar(s)
-
-	return ok
-}
-
-// resolveGlyph picks the RESULT-bar glyph set name: an explicit CLI -g wins, else a
-// config "glyph" directive, else auto. "" means unset for both inputs, and an unknown
-// directive value is ignored (lenient, like "precision"), so it lands on auto too — as
-// does an explicit -g auto, which overrides a set named in the config. Auto asks
-// blockOK whether the terminal can render the block elements and falls back to ASCII,
-// which keeps the same levels and thresholds, so -s/scale means the same either way.
-// blockOK is only called on the auto path, keeping the terminal probe off the others.
-func resolveGlyph(cli, cfg string, blockOK func() bool) string {
-	choice := cli
-	if choice == "" {
-		choice = cfg
-	}
-
-	if b, ok := monitor.ParseBar(choice); ok {
-		return b.String()
-	}
-
-	if blockOK() {
-		return monitor.BarBlock.String()
-	}
-
-	return monitor.BarASCII.String()
-}
 
 // glyphFlag registers -g/--glyph on fs and returns where the parsed value lands. The
 // value is validated as it is parsed, so a typo is a usage error rather than a silent
@@ -116,15 +36,14 @@ func glyphFlag(fs *flag.FlagSet) *string {
 	var glyph string
 
 	// The backquoted word names the value in -h ("-g set").
-	usage := "RESULT bar glyph `set`: " + glyphChoices() + " (default " + glyphAuto + ")"
+	usage := "RESULT bar glyph `set`: " + tui.GlyphChoices() + " (default " + tui.GlyphAuto + ")"
 	set := func(s string) error {
-		if !validGlyph(s) {
-			return fmt.Errorf("unknown glyph set %q (want one of: %s)", s, glyphChoices())
+		err := tui.CheckGlyph(s)
+		if err == nil {
+			glyph = s
 		}
 
-		glyph = s
-
-		return nil
+		return err
 	}
 
 	fs.Func("g", usage, set)
@@ -133,15 +52,24 @@ func glyphFlag(fs *flag.FlagSet) *string {
 	return &glyph
 }
 
-// parseArgs parses the command line into TUI options. Flags may appear before or
-// after the configfile; Go's flag package stops at the first non-flag argument, so
-// we collect positionals and re-parse the remainder to let flags and the
-// configfile intermix.
-func parseArgs(args []string) (tui.Options, error) {
+// cliArgs is the parsed command line: what to monitor and log (for the composition
+// root), how to probe, and the display flags (resolved by the TUI against the config).
+type cliArgs struct {
+	ConfigPath string
+	LogDir     string
+	Async      bool
+	Blink      bool
+	Display    tui.Flags
+}
+
+// parseArgs parses the command line. Flags may appear before or after the configfile;
+// Go's flag package stops at the first non-flag argument, so we collect positionals and
+// re-parse the remainder to let flags and the configfile intermix.
+func parseArgs(args []string) (cliArgs, error) {
 	fs := flag.NewFlagSet("deadman", flag.ContinueOnError)
 	scaleUsage := fmt.Sprintf(
 		"scale of ping RTT bar gap (ms, default %g, decimals allowed)",
-		config.DefaultScale,
+		resultbar.DefaultScale,
 	)
 	scale := fs.Float64("s", 0, scaleUsage)
 	fs.Float64Var(scale, "scale", 0, scaleUsage)
@@ -161,7 +89,7 @@ func parseArgs(args []string) (tui.Options, error) {
 	for {
 		err := fs.Parse(rest)
 		if err != nil {
-			return tui.Options{}, err
+			return cliArgs{}, err
 		}
 
 		rest = fs.Args()
@@ -174,81 +102,114 @@ func parseArgs(args []string) (tui.Options, error) {
 	}
 
 	if len(positional) < 1 {
-		return tui.Options{}, errors.New("configfile is required")
+		return cliArgs{}, errors.New("configfile is required")
 	}
 	// Exactly one configfile is accepted. Erroring on extras (rather than silently
 	// using the first) also closes a `--` foot-gun: `deadman -- -a cfg.conf` previously
 	// dropped cfg.conf and ran the nonexistent file "-a".
 	if len(positional) > 1 {
-		return tui.Options{}, fmt.Errorf(
+		return cliArgs{}, fmt.Errorf(
 			"only one configfile may be given, got %d: %v",
 			len(positional), positional,
 		)
 	}
 
-	opts := tui.Options{
+	return cliArgs{
+		ConfigPath: positional[0],
+		LogDir:     *logdir,
 		Async:      *async,
 		Blink:      *blink,
-		Scale:      *scale,
-		LogDir:     *logdir,
-		Cols:       *cols,
-		Glyph:      *glyph,
-		ConfigPath: positional[0],
-	}
-
-	// Surface an explicitly-passed but unusable -s as a startup warning. The value is still
-	// dropped and the configured/default scale is used (see resolveScale); this only makes
-	// the silently-ignored input visible.
-	if scaleFlagSet(fs) && !config.ValidScale(*scale) {
-		opts.Warnings = append(opts.Warnings, scaleWarning(*scale))
-	}
-
-	return opts, nil
+		Display: tui.Flags{
+			Scale:    *scale,
+			ScaleSet: flagGiven(fs, "s", "scale"),
+			Glyph:    *glyph,
+			Cols:     *cols,
+			ColsSet:  flagGiven(fs, "c", "split"),
+		},
+	}, nil
 }
 
-// scaleFlagSet reports whether -s or --scale was actually given on the command line. It
-// distinguishes an explicit `-s 0` (a rejected value worth warning about) from an unset -s
-// — the *scale == 0 sentinel cannot, since both leave it at the flag's 0 default — by
-// asking the flag set which flags were set rather than inspecting the parsed value.
-func scaleFlagSet(fs *flag.FlagSet) bool {
-	set := false
+// flagGiven reports whether a flag under any of names was actually given on the command
+// line. It distinguishes an explicit `-s 0` or `-c 0` (a rejected value the TUI warns
+// about) from an unset flag — the parsed value cannot, since both leave it at the flag's
+// 0 default — by asking the flag set which flags were set.
+func flagGiven(fs *flag.FlagSet, names ...string) bool {
+	given := false
 
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "s" || f.Name == "scale" {
-			set = true
-		}
+		given = given || slices.Contains(names, f.Name)
 	})
 
-	return set
+	return given
 }
 
-// resolveCols picks the newspaper-column count: an explicit CLI -c/--split wins,
-// else a config "split" directive, else a single column. 0 means "unset" for both
-// inputs (the -c flag defaults to 0, and a missing/invalid "split" directive leaves
-// cfg at 0), and tui.New normalizes a non-positive count to 1.
-func resolveCols(cli, cfg int) int {
-	if cli > 0 {
-		return cli
+// newService wires the application service to the real adapters (see newPorts). The
+// returned LogWriter (nil without -l) must be closed once monitoring has stopped, to flush
+// its queued lines.
+func newService(configPath, logDir string) (*monitoring.Service, *logfile.LogWriter) {
+	ports, logWriter := newPorts(configPath, logDir)
+
+	return monitoring.NewService(ports), logWriter
+}
+
+// newPorts binds the application's ports to the real adapters: the probing modes, the
+// config file at configPath (read at start and reread by a reload), this host's probing
+// capabilities, and — with -l — the per-probe log files, written by the returned
+// LogWriter. The session waits in real time.
+func newPorts(configPath, logDir string) (monitoring.Ports, *logfile.LogWriter) {
+	ports := monitoring.Ports{
+		NewPinger:  prober.New,
+		LoadConfig: func(ctx context.Context) (config.Config, error) { return configfile.Load(ctx, configPath) },
+		Host:       prober.Host{},
 	}
 
-	return cfg
+	var logWriter *logfile.LogWriter
+
+	// Set Log only with a writer: a nil *LogWriter stored in the interface would not be
+	// a nil ResultLog, and recording a result would call it.
+	if logDir != "" {
+		logWriter = logfile.NewLogWriter(logDir)
+		ports.Log = logWriter
+	}
+
+	return ports, logWriter
+}
+
+// closeLog drains the queued log lines, if logging, reporting a write error. Monitoring
+// has stopped, so no Log call races this Close.
+func closeLog(w *logfile.LogWriter) error {
+	if w == nil {
+		return nil
+	}
+
+	return w.Close()
 }
 
 // run starts the TUI on m and blocks until it exits.
 func run(m tui.Model) error {
+	defer m.Close()
 	// Ask the terminal for its background now, while nothing else reads stdin.
 	tui.DetectBackground()
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	tui.InstallReloadSignal(p)
+	ctx, cancel := context.WithCancel(context.Background())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	done := tui.WatchTerminal(ctx, p)
 
 	_, err := p.Run()
 
-	return err
+	cancel()
+
+	terminalErr := <-done
+
+	if err != nil {
+		err = fmt.Errorf("run the terminal UI: %w", err)
+	}
+
+	return errors.Join(err, terminalErr)
 }
 
 func main() {
-	opts, err := parseArgs(os.Args[1:])
+	args, err := parseArgs(os.Args[1:])
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			// -h/--help: the flag package already printed usage; exit success like
@@ -261,53 +222,31 @@ func main() {
 		os.Exit(2)
 	}
 
-	f, err := os.Open(opts.ConfigPath)
+	svc, logWriter := newService(args.ConfigPath, args.LogDir)
+
+	session, loaded, err := svc.Open(context.Background(), args.Async)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, errors.Join(err, closeLog(logWriter)))
 		os.Exit(1)
 	}
 
-	cfg, err := config.ParseConfig(f)
-	_ = f.Close()
-
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	// The invalid-scale warning (if any) was already queued by parseArgs, which alone can
-	// tell an explicit -s from its default; here we only resolve the effective value.
-	opts.Columns = cfg.Columns
-	opts.Scale = resolveScale(opts.Scale, cfg.Scale)
-	opts.Precision = cfg.Precision
-	opts.Cols = resolveCols(opts.Cols, cfg.Cols)
-	// Bubble Tea draws on stdout, so that is the terminal whose font auto inspects.
-	opts.Glyph = resolveGlyph(opts.Glyph, cfg.Glyph, func() bool {
-		return termfont.CanRender(os.Stdout, monitor.BarBlock.Chars())
+	host := hostinfo.Lookup(context.Background())
+	m := tui.New(session, loaded, tui.Options{
+		Hostname:    host.Name,
+		HostAddress: host.Address,
+		Version:     version,
+		Blink:       args.Blink,
+		Display:     args.Display,
+		// Bubble Tea draws on stdout, so that is the terminal whose font auto inspects.
+		BlockGlyphsOK: func() bool {
+			return termfont.CanRender(os.Stdout, resultbar.BarBlock.Chars())
+		},
 	})
-	opts.Version = version
-
-	if opts.LogDir != "" {
-		opts.LogWriter = monitor.NewLogWriter(opts.LogDir)
-	}
-
-	m, err := tui.New(cfg.Targets, opts)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 
 	err = run(m)
 
-	// Drain any queued log lines before exit. The TUI has stopped, so no Log call races
-	// this Close. os.Exit skips defers, so close explicitly before the error exit too.
-	if opts.LogWriter != nil {
-		cerr := opts.LogWriter.Close()
-		if cerr != nil {
-			fmt.Fprintln(os.Stderr, "deadman: "+cerr.Error())
-		}
-	}
-
+	// os.Exit skips defers, so drain the log explicitly before the error exit too.
+	err = errors.Join(err, closeLog(logWriter))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
