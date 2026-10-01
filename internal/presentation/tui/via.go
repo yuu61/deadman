@@ -8,6 +8,8 @@ import (
 // rejectedLabel is the VIA label of a row that could not be built.
 const rejectedLabel = "error"
 
+const quicPortWithoutDetail = 443
+
 // rowLabel is a line's VIA label: how its plan probes it, or "error" for a row that could
 // not be built. A separator has none.
 func rowLabel(line monitoring.Line) string {
@@ -26,6 +28,9 @@ func rowLabel(line monitoring.Line) string {
 // planLabel names the selected method and the detail that tells its targets apart.
 func planLabel(plan probe.Plan) string {
 	method := plan.Method().String()
+	if plan.Method() == probe.MethodQUIC {
+		method = "QUIC"
+	}
 
 	detail := detailFor(plan.Params())
 	if detail == "" {
@@ -47,7 +52,7 @@ func detailFor(params probe.Params) string {
 }
 
 // localDetail tells apart the targets of a method this host probes by itself: the port
-// of a TCP or QUIC probe, the gateway of a forced one.
+// of a TCP probe or a QUIC probe using a port other than 443, the gateway of a forced one.
 func localDetail(params probe.LocalParams) string {
 	switch p := params.(type) {
 	case probe.Direct:
@@ -55,6 +60,10 @@ func localDetail(params probe.LocalParams) string {
 	case probe.TCP:
 		return p.Port.String()
 	case probe.QUIC:
+		if p.Port == probe.PortNumber(quicPortWithoutDetail) {
+			return ""
+		}
+
 		return p.Port.String()
 	case probe.Nexthop:
 		return p.Gateway.String()

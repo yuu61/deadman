@@ -106,17 +106,26 @@ func TestPlanLabel(t *testing.T) {
 			name:     "quic",
 			spec:     probe.Spec{Addr: "1.1.1.1", Params: probe.QUIC{}},
 			method:   probe.MethodQUIC,
-			describe: "quic 443",
+			describe: "QUIC",
 		},
 		{
-			// A non-default port= is reflected in the VIA label.
+			name: "quic_explicit_default_port",
+			spec: probe.Spec{
+				Addr:   "1.1.1.1",
+				Params: probe.QUIC{Port: probe.PortNumber(443)},
+			},
+			method:   probe.MethodQUIC,
+			describe: "QUIC",
+		},
+		{
+			// A non-default port is reflected in the VIA label.
 			name: "quic_port",
 			spec: probe.Spec{
 				Addr:   "1.1.1.1",
 				Params: probe.QUIC{Port: probe.PortNumber(8443)},
 			},
 			method:   probe.MethodQUIC,
-			describe: "quic 8443",
+			describe: "QUIC 8443",
 		},
 		{
 			name: "tcp",
