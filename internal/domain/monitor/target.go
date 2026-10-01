@@ -69,7 +69,7 @@ type Snapshot struct {
 	// Numbering makes it unique among the rows of a table.
 	ID   string
 	Name string
-	Addr string // the probed address as configured.
+	Addr string // the displayed address; monitoring uses the compiled destination.
 
 	results []probe.Result // oldest first.
 }

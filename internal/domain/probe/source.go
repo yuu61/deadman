@@ -55,8 +55,7 @@ func (s Source) normalize() (Source, error) {
 		return SourceAddr(a), nil
 	}
 
-	_, err := netip.ParseAddr(s.iface)
-	if err == nil {
+	if _, ok := ipLiteral(s.iface); ok {
 		return Source{}, fmt.Errorf("source interface %q is an IP address", s.iface)
 	}
 

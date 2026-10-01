@@ -143,7 +143,7 @@ func (s *Service) buildRow(t config.Target, ids *monitor.Numbering) (entry, erro
 		return entry{}, err
 	}
 
-	target := ids.Next(plan, t.Name, t.Addr)
+	target := ids.Next(plan, t.Name, plan.Destination().String())
 
 	p, err := s.ports.NewPinger(plan, target.Snapshot().ID)
 	if err != nil {

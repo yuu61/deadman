@@ -133,6 +133,27 @@ func snapshotAtAddress(t *testing.T, m Model) string {
 	return snapshotAt(t, m, 0).Addr
 }
 
+func TestViewCanonicalIPAddresses(t *testing.T) {
+	for raw, want := range map[string]string{
+		"008.008.008.008":             "8.8.8.8",
+		"2001:4860:4860:0:0:0:0:8888": "2001:4860:4860::8888",
+		"2001:4860:4860:0:0::8888":    "2001:4860:4860::8888",
+		"FE80:0:0:0:0:0:0:1%eth0":     "fe80::1%eth0",
+		"::ffff:192.000.002.001":      "192.0.2.1",
+	} {
+		m := newModel(t, []config.Line{config.Target{Name: "host", Addr: raw}}, testOptions{})
+
+		m, out := drive(t, m, tea.WindowSizeMsg{Width: 180, Height: 20})
+		if !strings.Contains(out, want) || strings.Contains(out, raw) {
+			t.Errorf("%s: view should show %s\n%s", raw, want, out)
+		}
+
+		if got := snapshotAtAddress(t, m); got != want {
+			t.Errorf("stored address = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestViewAddressFamilyReload(t *testing.T) {
 	spec := config.Target{
 		Name:   "google",
