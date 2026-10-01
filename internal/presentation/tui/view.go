@@ -239,7 +239,8 @@ func (m Model) targetLine(idx int, r monitoring.Monitored) string {
 		mark = m.markColumn()
 	}
 
-	text := m.rowText(m.arrowFor(idx), mark, t.Name, t.Addr, m.labels[idx], t.Stats)
+	id := rowIdentity(r)
+	text := m.rowText(m.arrowFor(idx), mark, id.name, id.addr, m.labels[idx], t.Stats)
 
 	var g strings.Builder
 

@@ -191,6 +191,7 @@ SNMPv2c でエージェントに RFC 4560（DISMAN-PING-MIB）の ping を依頼
 ### resolve_family
 
 `resolve_family=ipv4|ipv6` は、ホスト名の宛先を送るファミリーを固定します。
+画面の ADDRESS 列には `google.com [IPv4]` / `google.com [IPv6]` のように表示し、同じホスト名の監視を見分けられます。
 
 - `direct` / `quic` では、監視元で解決するレコードを選びます。
 - `ssh` / `netns` / `vrf` では、中継先で実行する ping のファミリー（`-4` / `-6`）を選びます。監視元の DNS には問い合わせず、名前解決は ping を実行する側に任せます。宛先がホスト名なら、これか送信元アドレスが必須です。

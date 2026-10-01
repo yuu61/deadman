@@ -12,7 +12,7 @@ type identity struct{ name, addr string }
 func rowIdentity(line monitoring.Line) identity {
 	switch l := line.(type) {
 	case monitoring.Monitored:
-		return identity{l.Target.Name, l.Target.Addr}
+		return identity{l.Target.Name, addressLabel(l.Target.Addr, l.Plan)}
 	case monitoring.Rejected:
 		return identity{l.Name, l.Addr}
 	case monitoring.Separator:
