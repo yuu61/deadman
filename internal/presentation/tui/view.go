@@ -203,7 +203,7 @@ func (m Model) rowLine(idx, width int) string {
 	case monitoring.Rejected:
 		return m.rejectedLine(idx, r)
 	case monitoring.Separator:
-		return separatorCell(width)
+		return m.separatorCell(width, r.Label)
 	default:
 		return "" // unreachable: monitoring.Line is a closed set, each kind cased above.
 	}
@@ -435,12 +435,28 @@ func padCell(s string, w int) string {
 	}
 }
 
-// separatorCell is the column-local separator: dashes filling one column's content
-// width, mirroring separatorLine's leading rear so it lines up with the data rows.
-func separatorCell(w int) string {
+// separatorCell fills one column's content width with a label and dashes, using
+// the same leading rear as data rows. Labels start halfway across the visible
+// HOSTNAME column; long labels are clipped to the content width.
+func (m Model) separatorCell(w int, label string) string {
 	n := max(w-2*len(arrow), 0)
 
-	return rear + strings.Repeat("-", n)
+	var text string
+
+	if label != "" {
+		start := len("--- ")
+		if m.columnVisible(colHost) {
+			start = max(m.hostW/2, 1)
+		}
+
+		text = ansi.Truncate(strings.Repeat("-", start-1)+" "+label+" ", n, "")
+	}
+
+	return ansi.Truncate(
+		rear+text+strings.Repeat("-", max(n-lipgloss.Width(text), 0)),
+		max(w, 0),
+		"",
+	)
 }
 
 func spinner(tick int) string {

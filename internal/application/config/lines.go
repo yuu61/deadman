@@ -9,8 +9,10 @@ import "github.com/yuu61/deadman/internal/domain/probe"
 //sumtype:decl
 type Line interface{ line() }
 
-// Separator is a dashes-only line, drawn as a separator row.
-type Separator struct{}
+// Separator is a visual separator row with an optional label.
+type Separator struct {
+	Label string
+}
 
 // Target is a target line and the probe its attributes describe: the parameters of the
 // method probe= names, whose type is the method. No parameters is a direct probe.

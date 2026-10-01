@@ -323,7 +323,7 @@ func TestReloadCarriesOverStatsByKey(t *testing.T) {
 	// "moved" changes its address, so its identity changes; a separator is added.
 	src.cfg = config.Config{
 		Lines: []config.Line{
-			config.Separator{},
+			config.Separator{Label: "Reloaded group"},
 			config.Target{Name: "moved", Addr: "1.0.0.1", Params: probe.Direct{}},
 			config.Target{Name: "kept", Addr: "8.8.8.8", Params: probe.Direct{}},
 		},
@@ -336,7 +336,8 @@ func TestReloadCarriesOverStatsByKey(t *testing.T) {
 	}
 
 	got := s.gen.rows
-	if len(got) != 2 || len(s.Table()) != 3 || s.Table()[0] != (Separator{}) {
+	if len(got) != 2 || len(s.Table()) != 3 ||
+		s.Table()[0] != (Separator{Label: "Reloaded group"}) {
 		t.Fatalf("want two monitored targets and one visual separator, got %+v", got)
 	}
 

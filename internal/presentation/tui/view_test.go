@@ -82,6 +82,8 @@ func TestViewRendersTargetsAndSeparator(t *testing.T) {
 	specs := []config.Line{
 		config.Target{Name: "host1", Addr: "1.2.3.4", Params: probe.Direct{}},
 		config.Separator{},
+		config.Separator{Label: "Congre Routers / Switches"},
+		config.Separator{Label: "\u793e\u5185\u7db2 AP"},
 		config.Target{Name: "host2", Addr: "5.6.7.8", Params: probe.Direct{}},
 	}
 
@@ -98,6 +100,7 @@ func TestViewRendersTargetsAndSeparator(t *testing.T) {
 		"Dead Man", "HOSTNAME", "ADDRESS", "LOSS",
 		"MIN", "MAX", "JIT", "FAIL", // the added statistics columns.
 		"host1", "1.2.3.4", "host2", "5.6.7.8", "▁",
+		"--- Congre Routers / Switches ---", "--- \u793e\u5185\u7db2 AP ---",
 		// The footer lists every key (always expanded, no toggle).
 		"(q)uit", "(r)efresh", "(R)eload", "(m)in/max",
 	} {
@@ -108,6 +111,101 @@ func TestViewRendersTargetsAndSeparator(t *testing.T) {
 	// The separator row renders as a run of dashes.
 	if !strings.Contains(out, "----------") {
 		t.Errorf("View output missing separator dashes\n---\n%s", out)
+	}
+}
+
+func TestSeparatorCellWidth(t *testing.T) {
+	m := Model{layout: layout{hostW: 9}}
+
+	for _, c := range []struct {
+		label, want string
+		width       int
+	}{
+		{width: 20, want: "   --------------"},
+		{width: 20, label: "LAN", want: "   --- LAN ------"},
+		{width: 20, label: "\u793e\u5185\u7db2", want: "   --- \u793e\u5185\u7db2 ---"},
+		{width: 0, label: "LAN", want: ""},
+		{width: 1, label: "LAN", want: " "},
+		{width: 6, label: "LAN", want: "   "},
+		{width: 10, label: "LAN", want: "   --- "},
+	} {
+		if got := m.separatorCell(c.width, c.label); got != c.want {
+			t.Errorf("separatorCell(%d, %q) = %q, want %q", c.width, c.label, got, c.want)
+		}
+	}
+
+	for _, hostWidth := range []int{9, 16, 20} {
+		m.hostW = hostWidth
+
+		for _, label := range []string{"", "Congre Routers / Switches", strings.Repeat("\u793e\u5185\u7db2", 100)} {
+			for width := range 150 {
+				got := m.separatorCell(width, label)
+				assertNoLineExceedsWidth(t, got, width)
+
+				if w := lipgloss.Width(got); width >= 6 && w > width-len(arrow) {
+					t.Errorf(
+						"separator with label %q exceeds content width: %d > %d",
+						label,
+						w,
+						width-len(arrow),
+					)
+				}
+			}
+		}
+	}
+}
+
+func TestSeparatorLabelFollowsHostnameWidth(t *testing.T) {
+	src := sourceOf([]config.Line{
+		config.Separator{Label: "Group"},
+		config.Target{Name: "short", Addr: "192.0.2.1", Params: probe.Direct{}},
+	}, testOptions{})
+	m := openModel(t, testService(stubHost{}, src), testOptions{})
+	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	for _, c := range []struct {
+		name  string
+		start int
+	}{
+		{name: "short", start: 7},
+		{name: "abcdefghijklmnop", start: 11},
+		{name: strings.Repeat("ル", 8), start: 11},
+		{name: strings.Repeat("x", 30), start: 13},
+		{name: "short", start: 7},
+	} {
+		src.cfg.Lines[1] = config.Target{Name: c.name, Addr: "192.0.2.1", Params: probe.Direct{}}
+		m, _ = drive(t, m, reloadMsg{})
+
+		if row := m.rowLine(0, 120); strings.Index(row, "Group") != c.start {
+			t.Errorf(
+				"hostname %q: label position = %d, want %d: %q",
+				c.name,
+				strings.Index(row, "Group"),
+				c.start,
+				row,
+			)
+		}
+	}
+
+	m, _ = drive(t, m, tea.WindowSizeMsg{Width: 80, Height: 40})
+	if row := m.rowLine(0, 80); strings.Index(row, "Group") != 7 {
+		t.Errorf("resized separator label shifted: %q", row)
+	}
+
+	src.cfg.Lines[1] = config.Target{
+		Name:   "abcdefghijklmnop",
+		Addr:   "192.0.2.1",
+		Params: probe.Direct{},
+	}
+
+	m, _ = drive(t, m, reloadMsg{}, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if row := m.rowLine(0, 80); strings.Index(row, "Group") != 7 {
+		t.Errorf("hidden HOSTNAME should use the default separator prefix: %q", row)
+	}
+
+	m, _ = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if row := m.rowLine(0, 80); strings.Index(row, "Group") != 11 {
+		t.Errorf("restored HOSTNAME should restore the midpoint alignment: %q", row)
 	}
 }
 

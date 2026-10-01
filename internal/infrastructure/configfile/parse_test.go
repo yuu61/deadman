@@ -24,6 +24,49 @@ src-t	1.2.3.4 source=10.0.0.1
 tcp-t	1.2.3.4 probe=tcp port=80
 `
 
+func TestParseSeparatorLabel(t *testing.T) {
+	for _, c := range []struct {
+		name, input, label string
+		unterminated       bool
+	}{
+		{name: "plain", input: "---"},
+		{name: "single dash", input: "- Routers", label: "Routers"},
+		{name: "words", input: "--- Congre Routers / Switches", label: "Congre Routers / Switches"},
+		{name: "whitespace", input: "  -----\t\u793e\u5185\u7db2　  ルーター  ", label: "\u793e\u5185\u7db2 ルーター"},
+		{name: "quoted", input: `--- "Routers  /  Switches"`, label: "Routers  /  Switches"},
+		{name: "trailer", input: "--- Routers ; # hidden", label: "Routers"},
+		{name: "trailer only", input: "--- ;# hidden"},
+		{name: "quoted marker", input: `--- "Group ;# 1"`, label: "Group ;# 1"},
+		{name: "literal hash", input: "--- # Routers", label: "# Routers"},
+		{name: "literal attribute", input: "--- probe=unknown", label: "probe=unknown"},
+		{name: "open quote", input: `--- "Routers / Switches`, label: "Routers / Switches", unterminated: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, err := Parse(strings.NewReader(c.input + "\nhost 192.0.2.1\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(cfg.Lines) != 2 || cfg.Lines[0] != (config.Separator{Label: c.label}) {
+				t.Fatalf("lines = %+v, want labeled separator followed by host", cfg.Lines)
+			}
+
+			if s := target(t, cfg, 1); s.Name != "host" || s.Addr != "192.0.2.1" {
+				t.Errorf("target after separator = %+v", s)
+			}
+
+			if c.unterminated {
+				if len(cfg.Notes) != 1 || !cfg.Notes[0].UnterminatedQuote ||
+					len(cfg.Notes[0].Dropped) != 0 {
+					t.Errorf("want only an unterminated quote warning, got %+v", cfg.Notes)
+				}
+			} else if len(cfg.Notes) != 0 {
+				t.Errorf("separator label produced warnings: %+v", cfg.Notes)
+			}
+		})
+	}
+}
+
 func TestParseConfig(t *testing.T) {
 	cfg, err := Parse(strings.NewReader(sample))
 	if err != nil {

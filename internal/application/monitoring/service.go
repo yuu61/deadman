@@ -101,7 +101,7 @@ func (s *Service) buildRows(lines []config.Line) ([]entry, []Line, Loaded) {
 	for _, line := range lines {
 		switch l := line.(type) {
 		case config.Separator:
-			table = append(table, Separator{})
+			table = append(table, Separator{Label: l.Label})
 		case config.Malformed:
 			loaded.reject(
 				&table,

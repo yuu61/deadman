@@ -4,7 +4,8 @@
 // stripped, blank lines are skipped, and the remaining "NAME ADDRESS
 // key=value..." line is split into fields on whitespace. A field may be wrapped in
 // double quotes to include spaces — most usefully the name ("My Host" 1.2.3.4) —
-// and the quotes are removed. A name matching ^-+$ denotes a visual separator.
+// and the quotes are removed. A name matching ^-+$ denotes a visual separator;
+// its remaining fields form the separator's label.
 package configfile
 
 import (
@@ -240,7 +241,7 @@ func parseTarget(fields []string) (config.Line, config.Note) {
 	}
 
 	if reSeparator.MatchString(note.Name) {
-		return config.Separator{}, note
+		return config.Separator{Label: strings.Join(fields[1:], " ")}, note
 	}
 
 	attrs, dropped, problem := parseAttributes(fields[min(2, len(fields)):])

@@ -308,8 +308,8 @@ func TestColumnKeysAdjustCount(t *testing.T) {
 // A separator row inside a column renders as dashes within that column's width.
 func TestTwoColumnSeparatorRenders(t *testing.T) {
 	specs := []config.Line{
-		config.Target{Name: "a0", Addr: "1.0.0.1", Params: probe.Direct{}},
-		config.Separator{},
+		config.Target{Name: "abcdefghijklmnop", Addr: "1.0.0.1", Params: probe.Direct{}},
+		config.Separator{Label: "ルーター / Switches"},
 		config.Target{Name: "a1", Addr: "1.0.0.2", Params: probe.Direct{}},
 		config.Target{Name: "a2", Addr: "1.0.0.3", Params: probe.Direct{}},
 	}
@@ -323,13 +323,33 @@ func TestTwoColumnSeparatorRenders(t *testing.T) {
 	_, out := drive(
 		t,
 		m,
-		tea.WindowSizeMsg{Width: 160, Height: 40},
+		tea.WindowSizeMsg{Width: 200, Height: 40},
 		success(5),
 	)
+
+	if headers := strings.Count(out, "HOSTNAME"); headers != 2 {
+		t.Fatalf("want two columns, got %d headers: %s", headers, out)
+	}
 
 	if !strings.Contains(out, "----------") {
 		t.Errorf("a separator inside a column should render dashes\n---\n%s", out)
 	}
+
+	if !strings.Contains(out, "--- ルーター / Switches ---") {
+		t.Errorf("a separator inside a column should render its label\n---\n%s", out)
+	}
+
+	for line := range strings.SplitSeq(out, "\n") {
+		if pos := strings.Index(line, "ルーター / Switches"); pos >= 0 && pos != 11 {
+			t.Errorf(
+				"separator label should start at the HOSTNAME midpoint, got position %d: %q",
+				pos,
+				line,
+			)
+		}
+	}
+
+	assertNoLineExceedsWidth(t, out, 200)
 }
 
 // padCell fits a styled string to exactly w display columns: it pads when short and

@@ -11,8 +11,10 @@ import (
 //sumtype:decl
 type Line interface{ line() }
 
-// Separator is a visual separator line.
-type Separator struct{}
+// Separator is a visual separator line with an optional label.
+type Separator struct {
+	Label string
+}
 
 // Monitored is a monitored row: a detached snapshot of its target, and the Plan it is
 // probed by. Changing it never changes the session.
