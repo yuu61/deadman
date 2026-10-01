@@ -3,11 +3,9 @@ package main
 import (
 	"errors"
 	"flag"
-	"math"
 	"os"
+	"strings"
 	"testing"
-
-	"github.com/yuu61/deadman/internal/config"
 )
 
 // -h/--help must surface flag.ErrHelp so main can exit 0 (success) rather than the
@@ -53,50 +51,50 @@ func TestParseArgsAsync(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			opts, err := parseArgs(c.args)
+			args, err := parseArgs(c.args)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if opts.Async != c.async {
-				t.Errorf("Async = %v, want %v", opts.Async, c.async)
+			if args.Async != c.async {
+				t.Errorf("Async = %v, want %v", args.Async, c.async)
 			}
 
-			if opts.ConfigPath != c.path {
-				t.Errorf("ConfigPath = %q, want %q", opts.ConfigPath, c.path)
+			if args.ConfigPath != c.path {
+				t.Errorf("ConfigPath = %q, want %q", args.ConfigPath, c.path)
 			}
 		})
 	}
 }
 
 func TestParseArgsScaleBlinkLog(t *testing.T) {
-	opts, err := parseArgs([]string{"deadman.conf", "-s", "20", "-b", "-l", "logs"})
+	args, err := parseArgs([]string{"deadman.conf", "-s", "20", "-b", "-l", "logs"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if opts.Scale != 20 {
-		t.Errorf("Scale = %g, want 20", opts.Scale)
+	if args.Display.Scale != 20 {
+		t.Errorf("Scale = %g, want 20", args.Display.Scale)
 	}
 
-	if !opts.Blink {
+	if !args.Blink {
 		t.Error("Blink = false, want true")
 	}
 
-	if opts.LogDir != "logs" {
-		t.Errorf("LogDir = %q, want logs", opts.LogDir)
+	if args.LogDir != "logs" {
+		t.Errorf("LogDir = %q, want logs", args.LogDir)
 	}
 }
 
 func TestParseArgsScaleFractional(t *testing.T) {
 	// A fractional -s is accepted (sub-ms scale); the flag parses as float64.
-	opts, err := parseArgs([]string{"deadman.conf", "-s", "0.5"})
+	args, err := parseArgs([]string{"deadman.conf", "-s", "0.5"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if opts.Scale != 0.5 {
-		t.Errorf("Scale = %g, want 0.5", opts.Scale)
+	if args.Display.Scale != 0.5 {
+		t.Errorf("Scale = %g, want 0.5", args.Display.Scale)
 	}
 }
 
@@ -122,75 +120,6 @@ func TestParseArgsRejectsMultipleConfigs(t *testing.T) {
 	}
 }
 
-// TestResolveScale pins the effective scale: an explicit, usable CLI -s wins, else the
-// config "scale", else the default; any unusable value (here passed as a bare float, not
-// via the flag) is dropped rather than flattening every bar. The companion warning is the
-// flag layer's job — it needs to tell an explicit -s from its default — so it is covered
-// by TestParseArgsScaleWarning, not here.
-func TestResolveScale(t *testing.T) {
-	cases := []struct {
-		name     string
-		cli, cfg float64
-		want     float64
-	}{
-		{"cli explicit wins over config", 20, 5, 20},
-		{"config used when cli unset", 0, 5, 5},
-		{"cli used when config unset", 7, 0, 7},
-		{"sub-ms cli is honored", 0.5, 0, 0.5},
-		{"non-finite cli falls back to config", math.Inf(1), 5, 5},
-		{"nan cli falls back to config", math.NaN(), 5, 5},
-		{"out-of-range cli falls back to default", 1e-300, 0, config.DefaultScale},
-		{"non-finite cfg falls back to default", 0, math.Inf(1), config.DefaultScale},
-		{"nan cfg falls back to default", 0, math.NaN(), config.DefaultScale},
-		{"default when both unset", 0, 0, config.DefaultScale},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := resolveScale(c.cli, c.cfg); got != c.want {
-				t.Errorf("resolveScale(%g, %g) = %g, want %g", c.cli, c.cfg, got, c.want)
-			}
-		})
-	}
-}
-
-// TestParseArgsScaleWarning checks that an explicitly-passed, unusable -s surfaces a
-// startup warning while an unset or usable -s stays silent. The explicit `-s 0` case is
-// the one a value sentinel cannot catch (an unset -s also parses to 0): fs.Visit
-// distinguishes them, so the rejected zero is not silently dropped. The warning omits the
-// effective scale on purpose (it is rendered persistently while ↑/↓ can change the live
-// scale), so this only asserts presence/absence, not an embedded "using Nms".
-func TestParseArgsScaleWarning(t *testing.T) {
-	cases := []struct {
-		name     string
-		args     []string
-		wantWarn bool
-	}{
-		{"unset -s is silent", []string{"deadman.conf"}, false},
-		{"usable -s is silent", []string{"-s", "5", "deadman.conf"}, false},
-		{"explicit zero -s warns", []string{"-s", "0", "deadman.conf"}, true},
-		{"explicit zero --scale warns", []string{"--scale=0", "deadman.conf"}, true},
-		{"negative -s warns", []string{"-s", "-5", "deadman.conf"}, true},
-		{"inf -s warns", []string{"-s", "inf", "deadman.conf"}, true},
-		{"nan -s warns", []string{"-s", "nan", "deadman.conf"}, true},
-		{"out-of-range -s warns", []string{"-s", "1e-300", "deadman.conf"}, true},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			opts, err := parseArgs(c.args)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if gotWarn := len(opts.Warnings) > 0; gotWarn != c.wantWarn {
-				t.Errorf(
-					"parseArgs(%v) warnings = %v, wantWarn=%v",
-					c.args, opts.Warnings, c.wantWarn,
-				)
-			}
-		})
-	}
-}
-
 func TestParseArgsSplit(t *testing.T) {
 	cases := []struct {
 		name string
@@ -204,33 +133,13 @@ func TestParseArgsSplit(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			opts, err := parseArgs(c.args)
+			args, err := parseArgs(c.args)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if opts.Cols != c.want {
-				t.Errorf("Cols = %d, want %d", opts.Cols, c.want)
-			}
-		})
-	}
-}
-
-func TestResolveCols(t *testing.T) {
-	cases := []struct {
-		name     string
-		cli, cfg int
-		want     int
-	}{
-		{"cli explicit wins over config", 3, 2, 3},
-		{"config used when cli unset", 0, 2, 2},
-		{"cli used when config unset", 2, 0, 2},
-		{"unset stays 0 (New normalizes to 1)", 0, 0, 0},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := resolveCols(c.cli, c.cfg); got != c.want {
-				t.Errorf("resolveCols(%d, %d) = %d, want %d", c.cli, c.cfg, got, c.want)
+			if args.Display.Cols != c.want {
+				t.Errorf("Cols = %d, want %d", args.Display.Cols, c.want)
 			}
 		})
 	}
@@ -251,13 +160,13 @@ func TestParseArgsGlyph(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			opts, err := parseArgs(c.args)
+			args, err := parseArgs(c.args)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if opts.Glyph != c.want {
-				t.Errorf("Glyph = %q, want %q", opts.Glyph, c.want)
+			if args.Display.Glyph != c.want {
+				t.Errorf("Glyph = %q, want %q", args.Display.Glyph, c.want)
 			}
 		})
 	}
@@ -290,50 +199,49 @@ func TestParseArgsGlyphRejectsUnknown(t *testing.T) {
 	}
 }
 
-// TestResolveGlyph pins the precedence (explicit CLI -g > config "glyph" > auto) and the
-// auto policy (block where the terminal can render it, else ascii). The probe must not
-// run when a set is named explicitly: it inspects the real terminal, so a spurious call
-// would make an explicit choice environment-dependent.
-func TestResolveGlyph(t *testing.T) {
+// parseArgs records whether -s was given at all, which the TUI needs to warn about an
+// explicit but unusable value: an explicit `-s 0` and an unset -s both parse to 0, so
+// only fs.Visit can tell them apart.
+func TestParseArgsScaleSet(t *testing.T) {
 	cases := []struct {
-		name      string
-		cli, cfg  string
-		blockOK   bool
-		wantProbe bool
-		want      string
+		name string
+		args []string
+		want bool
 	}{
-		{"cli wins over config", "digit", "ascii", true, false, "digit"},
-		{"cli case-folds", "DIGIT", "", true, false, "digit"},
-		{"config used when cli unset", "", "digit", true, false, "digit"},
-		{"cli auto overrides config set", "auto", "digit", false, true, "ascii"},
-		{"config auto probes", "", "auto", true, true, "block"},
-		{"unknown config falls to auto", "", "bogus", false, true, "ascii"},
-		{"unset probes: renderable", "", "", true, true, "block"},
-		{"unset probes: not renderable", "", "", false, true, "ascii"},
+		{"unset", []string{"deadman.conf"}, false},
+		{"usable -s", []string{"-s", "5", "deadman.conf"}, true},
+		{"explicit zero -s", []string{"-s", "0", "deadman.conf"}, true},
+		{"explicit zero --scale", []string{"--scale=0", "deadman.conf"}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			probed := false
-			got := resolveGlyph(c.cli, c.cfg, func() bool {
-				probed = true
-
-				return c.blockOK
-			})
-
-			if got != c.want {
-				t.Errorf(
-					"resolveGlyph(%q, %q, blockOK=%v) = %q, want %q",
-					c.cli,
-					c.cfg,
-					c.blockOK,
-					got,
-					c.want,
-				)
+			args, err := parseArgs(c.args)
+			if err != nil {
+				t.Fatal(err)
 			}
 
-			if probed != c.wantProbe {
-				t.Errorf("probe called = %v, want %v", probed, c.wantProbe)
+			if args.Display.ScaleSet != c.want {
+				t.Errorf("ScaleSet = %v, want %v", args.Display.ScaleSet, c.want)
 			}
 		})
+	}
+}
+
+// parseArgs records whether -c was given at all, for the same reason as -s.
+func TestParseArgsColsSet(t *testing.T) {
+	for args, want := range map[string]bool{
+		"deadman.conf":           false,
+		"-c 2 deadman.conf":      true,
+		"-c 0 deadman.conf":      true,
+		"--split=0 deadman.conf": true,
+	} {
+		got, err := parseArgs(strings.Fields(args))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got.Display.ColsSet != want {
+			t.Errorf("%s: ColsSet = %v, want %v", args, got.Display.ColsSet, want)
+		}
 	}
 }
