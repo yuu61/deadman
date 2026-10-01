@@ -65,6 +65,13 @@ func (s SNMP) compile(dest Destination) (Params, error) {
 		)
 	}
 
+	host, err := canonicalHost(s.Host)
+	if err != nil {
+		return nil, err
+	}
+
+	s.Host = host
+
 	return s, nil
 }
 
@@ -129,15 +136,20 @@ func (s SSH) compile(dest Destination) (Params, error) {
 // OpenSSH's inline user overrides -l. Resolve it before deriving the row identity.
 func (s SSH) normalizeRelay() (SSH, error) {
 	user, host, inline := strings.Cut(s.Host, "@")
-	if !inline {
-		return s, nil
+	if inline {
+		if user == "" || host == "" || strings.Contains(host, "@") {
+			return s, fmt.Errorf("invalid ssh relay %q: expected user@host", s.Host)
+		}
+
+		s.User, s.Host = user, host
 	}
 
-	if user == "" || host == "" || strings.Contains(host, "@") {
-		return s, fmt.Errorf("invalid ssh relay %q: expected user@host", s.Host)
+	normalized, err := canonicalHost(s.Host)
+	if err != nil {
+		return s, err
 	}
 
-	s.User, s.Host = user, host
+	s.Host = normalized
 
 	return s, nil
 }
@@ -271,6 +283,18 @@ func (r RouterOS) compile(Destination) (Params, error) {
 // routerOSHost checks the relay host: an IP literal in its canonical spelling, or a host
 // name as written, whose characters can neither end nor escape the host of the API's URL.
 func routerOSHost(host string) (string, error) {
+	if _, ok := ipLiteral(host); !ok && !isHostName(host) {
+		return "", fmt.Errorf(
+			"invalid routeros relay host %q: expected a host name or IP address",
+			host,
+		)
+	}
+
+	return canonicalHost(host)
+}
+
+// canonicalHost normalizes a relay's IP address while keeping host names as written.
+func canonicalHost(host string) (string, error) {
 	if a, ok := ipLiteral(host); ok {
 		ip, err := canonicalIP(host, a)
 		if err != nil {
@@ -278,13 +302,6 @@ func routerOSHost(host string) (string, error) {
 		}
 
 		return ip.String(), nil
-	}
-
-	if !isHostName(host) {
-		return "", fmt.Errorf(
-			"invalid routeros relay host %q: expected a host name or IP address",
-			host,
-		)
 	}
 
 	return host, nil

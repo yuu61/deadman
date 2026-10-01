@@ -13,7 +13,7 @@
 | 列 | 内容 |
 | --- | --- |
 | HOSTNAME | 設定に書いた名前 |
-| ADDRESS | 設定に書いたアドレス。direct / quic / ssh / netns / vrf のホスト名で送信するファミリーが固定されている場合は、`google.com [IPv4]` / `google.com [IPv6]` のように併記 |
+| ADDRESS | IP アドレスは短い標準表記、ホスト名は設定に書いた表記。構築エラーの行は入力表記。direct / quic / ssh / netns / vrf のホスト名で送信するファミリーが固定されている場合は、`google.com [IPv4]` / `google.com [IPv6]` のように併記 |
 | VIA | 監視方式と、行を見分ける詳細。tcp はポート、quic はポート 443 なら `QUIC`、それ以外は `QUIC 8443` のようにポートを併記。nexthop はゲートウェイ、中継する方式は中継先・名前空間名・VRF 名（`ssh jump` など）。構築エラーの行は `error` |
 | LOSS | 損失率（%）。FAIL ÷ SNT |
 | RTT | 最新のプローブの RTT。応答の無かったプローブや観測できなかったプローブの後は 0 |

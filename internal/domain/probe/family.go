@@ -67,7 +67,7 @@ func canonicalIP(raw string, a netip.Addr) (netip.Addr, error) {
 // ipLiteral parses addr as an IP literal (a zoned IPv6 one included); ok is false for a
 // host name.
 func ipLiteral(addr string) (netip.Addr, bool) {
-	a, err := netip.ParseAddr(addr)
+	a, err := ParseIP(addr)
 
 	return a, err == nil
 }

@@ -85,7 +85,7 @@ func splitHostPort(raw string) (string, probe.Port, error) {
 		return splitBracketed(raw)
 	}
 
-	a, err := netip.ParseAddr(raw)
+	a, err := probe.ParseIP(raw)
 	if err == nil && strings.Contains(a.Zone(), ":") {
 		// A zone takes everything after '%', so a port written after one would be read as
 		// part of the interface name.
@@ -122,7 +122,7 @@ func splitBracketed(raw string) (string, probe.Port, error) {
 		}
 	}
 
-	_, err := netip.ParseAddr(host)
+	_, err := probe.ParseIP(host)
 	if err != nil {
 		return "", probe.Port{}, errBracketIP
 	}
@@ -154,7 +154,7 @@ func (p *probeInput) source() probe.Source {
 		return probe.Source{}
 	}
 
-	a, err := netip.ParseAddr(raw)
+	a, err := probe.ParseIP(raw)
 	if err == nil {
 		return probe.SourceAddr(a)
 	}
@@ -206,7 +206,7 @@ func (p *probeInput) gateway() netip.Addr {
 		return netip.Addr{}
 	}
 
-	a, err := netip.ParseAddr(raw)
+	a, err := probe.ParseIP(raw)
 	if err != nil {
 		p.err = fmt.Errorf("invalid nexthop=%q: expected IP address", raw)
 	}

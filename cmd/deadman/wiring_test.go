@@ -363,8 +363,7 @@ func buildReason(d monitoring.Diagnostic) string {
 	return failed.Reason
 }
 
-// An IPv4-mapped target is probed as the IPv4 address it maps, while the row still shows
-// the address as written.
+// An IPv4-mapped target is both probed and displayed as its canonical IPv4 address.
 func TestMappedTargetIsProbedAsIPv4(t *testing.T) {
 	svc, _ := newService(
 		writeConfig(t, "m ::ffff:192.0.2.1 probe=ssh relay=jump os=Linux\n"),
@@ -384,7 +383,7 @@ func TestMappedTargetIsProbedAsIPv4(t *testing.T) {
 	}
 
 	if rows[0].Plan.Destination().String() != "192.0.2.1" ||
-		rows[0].Target.Addr != "::ffff:192.0.2.1" {
+		rows[0].Target.Addr != "192.0.2.1" {
 		t.Errorf("plan address %q, shown %q", rows[0].Plan.Destination(), rows[0].Target.Addr)
 	}
 }

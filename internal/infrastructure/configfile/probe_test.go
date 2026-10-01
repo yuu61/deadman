@@ -88,10 +88,11 @@ func TestParseLeavesPortRangeToCompile(t *testing.T) {
 // interface name otherwise; the adapters never classify the text again.
 func TestParseSourceKinds(t *testing.T) {
 	for text, want := range map[string]probe.Source{
-		"10.0.0.1":     probe.SourceAddr(netip.MustParseAddr("10.0.0.1")),
-		"fe80::1%eth0": probe.SourceAddr(netip.MustParseAddr("fe80::1%eth0")),
-		"eth0":         probe.SourceInterface("eth0"),
-		"10.0.0.300":   probe.SourceInterface("10.0.0.300"),
+		"10.0.0.1":        probe.SourceAddr(netip.MustParseAddr("10.0.0.1")),
+		"010.000.000.001": probe.SourceAddr(netip.MustParseAddr("10.0.0.1")),
+		"fe80::1%eth0":    probe.SourceAddr(netip.MustParseAddr("fe80::1%eth0")),
+		"eth0":            probe.SourceInterface("eth0"),
+		"10.0.0.300":      probe.SourceInterface("10.0.0.300"),
 	} {
 		cfg, err := Parse(strings.NewReader("h example.com source=" + text))
 		if err != nil {
@@ -135,16 +136,18 @@ func TestParseRouterOSRelay(t *testing.T) {
 	}
 
 	for relay, want := range map[string]probe.RouterOS{
-		"router":                {Host: "router"},
-		"router:8443":           {Host: "router", Port: probe.PortNumber(8443)},
-		"router:080":            {Host: "router", Port: probe.PortNumber(80)},
-		"192.0.2.9:8443":        {Host: "192.0.2.9", Port: probe.PortNumber(8443)},
-		"2001:db8::1":           {Host: "2001:db8::1"},
-		"fe80::1%ether1":        {Host: "fe80::1%ether1"},
-		"[2001:db8::1]":         {Host: "2001:db8::1"},
-		"[2001:db8::1]:8443":    {Host: "2001:db8::1", Port: probe.PortNumber(8443)},
-		"[fe80::1%ether1]:8080": {Host: "fe80::1%ether1", Port: probe.PortNumber(8080)},
-		"router:0":              {Host: "router", Port: probe.PortNumber(0)},
+		"router":                 {Host: "router"},
+		"router:8443":            {Host: "router", Port: probe.PortNumber(8443)},
+		"router:080":             {Host: "router", Port: probe.PortNumber(80)},
+		"192.0.2.9:8443":         {Host: "192.0.2.9", Port: probe.PortNumber(8443)},
+		"192.000.002.009:8443":   {Host: "192.000.002.009", Port: probe.PortNumber(8443)},
+		"[192.000.002.009]:8443": {Host: "192.000.002.009", Port: probe.PortNumber(8443)},
+		"2001:db8::1":            {Host: "2001:db8::1"},
+		"fe80::1%ether1":         {Host: "fe80::1%ether1"},
+		"[2001:db8::1]":          {Host: "2001:db8::1"},
+		"[2001:db8::1]:8443":     {Host: "2001:db8::1", Port: probe.PortNumber(8443)},
+		"[fe80::1%ether1]:8080":  {Host: "fe80::1%ether1", Port: probe.PortNumber(8080)},
+		"router:0":               {Host: "router", Port: probe.PortNumber(0)},
 	} {
 		row, ok := parse(relay).(config.Target)
 		if !ok {

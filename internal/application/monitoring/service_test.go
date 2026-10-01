@@ -87,6 +87,7 @@ func reload(s *Session) Transition {
 type logLine struct {
 	id    string
 	name  string
+	addr  string
 	state monitor.State
 	rtt   float64
 	avg   float64
@@ -110,6 +111,7 @@ func (l *recordingLog) Log(target monitor.Reading, now time.Time) bool {
 		logLine{
 			id:    target.ID,
 			name:  target.Name,
+			addr:  target.Addr,
 			state: target.State,
 			rtt:   target.RTT,
 			avg:   target.Avg,
@@ -392,8 +394,26 @@ func TestRecordFoldsAndLogs(t *testing.T) {
 	}
 
 	want := []logLine{
-		{id: "host#1", name: "host", state: monitor.Up, rtt: 4, avg: 4, snt: 1, now: now},
-		{id: "host#1", name: "host", state: monitor.Down, rtt: 0, avg: 4, snt: 2, now: now},
+		{
+			id:    "host#1",
+			name:  "host",
+			addr:  "8.8.8.8",
+			state: monitor.Up,
+			rtt:   4,
+			avg:   4,
+			snt:   1,
+			now:   now,
+		},
+		{
+			id:    "host#1",
+			name:  "host",
+			addr:  "8.8.8.8",
+			state: monitor.Down,
+			rtt:   0,
+			avg:   4,
+			snt:   2,
+			now:   now,
+		},
 	}
 	if !slices.Equal(log.lines, want) {
 		t.Errorf("logged %+v, want %+v", log.lines, want)
@@ -514,6 +534,42 @@ func TestReloadDuplicateRowsKeepIndependentHistories(t *testing.T) {
 
 	if smaller[0].target.Snapshot().Snt != 3 {
 		t.Fatal("removing duplicate lost first occurrence history")
+	}
+}
+
+func TestCanonicalAddressSurvivesReloadAndReachesLog(t *testing.T) {
+	for raw, canonical := range map[string]string{
+		"008.008.008.008":             "8.8.8.8",
+		"2001:4860:4860:0:0:0:0:8888": "2001:4860:4860::8888",
+	} {
+		log := &recordingLog{}
+		src := source(config.Target{Name: "host", Addr: raw})
+		svc := NewService(
+			Ports{NewPinger: fakePingers(nil), LoadConfig: src.load, Host: capable, Log: log},
+		)
+
+		s, loaded := openSession(t, svc, false)
+		if len(loaded.Warnings) != 0 {
+			t.Fatalf("%s: warnings = %+v", raw, loaded.Warnings)
+		}
+
+		started := s.Update(mustEvent(t, s.Start()), time.Now())
+		announced := s.Update(mustEvent(t, started.Tasks[0]), time.Now())
+		s.Update(mustEvent(t, announced.Tasks[0]), time.Now())
+
+		before := monitoredRows(s.Table())[0].Target
+		if before.Addr != canonical || len(log.lines) != 1 || log.lines[0].addr != canonical {
+			t.Fatalf("%s: snapshot = %+v, log = %+v", raw, before, log.lines)
+		}
+
+		src.cfg.Lines = []config.Line{config.Target{Name: "host", Addr: canonical}}
+
+		reload(s)
+
+		after := monitoredRows(s.Table())[0].Target
+		if after.ID != before.ID || after.Snt != before.Snt || after.Addr != canonical {
+			t.Fatalf("spelling change lost identity/history: before %+v, after %+v", before, after)
+		}
 	}
 }
 
