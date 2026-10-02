@@ -49,8 +49,11 @@ func TestProcessConfig(t *testing.T) {
 	}{
 		{"check", "web example.invalid probe=tcp port=443\n", false, ""},
 		{
-			"format", "# header\n web\t example.invalid   probe=tcp port=443 ;# note\r\n", true,
-			"# header\nweb example.invalid probe=tcp port=443 ;# note\n",
+			"format",
+			"# header\n web\t example.invalid   probe=tcp port=443 ;# note\r\nlong-host 192.0.2.1 probe=quic\n",
+			true,
+			"# header\nweb        example.invalid  probe=tcp port=443 ;# note\n" +
+				"long-host  192.0.2.1        probe=quic\n",
 		},
 		{"empty check", "", false, ""},
 		{"empty format", "", true, ""},
