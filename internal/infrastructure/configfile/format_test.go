@@ -64,6 +64,31 @@ func TestFormat(t *testing.T) {
 			"web\" 2\"  \"example.com\"  probe=ssh relay=jump os=Linux key=\"/a  b;# c\"\n" +
 				"h        192.0.2.1      probe=quic\n",
 		},
+		{
+			"directive attribute order",
+			"columns MAX=off MIN=on MAX=on\n--- port=443 probe=tcp\n",
+			"columns MAX=off MIN=on MAX=on\n--- port=443 probe=tcp\n",
+		},
+		{
+			"duplicate attributes retain diagnostics",
+			"h 192.0.2.1 port=80 probe=tcp port=443\n",
+			"h  192.0.2.1  port=80 probe=tcp port=443\n",
+		},
+		{
+			"empty attributes retain diagnostics",
+			"h 192.0.2.1 user= probe=ssh relay=jump os=Linux\n",
+			"h  192.0.2.1  user= probe=ssh relay=jump os=Linux\n",
+		},
+		{
+			"bare words retain parser notes",
+			"h 192.0.2.1 words source=eth0 more probe=direct\n",
+			"h  192.0.2.1  words source=eth0 more probe=direct\n",
+		},
+		{
+			"duplicate keys with normalized tabs",
+			"h 192.0.2.1 \"a\tb\"=1 \"a b\"=2 probe=direct\n",
+			"h  192.0.2.1  \"a\tb\"=1 \"a b\"=2 probe=direct\n",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,6 +103,67 @@ func TestFormat(t *testing.T) {
 			}
 
 			assertSameConfig(t, tc.input, got)
+		})
+	}
+}
+
+func TestFormatSortsAttributes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"default direct", "resolve_family=ipv4 source=192.0.2.2", "source=192.0.2.2 resolve_family=ipv4"},
+		{"direct", "resolve_family=ipv4 probe=direct source=eth0", "probe=direct source=eth0 resolve_family=ipv4"},
+		{"tcp", "port=443 resolve_family=ipv4 probe=tcp", "probe=tcp resolve_family=ipv4 port=443"},
+		{
+			"quic", "verify=YES sni=\"example.com\" alpn=h3 port=443 resolve_family=ipv4 probe=quic",
+			"probe=quic resolve_family=ipv4 port=443 alpn=h3 sni=\"example.com\" verify=YES",
+		},
+		{
+			"ssh", "key=\"/a  b\" user=ops os=Linux resolve_family=ipv4 source=eth0 probe=ssh relay=jump",
+			"probe=ssh relay=jump source=eth0 resolve_family=ipv4 os=Linux user=ops key=\"/a  b\"",
+		},
+		{
+			"routeros",
+			"password=\"a;# b=c\" verify=off username=ops scheme=https probe=routeros relay=[2001:db8::1]:8443",
+			"probe=routeros relay=[2001:db8::1]:8443 scheme=https verify=off username=ops password=\"a;# b=c\"",
+		},
+		{
+			"snmp", "community=\"a b\" relay=192.0.2.2 probe=snmp",
+			"probe=snmp relay=192.0.2.2 community=\"a b\"",
+		},
+		{"nexthop", "source=eth0 nexthop=192.0.2.2 probe=nexthop", "probe=nexthop nexthop=192.0.2.2 source=eth0"},
+		{
+			"netns", "resolve_family=ipv4 source=eth0 relay=blue probe=netns",
+			"probe=netns relay=blue source=eth0 resolve_family=ipv4",
+		},
+		{"vrf", "source=eth0 relay=blue probe=vrf", "probe=vrf relay=blue source=eth0"},
+		{
+			"quoted attribute keys", "\"port=443\" resolve_family=\"ipv4\" pro\"be\"=tcp",
+			"pro\"be\"=tcp resolve_family=\"ipv4\" \"port=443\"",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := "h 192.0.2.1 " + tc.input + " ;# keep probe=word\n"
+			want := "h  192.0.2.1  " + tc.want + " ;# keep probe=word\n"
+
+			diagnostics, err := Check(strings.NewReader(input), acceptSetting)
+			if err != nil || len(diagnostics) > 0 {
+				t.Fatalf("invalid input: %v, %v", diagnostics, err)
+			}
+
+			got, err := Format(strings.NewReader(input))
+			if err != nil || got != want {
+				t.Fatalf("Format = %q, %v; want %q", got, err, want)
+			}
+
+			assertSameConfig(t, input, got)
+
+			again, err := Format(strings.NewReader(got))
+			if err != nil || again != got {
+				t.Errorf("second Format = %q, %v; want %q", again, err, got)
+			}
 		})
 	}
 }
@@ -130,6 +216,9 @@ func FuzzFormatPreservesConfig(f *testing.F) {
 		"h 192.0.2.1\n", "--- ;　# label\n", "  # comment\n", "scale NaN\n",
 		"\ufeff\ufeffh 192.0.2.1\n", "　#host 192.0.2.1\n", "\"quoted host\" 192.0.2.1 ;# comment\n",
 		"a 192.0.2.1 probe=tcp port=443\n\"\u6771\u4eac \u62e0\u70b9\" 2001:db8::1 probe=quic\n",
+		"h 192.0.2.1 port=443 resolve_family=ipv4 probe=tcp\n",
+		"h 192.0.2.1 password=\"a;# b=c\" username=ops relay=jump probe=routeros\n",
+		"h 192.0.2.1 \"a\tb\"=1 \"a b\"=2 probe=direct\n",
 	} {
 		f.Add(seed)
 	}

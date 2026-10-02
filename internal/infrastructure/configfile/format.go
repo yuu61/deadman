@@ -10,10 +10,10 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-// Format aligns target names, addresses and attributes with spaces, keeps comments
-// and blank lines, removes the leading BOM, and emits LF line endings with a final
-// newline. Call Check first if invalid settings must be rejected; Format does not
-// correct their meaning.
+// Format orders target attributes and aligns target names, addresses and attributes
+// with spaces. It keeps comments and blank lines, removes the leading BOM, and emits
+// LF line endings with a final newline. Call Check first if invalid settings must be
+// rejected; Format does not correct their meaning.
 func Format(r io.Reader) (string, error) {
 	var lines []formatLine
 
@@ -63,7 +63,7 @@ func prepareFormatLine(number int, raw string) formatLine {
 // targetColumns splits a normalized target body into its written name, address and
 // optional attribute tail. Quoting stays verbatim, including mid-token quotes.
 func targetColumns(body string) []string {
-	fields, terminated := tokenize(body)
+	fields, terminated := tokenize(strings.ReplaceAll(body, "\t", " "))
 	if !terminated || len(fields) < 2 {
 		return nil
 	}
@@ -73,26 +73,13 @@ func targetColumns(body string) []string {
 		return nil
 	}
 
-	var columns []string
-
-	start, inQuote := 0, false
-
-	for index, char := range body {
-		if char == '"' {
-			inQuote = !inQuote
-		}
-
-		if char == ' ' && !inQuote {
-			columns = append(columns, body[start:index])
-			start = index + 1
-
-			if len(columns) == 2 {
-				break
-			}
-		}
+	columns := writtenFields(body)
+	if len(columns) > 2 {
+		attributes := orderedAttributes(columns[2:], fields[2:])
+		columns = append(columns[:2], attributes)
 	}
 
-	return append(columns, body[start:])
+	return columns
 }
 
 func alignLines(lines []formatLine) (string, error) {
