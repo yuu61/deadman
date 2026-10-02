@@ -22,7 +22,8 @@ func TestTCPDialResults(t *testing.T) {
 		want probe.ResultCode
 	}{
 		{"connected", nil, probe.Success},
-		{"refused", os.NewSyscallError("connect", errTCPRefused), probe.Success},
+		// RST, ICMP port-unreachable and local rejection can share this errno.
+		{"ambiguous_refusal", os.NewSyscallError("connect", errTCPRefused), probe.Unavailable},
 		{"socket_timeout", os.NewSyscallError("connect", errTCPTimeout), probe.Failed},
 		{"deadline", context.DeadlineExceeded, probe.Failed},
 		{"cancel", context.Canceled, probe.Unavailable},
@@ -44,10 +45,14 @@ func TestTCPDialResults(t *testing.T) {
 				t.Errorf("RTT = %v, want 1.25", result.RTT)
 			}
 
+			if c.want != probe.Success && result.RTT != 0 {
+				t.Errorf("unobserved RTT = %v, want 0", result.RTT)
+			}
+
 			target := monitor.NewTarget("tcp", "host", "192.0.2.1")
 			target.Consume(result)
 
-			if c.want == probe.Unavailable && target.Snapshot().Snt != 0 {
+			if c.want == probe.Unavailable && target.Snapshot().Stats != (monitor.Stats{}) {
 				t.Fatal("unobserved result entered statistics")
 			}
 
@@ -122,7 +127,8 @@ func TestTCPConnectAndClose(t *testing.T) {
 	}
 }
 
-func TestTCPConnectionRefusedIsAlive(t *testing.T) {
+// Even a real loopback RST is ambiguous through the ordinary dial API.
+func TestTCPConnectionRefusedIsUnobserved(t *testing.T) {
 	for _, host := range []string{"127.0.0.1", "::1"} {
 		t.Run(host, func(t *testing.T) {
 			listener := listenTCP(t, host)
@@ -133,9 +139,7 @@ func TestTCPConnectionRefusedIsAlive(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if result := p.Send(t.Context()); result.Code != probe.Success {
-				t.Fatalf("connection refusal result = %+v, want success", result)
-			}
+			assertUnobservedProbe(t, p.Send(t.Context()), probe.Unavailable)
 		})
 	}
 }

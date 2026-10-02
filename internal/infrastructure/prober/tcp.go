@@ -12,7 +12,7 @@ import (
 const tcpTimeout = 5 * time.Second
 
 // tcpPinger opens and closes one ordinary TCP connection per probe. No external
-// command or raw socket is needed. A refusal is still a host response, as with SYN.
+// command or raw socket is needed. Only an established connection confirms a response.
 type tcpPinger struct {
 	dest    probe.Destination
 	port    string
@@ -51,8 +51,10 @@ func (p *tcpPinger) Send(ctx context.Context) probe.Result {
 
 // DNS failures are handled before dialing. Only a TCP timeout counts as loss;
 // cancellation and local socket/routing failures did not observe the target.
+// ECONNREFUSED alone cannot distinguish a TCP RST from ICMP port-unreachable or
+// local rejection, so a refusal is unavailable rather than evidence of a response.
 func tcpDialResult(err error, rtt float64) probe.Result {
-	if err == nil || errors.Is(err, errTCPRefused) {
+	if err == nil {
 		return probe.SuccessResult(rtt)
 	}
 
