@@ -1,5 +1,5 @@
 // Package prober implements the probing modes behind the probe.Pinger port: native ICMP,
-// SSH, SNMP, network namespace, VRF, RouterOS REST, TCP/hping3, QUIC and next-hop. Host
+// SSH, SNMP, network namespace, VRF, RouterOS REST, TCP, QUIC and next-hop. Host
 // reports which of them this host can send, by the same checks the modes use.
 package prober
 
@@ -47,7 +47,7 @@ func newLocalPinger(dest probe.Destination, params probe.LocalParams) (probe.Pin
 	case probe.Direct:
 		return newICMPPinger(dest, p)
 	case probe.TCP:
-		return newHPingPinger(dest, p)
+		return newTCPPinger(dest, p), nil
 	case probe.QUIC:
 		return newQUICPinger(dest, p)
 	case probe.Nexthop:

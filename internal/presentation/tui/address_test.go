@@ -17,6 +17,7 @@ func TestViewDistinguishesResolveFamily(t *testing.T) {
 		methods := []probe.Params{
 			probe.Direct{Family: family},
 			probe.QUIC{Family: family},
+			probe.TCP{Port: probe.PortNumber(80), Family: family},
 			probe.SSH{Host: "jump", OS: probe.OSLinux, Family: family},
 			probe.Netns{Name: "ns", Family: family},
 			probe.VRF{Name: "vrf", Family: family},
@@ -71,7 +72,7 @@ func TestViewAddressFamilyConditions(t *testing.T) {
 		{"literal_ipv4", "192.0.2.1", probe.Direct{Family: probe.FamilyIPv4}, "192.0.2.1"},
 		{"literal_ipv6", "2001:db8::1", probe.Direct{Family: probe.FamilyIPv6}, "2001:db8::1"},
 		{"rejected", "192.0.2.1", probe.Direct{Family: probe.FamilyIPv6}, "192.0.2.1"},
-		{"tcp", "google.com", probe.TCP{Port: probe.PortNumber(80)}, "google.com"},
+		{"tcp", "google.com", probe.TCP{Port: probe.PortNumber(80)}, "google.com [IPv4]"},
 		{"snmp", "google.com", probe.SNMP{Host: "agent", Community: "public"}, "google.com"},
 		{
 			"routeros",

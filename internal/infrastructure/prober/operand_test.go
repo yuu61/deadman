@@ -45,13 +45,6 @@ func TestNewRejectsOptionLikeOperand(t *testing.T) {
 				Params: probe.SSH{Host: "h", OS: probe.OSLinux, Family: probe.FamilyIPv4},
 			},
 		},
-		{
-			"hping_address",
-			probe.Spec{
-				Addr:   "-8",
-				Params: probe.TCP{Port: probe.PortNumber(80)},
-			},
-		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -73,6 +66,10 @@ func TestNewAcceptsValidOperands(t *testing.T) {
 		},
 		{
 			Addr:   "example.com",
+			Params: probe.TCP{Port: probe.PortNumber(80)},
+		},
+		{
+			Addr:   "-8",
 			Params: probe.TCP{Port: probe.PortNumber(80)},
 		},
 	}

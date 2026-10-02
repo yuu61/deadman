@@ -10,7 +10,7 @@ deadman は ICMP echo によるホストの死活監視に特化した TUI ツ�
 
 - 1 行 1 ホストの一覧をリアルタイムに更新し、結果の履歴を RESULT バーに、統計（LOSS / RTT / AVG / MIN / MAX / JIT / SNT / FAIL）を列に表示します。IPv6 に対応しています。
 - `resolve_family=ipv4|ipv6` で同じホスト名を IPv4 / IPv6 別に監視でき、ADDRESS 列の `[IPv4]` / `[IPv6]` で見分けられます。
-- 監視元からの ICMP のほか、ゲートウェイを強制した ICMP（nexthop）、TCP SYN（hping3）、QUIC ハンドシェイク、ssh / netns / VRF / RouterOS API / SNMP（非推奨）を中継した ping で監視できます。
+- 監視元からの ICMP のほか、ゲートウェイを強制した ICMP（nexthop）、TCP 接続（IPv4 / IPv6、外部コマンド不要）、QUIC ハンドシェイク、ssh / netns / VRF / RouterOS API / SNMP（非推奨）を中継した ping で監視できます。
 - Linux / macOS / Windows で動く単一バイナリです。ICMP は外部の `ping` コマンドを使わず、権限に応じてソケットを選びます。
 - 段組み、列の表示、統計の精度、RESULT バーの文字と色を、キー操作と設定で切り替えられます。ブロック文字を表示できない端末では、自動で ASCII 表示になります。
 - 設定は実行中に再読み込みでき、監視経路の同じ行は統計と履歴を引き継ぎます。`-l` で結果をファイルに記録できます。
@@ -82,6 +82,7 @@ sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"       # または非特�
 RESULT バーは左が最新です。応答したプローブは RTT の段階に応じた高さと色で描きます。
 `X` は応答の無かったプローブで、損失として数えます。
 `t` / `s` / `?` は中継や監視元の失敗で対象を観測できなかったプローブで、死活が不明なので統計に加えません。
+TCP の接続拒否も、対象からの応答を確認できないため `?` とし、統計に加えません（[TCP の判定](docs/configuration.md#tcp)）。
 列・文字・色の詳細は [画面の見方](docs/display.md) を参照してください。
 
 ## 設定ファイル

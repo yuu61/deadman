@@ -14,7 +14,7 @@ type Destination struct {
 // parseDestination reads a written target address: an IP literal (a zoned IPv6 one
 // included) is an address, anything else a name. Two spellings of an address are one
 // destination, and an IPv4-mapped one is IPv4, the family every method probes it in (a
-// relay's `ping -4` and hping3 cannot parse ::ffff:192.0.2.1). A name no probe could
+// relay's `ping -4` cannot parse ::ffff:192.0.2.1). A name no probe could
 // resolve is refused (see checkName).
 func parseDestination(addr string) (Destination, error) {
 	a, ok := ipLiteral(addr)

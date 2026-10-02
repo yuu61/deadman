@@ -22,7 +22,7 @@ func TestCompilePortBoundaries(t *testing.T) {
 		port := PortNumber(c.number)
 		// Explicit resolved parameters also check that a valid port is preserved.
 		for _, params := range []Params{
-			TCP{Port: port},
+			TCP{Port: port, Family: FamilyIPv4},
 			QUIC{Port: port, Family: FamilyIPv4, ALPN: "h3", Verify: VerifyDisabled},
 			RouterOS{
 				Host: "router", Port: port, Scheme: "https",

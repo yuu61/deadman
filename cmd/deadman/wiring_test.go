@@ -303,7 +303,7 @@ func TestStaticMistakesAreRejectedWithTheirReason(t *testing.T) {
 		"q 192.0.2.1 probe=quic port=0":                                     "invalid port 0",
 		"q example.com probe=quic alpn=":                                    "needs a value",
 		routerOSLine("r scheme="):                                           "needs a value",
-		"t 2001:db8::1 probe=tcp port=80":                                   "IPv4 only",
+		"t 2001:db8::1 probe=tcp port=80 resolve_family=ipv4":               "family differ",
 		"n fe80::1%eth0 probe=snmp relay=agent community=public":            "zone",
 		"n 192.0.2.1 probe=snmp relay=udp6:[::1]:161 community=public":      "host name or IP address",
 		"m ::ffff:192.0.2.1%eth0":                                           "cannot have a zone",
@@ -330,6 +330,38 @@ func TestStaticMistakesAreRejectedWithTheirReason(t *testing.T) {
 		}
 
 		session.Close()
+	}
+}
+
+func TestTCPConfigBuildsWithBothFamilies(t *testing.T) {
+	for _, c := range []struct {
+		address string
+		attrs   string
+		family  probe.Family
+	}{
+		{"dns.google", "", probe.FamilyIPv4},
+		{"dns.google", " resolve_family=ipv6", probe.FamilyIPv6},
+		{"2001:db8::1", "", probe.FamilyIPv6},
+		{"fe80::1%eth0", "", probe.FamilyIPv6},
+	} {
+		svc, _ := newService(writeConfig(t, "dns "+c.address+" probe=tcp port=53"+c.attrs+"\n"), "")
+
+		session, _, err := svc.Open(t.Context(), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rows := monitoredRows(session.Table())
+		session.Close()
+
+		if len(rows) != 1 {
+			t.Fatalf("%s%s: rows = %+v, want one TCP row", c.address, c.attrs, rows)
+		}
+
+		params, ok := rows[0].Plan.Params().(probe.TCP)
+		if !ok || params.Family != c.family || params.Port != probe.PortNumber(53) {
+			t.Errorf("%s%s: compiled parameters = %+v", c.address, c.attrs, params)
+		}
 	}
 }
 

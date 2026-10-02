@@ -187,12 +187,18 @@ func closeLog(w *logfile.LogWriter) error {
 
 // run starts the TUI on m and blocks until it exits.
 func run(m tui.Model) error {
+	return runWithOptions(context.Background(), m)
+}
+
+// runWithOptions accepts program options for a controlled input/output surface.
+func runWithOptions(parent context.Context, m tui.Model, options ...tea.ProgramOption) error {
 	defer m.Close()
 	// Ask the terminal for its background now, while nothing else reads stdin.
 	tui.DetectBackground()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	ctx, cancel := context.WithCancel(parent)
+	options = append([]tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}, options...)
+	p := tea.NewProgram(m, options...)
 	done := tui.WatchTerminal(ctx, p)
 
 	_, err := p.Run()
@@ -208,26 +214,33 @@ func run(m tui.Model) error {
 	return errors.Join(err, terminalErr)
 }
 
-func main() {
-	args, err := parseArgs(os.Args[1:])
+// execute runs the command and returns its exit status after all cleanup.
+func execute(
+	argv []string,
+	service func(string, string) (*monitoring.Service, *logfile.LogWriter),
+	runUI func(tui.Model) error,
+) int {
+	args, err := parseArgs(argv)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			// -h/--help: the flag package already printed usage; exit success like
 			// flag.ExitOnError would, rather than reporting "flag: help requested".
-			os.Exit(0)
+			return 0
 		}
 
 		fmt.Fprintln(os.Stderr, "usage: deadman [options] configfile")
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+
+		return 2
 	}
 
-	svc, logWriter := newService(args.ConfigPath, args.LogDir)
+	svc, logWriter := service(args.ConfigPath, args.LogDir)
 
 	session, loaded, err := svc.Open(context.Background(), args.Async)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, errors.Join(err, closeLog(logWriter)))
-		os.Exit(1)
+
+		return 1
 	}
 
 	host := hostinfo.Lookup(context.Background())
@@ -243,12 +256,19 @@ func main() {
 		},
 	})
 
-	err = run(m)
+	err = runUI(m)
 
 	// os.Exit skips defers, so drain the log explicitly before the error exit too.
 	err = errors.Join(err, closeLog(logWriter))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+
+		return 1
 	}
+
+	return 0
+}
+
+func main() {
+	os.Exit(execute(os.Args[1:], newService, run))
 }

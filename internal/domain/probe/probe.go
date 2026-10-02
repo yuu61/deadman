@@ -5,7 +5,7 @@
 // with every default filled in.
 //
 // The concrete probing modes (direct ICMP, SSH relay, SNMP, network namespace, VRF,
-// RouterOS REST API, TCP/hping3, QUIC, forced next-hop) live in the infrastructure
+// RouterOS REST API, TCP connections, QUIC, forced next-hop) live in the infrastructure
 // layer and are built from a Plan there. This package does no I/O.
 package probe
 

@@ -59,7 +59,7 @@ func assertUnobservedProbe(t *testing.T, result probe.Result, want probe.ResultC
 // Cancel only after resolution starts, so this tests an in-flight lookup rather than
 // the early return for an already canceled context. Both ICMP implementations run here.
 func TestProbeDNSHonorsCallerLifetime(t *testing.T) {
-	for _, adapter := range []string{"native_icmp", "portable_icmp", "quic"} {
+	for _, adapter := range []string{"native_icmp", "portable_icmp", "quic", "tcp"} {
 		for _, deadline := range []bool{false, true} {
 			name := "cancel"
 			if deadline {
@@ -95,6 +95,10 @@ func TestProbeDNSHonorsCallerLifetime(t *testing.T) {
 				spec := probe.Spec{Addr: "caller-lifetime.example.invalid"}
 				if adapter == "quic" {
 					spec.Params = probe.QUIC{}
+				}
+
+				if adapter == "tcp" {
+					spec.Params = probe.TCP{Port: probe.PortNumber(53)}
 				}
 
 				p, err := New(compiled(t, spec), "row#1")

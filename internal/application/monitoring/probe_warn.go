@@ -84,7 +84,7 @@ type icmpNeeds struct {
 
 // localICMPNeeds classifies the targets a config relies on, tracking the direct and
 // next-hop classes separately because their privilege needs differ. The other methods
-// need no ICMP socket here: tcp and quic are sent by hping3 and a UDP socket, and the
+// need no ICMP socket here: tcp and quic use ordinary TCP and UDP sockets, and the
 // relay methods (probe.RelayParams) by the relay.
 func localICMPNeeds(targets []probeTarget) icmpNeeds {
 	var n icmpNeeds

@@ -44,10 +44,9 @@ func buildableSpecs(addr, relay, name, value, secret string) []probe.Spec {
 
 	families := []probe.Family{probe.FamilyUnknown, probe.FamilyIPv4, probe.FamilyIPv6}
 
-	specs := make([]probe.Spec, 0, 2+3*len(families))
+	specs := make([]probe.Spec, 0, 1+4*len(families))
 	specs = append(
 		specs,
-		probe.Spec{Addr: addr, Params: probe.TCP{Port: probe.PortNumber(80)}},
 		probe.Spec{
 			Addr:   addr,
 			Params: probe.RouterOS{Host: relay, Username: value, Password: secret},
@@ -56,6 +55,7 @@ func buildableSpecs(addr, relay, name, value, secret string) []probe.Spec {
 
 	for _, family := range families {
 		specs = append(specs,
+			probe.Spec{Addr: addr, Params: probe.TCP{Port: probe.PortNumber(80), Family: family}},
 			probe.Spec{Addr: addr, Params: probe.Netns{Name: name, Source: src, Family: family}},
 			probe.Spec{Addr: addr, Params: probe.VRF{Name: name, Family: family}},
 			probe.Spec{
@@ -77,15 +77,13 @@ func operands(plan probe.Plan) []string {
 	dest := plan.Destination().String()
 
 	switch p := plan.Params().(type) {
-	case probe.TCP:
-		return []string{dest}
 	case probe.Netns:
 		return []string{p.Name, dest}
 	case probe.VRF:
 		return []string{p.Name, dest}
 	case probe.SSH:
 		return []string{p.Host, dest}
-	case probe.Direct, probe.QUIC, probe.Nexthop, probe.SNMP, probe.RouterOS:
+	case probe.Direct, probe.TCP, probe.QUIC, probe.Nexthop, probe.SNMP, probe.RouterOS:
 		return nil // sent through sockets, or as a value of a preceding option.
 	default:
 		return nil
@@ -148,8 +146,10 @@ func checkSendable(t *testing.T, plan probe.Plan, p probe.Pinger) {
 		if !built.ssh && args[len(args)-1] != plan.Destination().String() {
 			t.Fatalf("%s: argv %q does not end with the destination", plan.Method(), args)
 		}
-	case *hpingPinger:
-		checkArgv(t, plan, []string{built.addr, built.port})
+	case *tcpPinger:
+		if built.dest != plan.Destination() {
+			t.Fatalf("tcp destination %v differs from plan %v", built.dest, plan.Destination())
+		}
 	case *routerOSPinger:
 		checkRouterOSURL(t, plan, built.url)
 	default:

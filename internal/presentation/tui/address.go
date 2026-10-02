@@ -33,13 +33,15 @@ func resolveFamilyFor(params probe.Params) probe.Family {
 		return p.Family
 	case probe.QUIC:
 		return p.Family
+	case probe.TCP:
+		return p.Family
 	case probe.SSH:
 		return p.Family
 	case probe.Netns:
 		return p.Family
 	case probe.VRF:
 		return p.Family
-	case probe.TCP, probe.Nexthop, probe.SNMP, probe.RouterOS:
+	case probe.Nexthop, probe.SNMP, probe.RouterOS:
 		return probe.FamilyUnknown
 	default:
 		return probe.FamilyUnknown // unreachable: probe.Params is a closed set.

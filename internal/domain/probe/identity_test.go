@@ -14,7 +14,7 @@ func TestIdentitySpellingContract(t *testing.T) {
 		want   string
 	}{
 		{"direct", Direct{Source: SourceInterface("eth0")}, `"direct":"192.0.2.1":"eth0":"1":`},
-		{"tcp", TCP{Port: PortNumber(443)}, `"tcp":"192.0.2.1":"443":`},
+		{"tcp", TCP{Port: PortNumber(443)}, `"tcp":"192.0.2.1":"443":"1":`},
 		{"snmp", SNMP{Host: "agent", Community: "secret"}, `"snmp":"192.0.2.1":"agent":`},
 		{
 			"netns",

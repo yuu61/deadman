@@ -23,6 +23,9 @@ func TestCompileRejectsInvalidConditions(t *testing.T) {
 		{Addr: "host", Params: TCP{}},
 		{Addr: "host", Params: TCP{Port: PortNumber(0)}},
 		{Addr: "host", Params: TCP{Port: PortNumber(65536)}},
+		{Addr: "host", Params: TCP{Port: PortNumber(80), Family: Family(99)}},
+		{Addr: "192.0.2.1", Params: TCP{Port: PortNumber(80), Family: FamilyIPv6}},
+		{Addr: "2001:db8::1", Params: TCP{Port: PortNumber(80), Family: FamilyIPv4}},
 		{Addr: "host", Params: QUIC{Port: PortNumber(-1)}},
 		{Addr: "host", Params: QUIC{Port: PortNumber(0)}},
 		{Addr: "host", Params: QUIC{Verify: Verification(99)}},
@@ -144,6 +147,8 @@ func TestCompiledDefaultsHaveIdenticalPaths(t *testing.T) {
 		omitted, explicit Params
 	}{
 		{MethodDirect, "192.0.2.1", Direct{}, Direct{Family: FamilyIPv4}},
+		{MethodTCP, "example.com", TCP{Port: PortNumber(80)}, TCP{Port: PortNumber(80), Family: FamilyIPv4}},
+		{MethodTCP, "2001:db8::1", TCP{Port: PortNumber(80)}, TCP{Port: PortNumber(80), Family: FamilyIPv6}},
 		{
 			MethodQUIC,
 			"example.com",
@@ -223,6 +228,7 @@ func TestIdentitySeparatesConditions(t *testing.T) {
 		{Addr: "example.com", Params: Direct{Source: SourceInterface("eth0")}},
 		{Addr: "example.com", Params: TCP{Port: PortNumber(80)}},
 		{Addr: "example.com", Params: TCP{Port: PortNumber(443)}},
+		{Addr: "example.com", Params: TCP{Port: PortNumber(80), Family: FamilyIPv6}},
 		{Addr: "example.com", Params: QUIC{}},
 		{Addr: "example.com", Params: QUIC{ALPN: "hq"}},
 		{Addr: "example.com", Params: QUIC{SNI: "other"}},
@@ -394,16 +400,13 @@ func TestPortOmissionIsNotZero(t *testing.T) {
 	}
 }
 
-// A probe tool can only be given a target it can carry: hping3 resolves IPv4 only
-// (inet_addr/gethostbyname), and an snmp probe hands the agent the address bytes without
-// this host's zone. Either line would otherwise fail, or ping elsewhere, every round.
+// An SNMP probe hands the agent the address bytes without this host's zone.
+// Unusable target and relay spellings must be rejected before execution.
 func TestCompileRejectsTargetsTheToolCannotCarry(t *testing.T) {
 	tcp := TCP{Port: PortNumber(80)}
 	agent := SNMP{Host: "agent", Community: "public"}
 
 	for name, s := range map[string]Spec{
-		"tcp IPv6 literal":            {Addr: "2001:db8::1", Params: tcp},
-		"tcp zoned literal":           {Addr: "fe80::1%eth0", Params: tcp},
 		"snmp zoned literal":          {Addr: "fe80::1%eth0", Params: agent},
 		"snmp transport spec":         {Addr: "192.0.2.1", Params: SNMP{Host: "udp6:[::1]:161", Community: "c"}},
 		"snmp agent port":             {Addr: "192.0.2.1", Params: SNMP{Host: "agent:1161", Community: "c"}},
@@ -427,6 +430,8 @@ func TestCompileRejectsTargetsTheToolCannotCarry(t *testing.T) {
 	}
 
 	for name, s := range map[string]Spec{
+		"tcp IPv6 literal":        {Addr: "2001:db8::1", Params: tcp},
+		"tcp zoned literal":       {Addr: "fe80::1%eth0", Params: tcp},
 		"tcp IPv4-mapped literal": {Addr: "::ffff:192.0.2.1", Params: tcp},
 		"tcp host name":           {Addr: "example.com", Params: tcp},
 		"snmp IPv6 literal":       {Addr: "2001:db8::1", Params: agent},
@@ -443,7 +448,7 @@ func TestCompileRejectsTargetsTheToolCannotCarry(t *testing.T) {
 }
 
 // An IP literal target reaches every adapter in its one canonical spelling, an
-// IPv4-mapped one as IPv4 — a relay's `ping -4` and hping3 cannot parse ::ffff:192.0.2.1
+// IPv4-mapped one as IPv4 — a relay's `ping -4` cannot parse ::ffff:192.0.2.1
 // — so two spellings of an address are one path. A host name is kept as written.
 func TestCompileCanonicalizesLiteralTargets(t *testing.T) {
 	jump := SSH{Host: "jump", OS: OSLinux}

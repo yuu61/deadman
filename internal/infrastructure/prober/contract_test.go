@@ -121,8 +121,8 @@ func TestRelayPassesTypedSource(t *testing.T) {
 }
 
 // An IPv4-mapped target reaches every tool as IPv4: a relay's `ping -4` refuses
-// ::ffff:192.0.2.1 ("Address family for hostname not supported"), hping3 cannot resolve
-// it, and the snmp probe would hand the agent an IPv6 address.
+// ::ffff:192.0.2.1 ("Address family for hostname not supported"), and the snmp probe
+// would hand the agent an IPv6 address.
 func TestIPv4MappedTargetsReachToolsAsIPv4(t *testing.T) {
 	const mapped, want = "::ffff:192.0.2.1", "192.0.2.1"
 
@@ -143,8 +143,8 @@ func TestIPv4MappedTargetsReachToolsAsIPv4(t *testing.T) {
 		case *subprocessPinger:
 			args := p.buildArgs()
 			got = args[len(args)-1]
-		case *hpingPinger:
-			got = p.addr
+		case *tcpPinger:
+			got = p.dest.String()
 		case *snmpPinger:
 			got = p.dest.String()
 		default:

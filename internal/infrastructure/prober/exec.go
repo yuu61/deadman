@@ -56,7 +56,7 @@ func waitProbeCommand(cmd *exec.Cmd) error {
 }
 
 // maxProbeOutput caps how many bytes of a subprocess's stdout/stderr we buffer per
-// probe. A few KB holds any legitimate ping/hping summary; capping keeps a
+// probe. A few KB holds any legitimate ping summary; capping keeps a
 // hostile or compromised relay/target (e.g. an ssh relay whose key was accepted on
 // first use) from streaming unbounded output into memory. With one
 // probe goroutine per target and no global concurrency cap, an uncapped flood across
@@ -89,7 +89,7 @@ func (w *capWriter) String() string { return w.buf.String() }
 
 // validateOperands returns an error for the first value that begins with '-'. These
 // values are placed as BARE operands in a subprocess argv — an ssh relay host, an
-// `ip netns/vrf` namespace name, or a ping/hping destination address — so the spawned
+// `ip netns/vrf` namespace name, or a ping destination address — so the spawned
 // tool's getopt would parse a leading-'-' token as an option rather than an operand
 // (argument injection). The dangerous case is an ssh relay of "-oProxyCommand=..." which
 // makes ssh run an arbitrary local command at deadman's privilege; the milder cases

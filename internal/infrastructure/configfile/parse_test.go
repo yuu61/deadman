@@ -186,6 +186,22 @@ func TestParseConfigResolveFamily(t *testing.T) {
 	}
 }
 
+func TestParseConfigTCPResolveFamily(t *testing.T) {
+	cfg, err := Parse(strings.NewReader("dns dns.google probe=tcp port=53 resolve_family=ipv6\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tcp := params[probe.TCP](t, target(t, cfg, 0).Params)
+	if tcp.Family != probe.FamilyIPv6 || tcp.Port != probe.PortNumber(53) {
+		t.Fatalf("TCP parameters = %+v", tcp)
+	}
+
+	if len(cfg.Notes) != 0 {
+		t.Errorf("Dropped = %v, want empty", cfg.Notes)
+	}
+}
+
 func TestParseConfigQUIC(t *testing.T) {
 	// The QUIC attributes (port/alpn/sni) become the typed QUIC parameters; verify= is
 	// boolean, so its spelling becomes the domain's verification policy. None is recorded
