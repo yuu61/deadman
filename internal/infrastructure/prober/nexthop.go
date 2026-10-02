@@ -27,7 +27,7 @@ import (
 // The OS-specific half — putting an L3 packet on the wire toward a MAC and resolving
 // that MAC from the kernel neighbor cache — is linkTransport (Linux AF_PACKET).
 // Next-hop forcing is a Linux-only feature, like the other Linux-bound methods
-// (netns/vrf through `ip`, tcp through hping3): the AF_PACKET injection it needs has no
+// (netns/vrf through `ip`): the AF_PACKET injection it needs has no
 // portable equivalent, so the transport is build-tagged, and elsewhere a forced target
 // is not built: its build error says why. It is not a portability roadmap.
 //

@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
-	"net"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -17,7 +15,7 @@ const quicTimeout = 5 * time.Second
 
 // quicPinger probes by performing a fresh QUIC (TLS 1.3) handshake on each Send and
 // measuring the dial->handshake-complete wall-clock as the RTT. It is the in-process
-// sibling of the TCP SYN probe: it targets an endpoint known to speak QUIC on a
+// sibling of the TCP-connect probe: it targets an endpoint known to speak QUIC on a
 // port, not an arbitrary IP. The tls.Config is built once in the constructor (the
 // routeros pattern) from the plan, which fills in the port, ALPN, SNI and verification
 // (off by default, because QUIC probes commonly target endpoints by IP).
@@ -86,7 +84,7 @@ func (p *quicPinger) Send(ctx context.Context) probe.Result {
 
 	// Each DialAddr spins up an internal Transport and ephemeral UDP socket; close it
 	// or leak a socket and goroutines on every probe.
-	_ = conn.CloseWithError(0, "")
+	discard(conn.CloseWithError(0, ""))
 
 	return probe.SuccessResult(rtt)
 }
@@ -96,22 +94,7 @@ func (p *quicPinger) Send(ctx context.Context) probe.Result {
 // IPv6 one included) is dialed as it is; a name is resolved here under ctx. Like the rest
 // of deadman, it probes the resolver's first address rather than racing several.
 func (p *quicPinger) resolveAddr(ctx context.Context) (string, error) {
-	if a, ok := p.dest.IP(); ok {
-		return net.JoinHostPort(a.String(), p.port), nil
-	}
-
-	name, _ := p.dest.Name()
-
-	ips, err := net.DefaultResolver.LookupNetIP(ctx, p.network, name)
-	if err != nil {
-		return "", err
-	}
-
-	if len(ips) == 0 {
-		return "", fmt.Errorf("quic: no addresses for %s", name)
-	}
-
-	return net.JoinHostPort(ips[0].String(), p.port), nil
+	return resolveProbeAddress(ctx, p.dest, p.port, p.network)
 }
 
 // quicFailure treats the handshake or dial deadline as an observed lack of response.

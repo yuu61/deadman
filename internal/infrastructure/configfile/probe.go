@@ -261,7 +261,9 @@ var readers = map[probe.Method]func(p *probeInput) probe.Params{
 	probe.MethodDirect: func(p *probeInput) probe.Params {
 		return probe.Direct{Source: p.source(), Family: p.family()}
 	},
-	probe.MethodTCP: func(p *probeInput) probe.Params { return probe.TCP{Port: p.port()} },
+	probe.MethodTCP: func(p *probeInput) probe.Params {
+		return probe.TCP{Port: p.port(), Family: p.family()}
+	},
 	probe.MethodQUIC: func(p *probeInput) probe.Params {
 		return probe.QUIC{
 			Port:   p.port(),

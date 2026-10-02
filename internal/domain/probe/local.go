@@ -8,7 +8,7 @@ import (
 )
 
 // The parameters of the methods that send the probe from this host: Direct and Nexthop
-// (ICMP echo), TCP (hping3 SYN) and QUIC (a handshake). Each type sits with how Compile
+// (ICMP echo), TCP (a connection) and QUIC (a handshake). Each type sits with how Compile
 // fills it in and which of its fields make up the Identity.
 
 // LocalParams is the closed set of the parameters of the methods whose probe this host
@@ -62,11 +62,11 @@ func (d Direct) identity(b *strings.Builder) {
 	writeKey(b, d.Family.resolveSpelling())
 }
 
-// TCP is a TCP SYN probe by hping3 (MethodTCP). hping3 is IPv4 only: it reads its target
-// with inet_addr and gethostbyname, so a host name resolves to its IPv4 address there and
-// an IPv6 literal fails every probe ("Unable to resolve").
+// TCP measures connection establishment (MethodTCP). A hostname defaults to IPv4;
+// resolve_family can pin it to IPv6. An IP literal fixes its own family.
 type TCP struct {
-	Port Port // port=: the destination port; required.
+	Port   Port // port=: the destination port; required.
+	Family Family
 }
 
 func (TCP) local() {}
@@ -79,16 +79,24 @@ func (t TCP) compile(dest Destination) (Params, error) {
 		return nil, err
 	}
 
-	if dest.Family() == FamilyIPv6 {
-		return nil, fmt.Errorf("tcp probes by hping3, which is IPv4 only, but %s is IPv6", dest)
+	family, err := resolveFamily(dest, t.Family)
+	if err != nil {
+		return nil, err
 	}
 
-	t.Port = port
+	if family == FamilyUnknown {
+		family = FamilyIPv4
+	}
+
+	t.Port, t.Family = port, family
 
 	return t, nil
 }
 
-func (t TCP) identity(b *strings.Builder) { writeKey(b, t.Port.String()) }
+func (t TCP) identity(b *strings.Builder) {
+	writeKey(b, t.Port.String())
+	writeKey(b, t.Family.resolveSpelling())
+}
 
 // QUIC times a QUIC handshake with the target (MethodQUIC).
 type QUIC struct {
