@@ -17,13 +17,17 @@ type tcpPinger struct {
 	dest    probe.Destination
 	port    string
 	network string // LookupNetIP network, fixed by Compile.
+	dial    func(context.Context, string, string) (net.Conn, error)
 }
 
 func newTCPPinger(dest probe.Destination, params probe.TCP) *tcpPinger {
+	var dialer net.Dialer
+
 	return &tcpPinger{
 		dest:    dest,
 		port:    params.Port.String(),
 		network: resolveNetwork(params.Family),
+		dial:    dialer.DialContext,
 	}
 }
 
@@ -36,10 +40,8 @@ func (p *tcpPinger) Send(ctx context.Context) probe.Result {
 		return probe.UnavailableResult()
 	}
 
-	var dialer net.Dialer
-
 	start := time.Now()
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, err := p.dial(ctx, "tcp", addr)
 	rtt := float64(time.Since(start).Microseconds()) / usPerMs
 
 	if err == nil {
