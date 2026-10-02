@@ -59,6 +59,8 @@ type cliArgs struct {
 	LogDir     string
 	Async      bool
 	Blink      bool
+	Check      bool
+	Format     bool
 	Display    tui.Flags
 }
 
@@ -82,23 +84,12 @@ func parseArgs(args []string) (cliArgs, error) {
 	cols := fs.Int("c", 0, "split the host list into N side-by-side columns (default 1)")
 	fs.IntVar(cols, "split", 0, "split the host list into N side-by-side columns (default 1)")
 	glyph := glyphFlag(fs)
+	check := fs.Bool("check", false, "check configuration without starting monitoring")
+	format := fs.Bool("format", false, "check and format configuration to standard output")
 
-	var positional []string
-
-	rest := args
-	for {
-		err := fs.Parse(rest)
-		if err != nil {
-			return cliArgs{}, err
-		}
-
-		rest = fs.Args()
-		if len(rest) == 0 {
-			break
-		}
-
-		positional = append(positional, rest[0])
-		rest = rest[1:]
+	positional, err := parseIntermixed(fs, args)
+	if err != nil {
+		return cliArgs{}, err
 	}
 
 	if len(positional) < 1 {
@@ -114,11 +105,17 @@ func parseArgs(args []string) (cliArgs, error) {
 		)
 	}
 
+	if *check && *format {
+		return cliArgs{}, errors.New("--check and --format cannot be combined")
+	}
+
 	return cliArgs{
 		ConfigPath: positional[0],
 		LogDir:     *logdir,
 		Async:      *async,
 		Blink:      *blink,
+		Check:      *check,
+		Format:     *format,
 		Display: tui.Flags{
 			Scale:    *scale,
 			ScaleSet: flagGiven(fs, "s", "scale"),
@@ -127,6 +124,26 @@ func parseArgs(args []string) (cliArgs, error) {
 			ColsSet:  flagGiven(fs, "c", "split"),
 		},
 	}, nil
+}
+
+func parseIntermixed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+
+	rest := args
+	for {
+		err := fs.Parse(rest)
+		if err != nil {
+			return nil, err
+		}
+
+		rest = fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+
+		positional = append(positional, rest[0])
+		rest = rest[1:]
+	}
 }
 
 // flagGiven reports whether a flag under any of names was actually given on the command
@@ -222,12 +239,29 @@ func main() {
 		os.Exit(2)
 	}
 
+	if args.Check || args.Format {
+		err = processConfig(args, os.Stdout)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		return
+	}
+
+	err = runMonitoring(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func runMonitoring(args cliArgs) error {
 	svc, logWriter := newService(args.ConfigPath, args.LogDir)
 
 	session, loaded, err := svc.Open(context.Background(), args.Async)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, errors.Join(err, closeLog(logWriter)))
-		os.Exit(1)
+		return errors.Join(err, closeLog(logWriter))
 	}
 
 	host := hostinfo.Lookup(context.Background())
@@ -246,9 +280,5 @@ func main() {
 	err = run(m)
 
 	// os.Exit skips defers, so drain the log explicitly before the error exit too.
-	err = errors.Join(err, closeLog(logWriter))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return errors.Join(err, closeLog(logWriter))
 }
