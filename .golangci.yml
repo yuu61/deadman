@@ -169,6 +169,7 @@ linters:
         - generic
         - ^github\.com/yuu61/deadman/internal/domain/probe\.(Params|Pinger)$
         - ^github\.com/yuu61/deadman/internal/application/config\.Line$
+        - ^github\.com/yuu61/deadman/internal/application/config\.Setting$
         - ^github\.com/yuu61/deadman/internal/infrastructure/prober\.(echoFamily|linkTransport|replyWaiter)$
         - ^golang\.org/x/sys/unix\.Sockaddr$
         - ^github\.com/charmbracelet/bubbletea\.Model$

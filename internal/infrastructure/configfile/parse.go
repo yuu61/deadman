@@ -103,26 +103,13 @@ func parseBool(s string) (bool, error) {
 func Parse(r io.Reader) (config.Config, error) {
 	cfg := config.Config{Display: config.Display{Columns: map[string]bool{}}}
 
-	sc := bufio.NewScanner(r)
-
-	first := true
-
-	for sc.Scan() {
-		line := strings.ReplaceAll(sc.Text(), "\t", " ")
-		if first {
-			// Strip a leading UTF-8 BOM (U+FEFF) from the first line only. Windows
-			// editors (Notepad/PowerShell) routinely save it, and otherwise it sticks to
-			// the first token — turning a directive like "scale 5" into a phantom target
-			// or garbling the first host's name.
-			line = strings.TrimPrefix(line, "\ufeff")
-			first = false
-		}
-
+	err := scanLines(r, func(_ int, raw string) {
+		line := strings.ReplaceAll(raw, "\t", " ")
 		line = stripComment(line)
 
 		fields, terminated := tokenize(line)
 		if len(fields) == 0 {
-			continue
+			return
 		}
 
 		// Directive keywords are matched case-insensitively (like the column on/off
@@ -131,7 +118,7 @@ func Parse(r io.Reader) (config.Config, error) {
 		if h, ok := directives[strings.ToLower(fields[0])]; ok {
 			h(&cfg.Display, fields[1:])
 
-			continue
+			return
 		}
 
 		target, note := parseTarget(fields)
@@ -142,9 +129,26 @@ func Parse(r io.Reader) (config.Config, error) {
 		if note.UnterminatedQuote || len(note.Dropped) > 0 {
 			cfg.Notes = append(cfg.Notes, note)
 		}
+	})
+
+	return cfg, err
+}
+
+// scanLines shares physical line numbering, CRLF handling and the scanner's size
+// limit between parsing, checking and formatting. Strip only the first-line BOM:
+// Windows editors commonly emit it, but it is not part of the first token.
+func scanLines(r io.Reader, visit func(int, string)) error {
+	scanner := bufio.NewScanner(r)
+	for number := 1; scanner.Scan(); number++ {
+		line := scanner.Text()
+		if number == 1 {
+			line = strings.TrimPrefix(line, "\ufeff")
+		}
+
+		visit(number, line)
 	}
 
-	return cfg, sc.Err()
+	return scanner.Err()
 }
 
 // stripComment removes a comment from a config line: a whole-line comment (the

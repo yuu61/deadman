@@ -174,6 +174,57 @@ func TestCommandWithoutLoggingExitsNormally(t *testing.T) {
 	}
 }
 
+func TestConfigToolsSkipMonitoring(t *testing.T) {
+	for _, mode := range []struct {
+		name  string
+		flags []string
+	}{
+		{"check", []string{"--check"}},
+		{"format", []string{"--format"}},
+		{"write", []string{"--format", "-w"}},
+	} {
+		for _, invalid := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/invalid=%t", mode.name, invalid), func(t *testing.T) {
+				input, wantCode := "host 192.0.2.1\n", 0
+				if invalid {
+					input, wantCode = "host\n", 1
+				}
+
+				path := writeConfig(t, input)
+				args := append([]string{path}, mode.flags...)
+
+				code, output := captureCommandError(t, func() int {
+					original := os.Stdout
+
+					os.Stdout = os.Stderr
+					defer func() { os.Stdout = original }()
+
+					return execute(args,
+						func(string, string) (*monitoring.Service, *logfile.LogWriter) {
+							t.Fatal("configuration command constructed monitoring adapters")
+
+							return nil, nil
+						},
+						func(tui.Model) error {
+							t.Fatal("configuration command started the terminal UI")
+
+							return nil
+						},
+					)
+				})
+				if code != wantCode {
+					t.Fatalf(
+						"configuration command exit=%d, output=%q; want %d",
+						code,
+						output,
+						wantCode,
+					)
+				}
+			})
+		}
+	}
+}
+
 // Only probe replies and round waits are faked. The config, session, model and log
 // writer remain real, including their shutdown and error reporting paths.
 func instantCommandService(configPath, logDir string) (*monitoring.Service, *logfile.LogWriter) {
