@@ -89,6 +89,16 @@ func TestFormat(t *testing.T) {
 			"h 192.0.2.1 \"a\tb\"=1 \"a b\"=2 probe=direct\n",
 			"h  192.0.2.1  \"a\tb\"=1 \"a b\"=2 probe=direct\n",
 		},
+		{
+			"unknown attributes follow known attributes alphabetically",
+			"h 192.0.2.1 zeta=3 source=eth0 beta=2 probe=direct alpha=1\n",
+			"h  192.0.2.1  probe=direct source=eth0 alpha=1 beta=2 zeta=3\n",
+		},
+		{
+			"quoted unknown attribute keys and values",
+			"h 192.0.2.1 zeta=\"a;# b=c\" \"beta=2\" al\"pha\"=1 probe=direct\n",
+			"h  192.0.2.1  probe=direct al\"pha\"=1 \"beta=2\" zeta=\"a;# b=c\"\n",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,6 +173,64 @@ func TestFormatSortsAttributes(t *testing.T) {
 			again, err := Format(strings.NewReader(got))
 			if err != nil || again != got {
 				t.Errorf("second Format = %q, %v; want %q", again, err, got)
+			}
+		})
+	}
+}
+
+func TestFormatAlignedLineSizeBoundary(t *testing.T) {
+	const (
+		inputPrefix = "h 192.0.2.1 probe=ssh relay=jump os=Linux key="
+		wantPrefix  = "h  192.0.2.1  probe=ssh relay=jump os=Linux key="
+	)
+
+	for _, tc := range []struct {
+		name string
+		size int
+	}{
+		{"below limit", bufio.MaxScanTokenSize - 1},
+		{"at limit", bufio.MaxScanTokenSize},
+		{"above limit", bufio.MaxScanTokenSize + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Count the final newline too. The input is two bytes shorter, so all
+			// cases are readable; only alignment can make the output too large.
+			key := strings.Repeat("a", tc.size-len(wantPrefix)-1)
+			input := inputPrefix + key + "\n"
+
+			diagnostics, err := Check(strings.NewReader(input), acceptSetting)
+			if err != nil || len(diagnostics) > 0 {
+				t.Fatalf("invalid input: %v, %v", diagnostics, err)
+			}
+
+			formatted, err := Format(strings.NewReader(input))
+			if tc.size > bufio.MaxScanTokenSize {
+				if err == nil || !strings.Contains(err.Error(), "line 1:") || formatted != "" {
+					t.Fatalf("oversized Format: length=%d, error=%v", len(formatted), err)
+				}
+
+				return
+			}
+
+			if err != nil || formatted != wantPrefix+key+"\n" {
+				t.Fatalf(
+					"Format: length=%d, error=%v; want length=%d",
+					len(formatted),
+					err,
+					tc.size,
+				)
+			}
+
+			assertSameConfig(t, input, formatted)
+
+			again, err := Format(strings.NewReader(formatted))
+			if err != nil || again != formatted {
+				t.Errorf(
+					"second Format: length=%d, error=%v; want length=%d",
+					len(again),
+					err,
+					tc.size,
+				)
 			}
 		})
 	}
