@@ -36,17 +36,24 @@ func processConfig(args cliArgs, output io.Writer) error {
 		return errors.Join(problems...)
 	}
 
-	if args.Format {
-		formatted, formatErr := configfile.Format(bytes.NewReader(data))
-		if formatErr != nil {
-			return fmt.Errorf("%s: format configuration: %w", args.ConfigPath, formatErr)
-		}
-
-		_, err = io.WriteString(output, formatted)
-	} else {
-		_, err = fmt.Fprintf(output, "%s: OK\n", args.ConfigPath)
+	if !args.Format {
+		return writeConfigOutput(output, args.ConfigPath+": OK\n")
 	}
 
+	formatted, err := configfile.Format(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("%s: format configuration: %w", args.ConfigPath, err)
+	}
+
+	if args.Write {
+		return configfile.Rewrite(args.ConfigPath, data, formatted)
+	}
+
+	return writeConfigOutput(output, formatted)
+}
+
+func writeConfigOutput(output io.Writer, text string) error {
+	_, err := io.WriteString(output, text)
 	if err != nil {
 		return fmt.Errorf("write configuration output: %w", err)
 	}

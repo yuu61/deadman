@@ -61,6 +61,7 @@ type cliArgs struct {
 	Blink      bool
 	Check      bool
 	Format     bool
+	Write      bool
 	Display    tui.Flags
 }
 
@@ -86,6 +87,8 @@ func parseArgs(args []string) (cliArgs, error) {
 	glyph := glyphFlag(fs)
 	check := fs.Bool("check", false, "check configuration without starting monitoring")
 	format := fs.Bool("format", false, "check and format configuration to standard output")
+	write := fs.Bool("w", false, "write formatted configuration to file (requires --format)")
+	fs.BoolVar(write, "write", false, "write formatted configuration to file (requires --format)")
 
 	positional, err := parseIntermixed(fs, args)
 	if err != nil {
@@ -109,6 +112,10 @@ func parseArgs(args []string) (cliArgs, error) {
 		return cliArgs{}, errors.New("--check and --format cannot be combined")
 	}
 
+	if *write && !*format {
+		return cliArgs{}, errors.New("--write requires --format")
+	}
+
 	return cliArgs{
 		ConfigPath: positional[0],
 		LogDir:     *logdir,
@@ -116,6 +123,7 @@ func parseArgs(args []string) (cliArgs, error) {
 		Blink:      *blink,
 		Check:      *check,
 		Format:     *format,
+		Write:      *write,
 		Display: tui.Flags{
 			Scale:    *scale,
 			ScaleSet: flagGiven(fs, "s", "scale"),
