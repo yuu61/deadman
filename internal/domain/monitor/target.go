@@ -4,7 +4,11 @@
 // result bar is drawn from.
 package monitor
 
-import "github.com/yuu61/deadman/internal/domain/probe"
+import (
+	"slices"
+
+	"github.com/yuu61/deadman/internal/domain/probe"
+)
 
 // State is the reachability state of a target.
 type State int
@@ -71,7 +75,8 @@ type Snapshot struct {
 	Name string
 	Addr string // the displayed address; monitoring uses the compiled destination.
 
-	results []probe.Result // oldest first.
+	results []probe.Result // detached ring; grows until historyCap.
+	next    int            // ring index where Advance writes the next result.
 }
 
 // Reading is what one probe result left a target at: its identity, its statistics after
@@ -99,14 +104,10 @@ func (t *Target) Name() string { return t.name }
 
 // Snapshot copies the identity, statistics and history for a reader.
 func (t *Target) Snapshot() Snapshot {
-	results := make([]probe.Result, 0, t.histLen)
-	if t.histLen < historyCap {
-		results = append(results, t.history[:t.histLen]...)
-	} else {
-		results = append(append(results, t.history[t.histNext:]...), t.history[:t.histNext]...)
+	return Snapshot{
+		ID: t.id, Name: t.name, Addr: t.addr, Stats: t.stats,
+		results: slices.Clone(t.history[:t.histLen]), next: t.histNext,
 	}
-
-	return Snapshot{ID: t.id, Name: t.name, Addr: t.addr, Stats: t.stats, results: results}
 }
 
 // Len reports how many probe results are retained (at most historyCap).
@@ -116,7 +117,14 @@ func (t Snapshot) Len() int { return len(t.results) }
 // oldest still retained. The TUI renders each to a glyph at view time, so the result
 // bar re-buckets live when the RTT scale changes. Callers must keep 0 <= i < Len();
 // the TUI bounds i with Len at render time.
-func (t Snapshot) At(i int) probe.Result { return t.results[len(t.results)-1-i] }
+func (t Snapshot) At(i int) probe.Result {
+	index := t.next - 1 - i
+	if index < 0 {
+		index += len(t.results)
+	}
+
+	return t.results[index]
+}
 
 // Advance returns the snapshot followed by r, the reading of the target's next result:
 // r's statistics, and r's result as the newest, the oldest dropped past the history's
@@ -124,11 +132,13 @@ func (t Snapshot) At(i int) probe.Result { return t.results[len(t.results)-1-i] 
 // is to be used afterwards.
 func (t Snapshot) Advance(r Reading) Snapshot {
 	t.Stats = r.Stats
-	if len(t.results) >= historyCap {
-		t.results = t.results[len(t.results)-historyCap+1:]
+	if len(t.results) < historyCap {
+		t.results = append(t.results, r.Result)
+	} else {
+		t.results[t.next] = r.Result
 	}
 
-	t.results = append(t.results, r.Result)
+	t.next = (t.next + 1) % historyCap
 
 	return t
 }

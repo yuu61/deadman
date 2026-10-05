@@ -15,15 +15,15 @@ import (
 // withColor makes lipgloss's default renderer emit color at profile p on a dark or light
 // background for the rest of the test. Tests otherwise render with no color at all
 // (stdout is not a terminal), which would hide the ramp.
-func withColor(t *testing.T, p termenv.Profile, dark bool) {
-	t.Helper()
+func withColor(tb testing.TB, p termenv.Profile, dark bool) {
+	tb.Helper()
 
 	prevProfile, prevDark := lipgloss.ColorProfile(), lipgloss.HasDarkBackground()
 
 	lipgloss.SetColorProfile(p)
 	lipgloss.SetHasDarkBackground(dark)
 
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		lipgloss.SetColorProfile(prevProfile)
 		lipgloss.SetHasDarkBackground(prevDark)
 	})

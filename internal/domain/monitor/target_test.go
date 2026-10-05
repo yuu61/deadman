@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"math"
+	"strconv"
 	"testing"
 
 	"github.com/yuu61/deadman/internal/domain/probe"
@@ -250,17 +251,35 @@ func TestNewTargetKeepsIdentity(t *testing.T) {
 // statistics and the same results, newest first, bounded like the entity's history at
 // every step, including the one that first reaches the bound.
 func TestAdvanceFollowsTheTarget(t *testing.T) {
+	for _, seed := range []int{0, 1, historyCap - 1, historyCap, historyCap + 5} {
+		t.Run(strconv.Itoa(seed), func(t *testing.T) { assertAdvanceFollowsTarget(t, seed) })
+	}
+}
+
+func assertAdvanceFollowsTarget(t *testing.T, seed int) {
+	t.Helper()
+
 	target := NewTarget("row#1", "web", "example.com")
+
+	history := make([]probe.Result, 0, seed+3*historyCap+40)
+	for i := range seed {
+		result := probe.SuccessResult(float64(i))
+		history = append(history, result)
+		target.Consume(result)
+	}
+
 	view := target.Snapshot()
 
-	for i := range historyCap + 40 {
+	for i := range 3*historyCap + 40 {
 		res := probe.SuccessResult(float64(i))
 		if i%3 == 0 {
 			res = probe.FailedResult()
 		}
 
 		view = view.Advance(target.Consume(res))
-		if want := min(i+1, historyCap); view.Len() != want {
+		history = append(history, res)
+
+		if want := min(seed+i+1, historyCap); view.Len() != want {
 			t.Fatalf(
 				"after %d results the advanced history holds %d, want %d",
 				i+1,
@@ -268,22 +287,47 @@ func TestAdvanceFollowsTheTarget(t *testing.T) {
 				want,
 			)
 		}
+
+		want := target.Snapshot()
+		if view.Stats != want.Stats || view.Len() != want.Len() {
+			t.Fatalf("advanced %+v (len %d), snapshot %+v (len %d)",
+				view.Stats, view.Len(), want.Stats, want.Len())
+		}
+
+		for j := range want.Len() {
+			expected := history[len(history)-1-j]
+			if view.At(j) != expected || want.At(j) != expected {
+				t.Fatalf("after %d advances At(%d) = %+v, snapshot has %+v, want %+v",
+					i+1, j, view.At(j), want.At(j), expected)
+			}
+		}
+	}
+}
+
+func TestAdvanceDoesNotChangeEntityOrOtherSnapshots(t *testing.T) {
+	target := NewTarget("row#1", "web", "example.com")
+
+	const seed = historyCap + 5
+
+	for i := range seed {
+		target.Consume(probe.SuccessResult(float64(i)))
 	}
 
-	want := target.Snapshot()
-	if view.Stats != want.Stats || view.Len() != want.Len() || view.Len() != historyCap {
-		t.Fatalf(
-			"advanced %+v (len %d), snapshot %+v (len %d)",
-			view.Stats,
-			view.Len(),
-			want.Stats,
-			want.Len(),
-		)
+	view, retained := target.Snapshot(), target.Snapshot()
+	for range 2 * historyCap {
+		view = view.Advance(Reading{Stats: view.Stats, Result: probe.FailedResult()})
 	}
 
-	for i := range want.Len() {
-		if view.At(i) != want.At(i) {
-			t.Fatalf("At(%d) = %+v, snapshot has %+v", i, view.At(i), want.At(i))
+	current := target.Snapshot()
+
+	for i := range historyCap {
+		want := probe.SuccessResult(float64(seed - 1 - i))
+		if retained.At(i) != want || current.At(i) != want {
+			t.Fatalf("Advance changed another history at %d", i)
+		}
+
+		if view.At(i) != probe.FailedResult() {
+			t.Fatalf("advanced At(%d) = %+v, want failure", i, view.At(i))
 		}
 	}
 }
