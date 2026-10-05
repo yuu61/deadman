@@ -11,7 +11,6 @@ import (
 
 	"github.com/yuu61/deadman/internal/application/monitoring"
 	"github.com/yuu61/deadman/internal/domain/monitor"
-	"github.com/yuu61/deadman/internal/domain/probe"
 	"github.com/yuu61/deadman/internal/presentation/resultbar"
 )
 
@@ -242,17 +241,7 @@ func (m Model) targetLine(idx int, r monitoring.Monitored) string {
 	id := rowIdentity(r)
 	text := m.rowText(m.arrowFor(idx), mark, id.name, id.addr, m.labels[idx], t.Stats)
 
-	var g strings.Builder
-
-	// logIdx is loop-invariant, so resolve the log base once rather than per glyph
-	// (this loop runs resultWidth times per row, every frame).
-	lnBase := m.logFactor().LnBase
-
-	for i := range min(t.Len(), m.resW) {
-		g.WriteString(m.resultCell(t.At(i), lnBase))
-	}
-
-	return text + g.String()
+	return text + m.resultBar(t)
 }
 
 // rejectedLine renders a row that could not be built. It is never probed, so it has no
@@ -332,19 +321,6 @@ func markedCell(s string, w int) string {
 	s = runewidth.Truncate(s, w, "")
 
 	return markRecentFail(s) + strings.Repeat(" ", max(w-displayWidth(s), 0))
-}
-
-// resultCell renders one RESULT-bar cell: a success as its level's glyph in that
-// level's ramp color (safe cyan → caution yellow → warning orange), a failure as X/t/s/?
-// in white on a red fill, which no success has. Glyph and color come from the same
-// resultbar.Level, so they always agree.
-func (m Model) resultCell(res probe.Result, lnBase float64) string {
-	lv := resultbar.Level(res, m.scale, lnBase, m.bar)
-	if lv == resultbar.NoLevel {
-		return styleFail.Render(resultbar.Glyph(res, m.scale, lnBase, m.bar))
-	}
-
-	return rttStyle(m.bar, lv).Render(m.bar.GlyphAt(lv))
 }
 
 // renderColumns lays the visible window out as vp.cols side-by-side newspaper

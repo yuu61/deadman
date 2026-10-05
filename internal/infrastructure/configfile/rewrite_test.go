@@ -21,10 +21,14 @@ func TestRewrite(t *testing.T) {
 
 	chmodRewriteConfig(t, path, 0o640)
 
-	before, err := os.Stat(path)
+	// Stat on an open handle captures the file identity immediately on Windows;
+	// os.Stat can defer that lookup until SameFile, after the path was replaced.
+	source, err := readRewriteSource(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	before := source.info
 
 	err = Rewrite(path, []byte(original), formatted)
 	if err != nil {
@@ -483,7 +487,7 @@ func assertReplacementClosed(t *testing.T, file *failingReplacement) {
 		t.Errorf("Close called %d times, want once", file.closeCalls)
 	}
 
-	_, err := file.Stat()
+	_, err := file.Seek(0, io.SeekCurrent)
 	if !errors.Is(err, os.ErrClosed) {
 		t.Errorf("temporary file was not closed: %v", err)
 	}

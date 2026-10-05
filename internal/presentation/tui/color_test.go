@@ -98,8 +98,7 @@ func TestResultBarColorsByLevel(t *testing.T) {
 				sgr(c.colors[0]) + "▁",
 				sgr(c.colors[1]) + "▄",
 				sgr(c.colors[2]) + "█",
-				failSGR + "X",
-				failSGR + "?",
+				failSGR + "?X",
 			}
 
 			row := lineWith(out, "1.2.3.4")
