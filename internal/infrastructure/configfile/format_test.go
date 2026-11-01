@@ -18,9 +18,15 @@ func TestFormat(t *testing.T) {
 		{"blank lines", "\n \t \r\n\n", "\n\n\n"},
 		{
 			"display blanks",
-			"\ufeff  #blank\r\n\n #BlAnK \nblank\t192.0.2.1\n#blank\n#blank\n",
+			"\ufeff  #blank\r\n\n　#BlAnK　\nblank\t192.0.2.1\n#blank\n#blank\n",
 			"#blank\n\n#BlAnK\nblank  192.0.2.1\n#blank\n#blank\n",
 		},
+		{
+			"commented blank markers",
+			"　#blank ;# \u8aac\u660e\n\t　#BlAnK ; # \u8aac\u660e\n　#blank explanation\n",
+			"#blank ;# \u8aac\u660e\n#BlAnK ; # \u8aac\u660e\n#blank explanation\n",
+		},
+		{"quoted blank marker", " \"#blank\" \n", "\"#blank\"\n"},
 		{
 			"automatic separator blanks",
 			" separator_blank\t on \n--- First\nh 192.0.2.1\n--- Second\n",
@@ -47,7 +53,7 @@ func TestFormat(t *testing.T) {
 			"literal single quotes", "h  192.0.2.1 probe=ssh relay=jump os=Linux user=a'b\n",
 			"h  192.0.2.1  probe=ssh relay=jump os=Linux user=a'b\n",
 		},
-		{"Unicode before hash", "　#host 192.0.2.1\n", "　#host 192.0.2.1\n"},
+		{"Unicode before hash", "　#host 192.0.2.1\n", "#host 192.0.2.1\n"},
 		{"Unicode in marker", "--- label ;　# visible\n", "--- label ;　# visible\n"},
 		{"two BOMs", "\ufeff\ufeffhost 192.0.2.1\n", "\"\"\ufeffhost  192.0.2.1\n"},
 		{"literal BOM", "  \ufeffhost 192.0.2.1\n", "\"\"\ufeffhost  192.0.2.1\n"},
@@ -292,6 +298,7 @@ func assertSameConfig(t *testing.T, before, after string) {
 func FuzzFormatPreservesConfig(f *testing.F) {
 	for _, seed := range []string{
 		"h 192.0.2.1\n", "--- ;　# label\n", "  # comment\n", "scale NaN\n",
+		"　#blank ;# \u8aac\u660e\n", "　#BlAnK　\n", "\"#blank\"\n",
 		"\ufeff\ufeffh 192.0.2.1\n", "　#host 192.0.2.1\n", "\"quoted host\" 192.0.2.1 ;# comment\n",
 		"a 192.0.2.1 probe=tcp port=443\n\"\u6771\u4eac \u62e0\u70b9\" 2001:db8::1 probe=quic\n",
 		"h 192.0.2.1 port=443 resolve_family=ipv4 probe=tcp\n",

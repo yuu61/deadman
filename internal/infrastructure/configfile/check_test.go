@@ -21,7 +21,8 @@ func TestCheckReportsPhysicalLines(t *testing.T) {
 		"bare example.com extra words\r\n" +
 		"glyph \"ascii\r\n" +
 		"--- \"label\r\n" +
-		"valid example.com probe=quic\r\n"
+		"valid example.com probe=quic\r\n" +
+		"\"#blank\"\r\n\"\"#blank\r\n"
 	want := []struct {
 		line int
 		text string
@@ -33,6 +34,8 @@ func TestCheckReportsPhysicalLines(t *testing.T) {
 		{7, "bare words"},
 		{8, "unterminated"},
 		{9, "unterminated"},
+		{11, "address is required"},
+		{12, "address is required"},
 	}
 
 	got, err := Check(strings.NewReader(input), acceptSetting)
@@ -106,7 +109,8 @@ func TestCheckSettingsIncludingOverriddenValues(t *testing.T) {
 }
 
 func TestCheckValidConfig(t *testing.T) {
-	input := "# comment\n\n#blank\n  #BlAnK  \n--- Servers ;# hidden\n" +
+	input := "# comment\n\n#blank\n  #BlAnK  \n　#blank　\n" +
+		"　#blank ;# \u8aac\u660e\n\t　#BlAnK ; # \u8aac\u660e\n--- Servers ;# hidden\n" +
 		"\"web ;# 2\" example.invalid probe=tcp port=443\n" +
 		"remote 192.0.2.1 probe=ssh relay=jump.invalid os=Linux key=\"/a b\"\n" +
 		"router 192.0.2.2 probe=routeros relay=192.0.2.1 username=ops password=\"a;# b\"\n" +

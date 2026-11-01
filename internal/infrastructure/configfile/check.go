@@ -24,6 +24,10 @@ func Check(r io.Reader, checkSetting func(config.Setting) error) ([]Diagnostic, 
 	var diagnostics []Diagnostic
 
 	err := scanLines(r, func(number int, raw string) {
+		if isBlankMarker(raw) {
+			return
+		}
+
 		line := stripComment(strings.ReplaceAll(raw, "\t", " "))
 		for _, problem := range checkLine(line, checkSetting) {
 			diagnostics = append(diagnostics, Diagnostic{Line: number, Problem: problem.Error()})

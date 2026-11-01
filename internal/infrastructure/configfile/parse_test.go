@@ -27,6 +27,7 @@ tcp-t	1.2.3.4 probe=tcp port=80
 func TestParseBlankRows(t *testing.T) {
 	input := "\ufeff#blank\r\n# comment\r\n\r\n \t#BlAnK　\r\n" +
 		"#blank explanation\r\n#blank ;# comment\r\n" +
+		"　#blank explanation\r\n　#blank ;# \u8aac\u660e\r\n\t　#BlAnK ; # \u8aac\u660e\r\n" +
 		"blank 192.0.2.1\r\n#blank\r\n"
 
 	cfg, err := Parse(strings.NewReader(input))
@@ -46,6 +47,25 @@ func TestParseBlankRows(t *testing.T) {
 
 	if got := target(t, cfg, 2); got.Name != "blank" || got.Addr != "192.0.2.1" {
 		t.Errorf("target named blank = %+v", got)
+	}
+}
+
+func TestParseBlankMarkerRequiresPhysicalLine(t *testing.T) {
+	for _, input := range []string{`"#blank"`, `"#bl""ank"`, `""#blank`, `"#blank`} {
+		t.Run(input, func(t *testing.T) {
+			cfg, err := Parse(strings.NewReader(input + "\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(cfg.Lines) != 1 {
+				t.Fatalf("lines = %+v, want one target", cfg.Lines)
+			}
+
+			if got := target(t, cfg, 0); got.Name != blankMarker || got.Addr != "" {
+				t.Errorf("target = %+v, want a target named #blank with no address", got)
+			}
+		})
 	}
 }
 

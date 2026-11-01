@@ -117,6 +117,12 @@ func Parse(r io.Reader) (config.Config, error) {
 	cfg := config.Config{Display: config.Display{Columns: map[string]bool{}}}
 
 	err := scanLines(r, func(_ int, raw string) {
+		if isBlankMarker(raw) {
+			cfg.Lines = append(cfg.Lines, config.Blank{})
+
+			return
+		}
+
 		line := strings.ReplaceAll(raw, "\t", " ")
 		line = stripComment(line)
 
@@ -164,6 +170,12 @@ func scanLines(r io.Reader, visit func(int, string)) error {
 	return scanner.Err()
 }
 
+// isBlankMarker checks the entire physical line before comment stripping or
+// tokenization can turn other content into a standalone marker.
+func isBlankMarker(line string) bool {
+	return strings.EqualFold(strings.TrimSpace(line), blankMarker)
+}
+
 // stripComment removes a comment from a config line: a whole-line comment (the
 // first non-blank rune is '#', after any indentation) yields "", and a ';#' trailer
 // (a ';' followed by optional spaces and a '#', outside any double-quoted span)
@@ -172,11 +184,11 @@ func scanLines(r io.Reader, visit func(int, string)) error {
 // already collapsed to spaces by the caller before this runs. A standalone #blank
 // marker is preserved as an explicit display row rather than removed as a comment.
 func stripComment(line string) string {
-	if strings.EqualFold(strings.TrimSpace(line), blankMarker) {
+	if isBlankMarker(line) {
 		return line
 	}
 
-	if t := strings.TrimLeft(line, " \t"); t == "" || t[0] == '#' {
+	if t := strings.TrimSpace(line); t == "" || t[0] == '#' {
 		return "" // blank line or whole-line comment.
 	}
 
@@ -258,10 +270,6 @@ func tokenize(line string) ([]string, bool) {
 // quote was left open).
 func parseTarget(fields []string) (config.Line, config.Note) {
 	note := config.Note{Name: fields[0]}
-	if len(fields) == 1 && strings.EqualFold(note.Name, blankMarker) {
-		return config.Blank{}, note
-	}
-
 	if len(fields) > 1 {
 		note.Addr = fields[1]
 	}
