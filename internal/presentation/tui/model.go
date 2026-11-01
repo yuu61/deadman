@@ -266,9 +266,10 @@ func (m Model) showLogDropped(n int) Model {
 
 // showReload shows a finished reload: its warnings replace the config ones, and when
 // its rows were applied the model takes their snapshots and the reread column
-// visibility. The other display directives keep their live values (the operator may
-// have changed them with keys), so only the configured columns are reapplied. The
-// header's height follows the warnings, so the layout is recomputed either way.
+// visibility. Automatic separator blanks are already included in the session's table.
+// Interactive display preferences keep their live values (the operator may have
+// changed them with keys). The header's height follows the warnings, so the layout is
+// recomputed either way.
 func (m Model) showReload(r monitoring.ReloadOutcome) Model {
 	m.configWarns = diagnosticLines(r.Warnings)
 	m = m.composeWarnings()

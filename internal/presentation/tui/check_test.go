@@ -13,6 +13,7 @@ func TestCheckSetting(t *testing.T) {
 		config.Scale(resultbar.MinScale), config.Scale(resultbar.MaxScale),
 		config.Split(1), config.Split(100), config.Glyph("auto"), config.Glyph("ASCII"),
 		config.Precision("ms"), config.Precision("MS.3"),
+		config.SeparatorBlank(true), config.SeparatorBlank(false),
 		config.Column{Key: "HOSTNAME"},
 		config.Column{Key: "MIN", Visible: true},
 	} {

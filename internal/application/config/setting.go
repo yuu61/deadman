@@ -19,14 +19,18 @@ type Precision string
 // Glyph is a written result-bar glyph set name.
 type Glyph string
 
+// SeparatorBlank controls the automatic blank before non-leading separator rows.
+type SeparatorBlank bool
+
 // Column is a written column visibility setting.
 type Column struct {
 	Key     string
 	Visible bool
 }
 
-func (Scale) setting()     {}
-func (Split) setting()     {}
-func (Precision) setting() {}
-func (Glyph) setting()     {}
-func (Column) setting()    {}
+func (Scale) setting()          {}
+func (Split) setting()          {}
+func (Precision) setting()      {}
+func (Glyph) setting()          {}
+func (SeparatorBlank) setting() {}
+func (Column) setting()         {}

@@ -34,7 +34,7 @@ type entry struct {
 	target   *monitor.Target
 	plan     probe.Plan
 	pinger   probe.Pinger
-	position int // position in the table, including separators and rejected lines.
+	position int // position in the table, including static and rejected lines.
 }
 
 // Open reads the config through the ConfigSource and returns the session that owns and
@@ -82,7 +82,7 @@ func (s *Service) reread(ctx context.Context) (*preparedRows, []Line, Loaded) {
 // Statistics carried over from live targets are the session's job, so building never
 // reads the targets being monitored.
 func (s *Service) build(cfg config.Config) ([]entry, []Line, Loaded) {
-	rows, lines, loaded := s.buildRows(cfg.Lines)
+	rows, lines, loaded := s.buildRows(cfg)
 	warns := append(noteWarnings(cfg.Notes), probeWarnings(probeTargets(rows), s.ports.Host)...)
 	loaded.Warnings = append(warns, loaded.Warnings...)
 	loaded.Display = cfg.Display
@@ -90,17 +90,23 @@ func (s *Service) build(cfg config.Config) ([]entry, []Line, Loaded) {
 	return rows, lines, loaded
 }
 
-// buildRows separates executable targets, rejected rows and visual separators.
-func (s *Service) buildRows(lines []config.Line) ([]entry, []Line, Loaded) {
-	rows := make([]entry, 0, len(lines))
-	table := make([]Line, 0, len(lines))
+// buildRows separates executable targets, rejected rows and static display lines.
+func (s *Service) buildRows(cfg config.Config) ([]entry, []Line, Loaded) {
+	rows := make([]entry, 0, len(cfg.Lines))
+	table := make([]Line, 0, len(cfg.Lines))
 	loaded := Loaded{}
 
 	var ids monitor.Numbering
 
-	for _, line := range lines {
+	for _, line := range cfg.Lines {
 		switch l := line.(type) {
+		case config.Blank:
+			table = append(table, Blank{})
 		case config.Separator:
+			if cfg.Display.SeparatorBlank {
+				table = withSeparatorGap(table)
+			}
+
 			table = append(table, Separator{Label: l.Label})
 		case config.Malformed:
 			loaded.reject(
@@ -126,6 +132,18 @@ func (s *Service) buildRows(lines []config.Line) ([]entry, []Line, Loaded) {
 	}
 
 	return rows, table, loaded
+}
+
+// withSeparatorGap ensures a gap without adding one at the beginning or
+// doubling an existing blank. These table positions also drive probe arrows and scrolling.
+func withSeparatorGap(table []Line) []Line {
+	if len(table) > 0 {
+		if _, blank := table[len(table)-1].(Blank); !blank {
+			table = append(table, Blank{})
+		}
+	}
+
+	return table
 }
 
 // reject records a target line that could not be built: its line, and its diagnostic.

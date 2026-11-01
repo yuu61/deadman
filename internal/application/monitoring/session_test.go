@@ -62,6 +62,7 @@ func testSession(t *testing.T, p probe.Pinger, async bool) (*Session, []entry) {
 		LoadConfig: source(
 			config.Target{Name: "a", Addr: "192.0.2.1"},
 			config.Separator{},
+			config.Blank{},
 			config.Malformed{Name: "rejected", Addr: "192.0.2.3", Problem: "invalid config"},
 			config.Target{Name: "b", Addr: "192.0.2.2"},
 		).load,
@@ -85,7 +86,7 @@ func TestSessionScheduling(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, rows := testSession(t, downPinger{}, async)
 			if len(rows) != 2 || len(monitoredRows(s.Table())) != 2 {
-				t.Fatal("visual separator entered the monitored target set")
+				t.Fatal("static display line entered the monitored target set")
 			}
 
 			now := time.Now()
@@ -102,7 +103,7 @@ func TestSessionScheduling(t *testing.T) {
 
 			// Which rows are being probed is a reported fact: a sequential round probes
 			// the first target, a parallel one every target at once.
-			wantInflight := []bool{true, false, false, async}
+			wantInflight := []bool{true, false, false, false, async}
 			if !slices.Equal(start.Inflight, wantInflight) {
 				t.Fatalf("round start Inflight = %v, want %v", start.Inflight, wantInflight)
 			}
@@ -138,7 +139,7 @@ func TestSessionScheduling(t *testing.T) {
 
 			completed = s.Update(mustEvent(t, secondProbe(t, s, start, completed, now)), now)
 			if len(completed.Tasks) != 1 || rows[1].target.Snapshot().Snt != 1 ||
-				completed.Recorded == nil || completed.Recorded.Index != 3 {
+				completed.Recorded == nil || completed.Recorded.Index != 4 {
 				t.Fatal("finished round did not schedule exactly one next round")
 			}
 
@@ -157,9 +158,9 @@ func TestSessionScheduling(t *testing.T) {
 	}
 }
 
-// secondProbe is the probe of the round's second row, row 3 past the separator and the
-// rejected line: a parallel round started it with the first, a sequential one announces
-// it once the first has reported (completed).
+// secondProbe is the probe of the round's second row, row 4 past the separator, blank
+// and rejected line: a parallel round started it with the first, a sequential one
+// announces it once the first has reported (completed).
 func secondProbe(t *testing.T, s *Session, start, completed Transition, now time.Time) Task {
 	t.Helper()
 
@@ -176,8 +177,8 @@ func secondProbe(t *testing.T, s *Session, start, completed Transition, now time
 	}
 
 	next := s.Update(mustEvent(t, completed.Tasks[0]), now)
-	if next.Probing == nil || *next.Probing != 3 {
-		t.Fatal("separator was not skipped")
+	if next.Probing == nil || *next.Probing != 4 {
+		t.Fatal("static and rejected lines were not skipped")
 	}
 
 	return next.Tasks[0]

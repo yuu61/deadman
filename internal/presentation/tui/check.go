@@ -28,12 +28,21 @@ func CheckSetting(setting config.Setting) error {
 		return checkPrecision(string(value))
 	case config.Glyph:
 		return CheckGlyph(string(value))
+	case config.SeparatorBlank:
+		// Both boolean values are valid; monitoring builds the static display rows.
+		return nil
 	case config.Column:
-		if _, ok := buildVisible(nil)[value.Key]; !ok {
-			return fmt.Errorf("unknown or non-configurable column %q", value.Key)
-		}
+		return checkColumn(value.Key)
 	default:
 		panic("unhandled display setting")
+	}
+
+	return nil
+}
+
+func checkColumn(key string) error {
+	if _, ok := buildVisible(nil)[key]; !ok {
+		return fmt.Errorf("unknown or non-configurable column %q", key)
 	}
 
 	return nil

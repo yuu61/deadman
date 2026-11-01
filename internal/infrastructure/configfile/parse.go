@@ -4,8 +4,8 @@
 // stripped, blank lines are skipped, and the remaining "NAME ADDRESS
 // key=value..." line is split into fields on whitespace. A field may be wrapped in
 // double quotes to include spaces — most usefully the name ("My Host" 1.2.3.4) —
-// and the quotes are removed. A name matching ^-+$ denotes a visual separator;
-// its remaining fields form the separator's label.
+// and the quotes are removed. A lone "#blank" requests an empty display row. A name
+// matching ^-+$ denotes a visual separator; its remaining fields form the label.
 package configfile
 
 import (
@@ -23,14 +23,17 @@ import (
 	"github.com/yuu61/deadman/internal/application/config"
 )
 
+const blankMarker = "#blank"
+
 // Directive keywords. A line whose first field is one of these is a global display
 // setting rather than a target (a host named like a directive is not expected).
 const (
-	columnDirective    = "columns"
-	scaleDirective     = "scale"
-	precisionDirective = "precision"
-	splitDirective     = "split"
-	glyphDirective     = "glyph"
+	columnDirective         = "columns"
+	scaleDirective          = "scale"
+	precisionDirective      = "precision"
+	splitDirective          = "split"
+	glyphDirective          = "glyph"
+	separatorBlankDirective = "separator_blank"
 )
 
 // directives maps a keyword to its handler, applied to the line's remaining fields.
@@ -73,6 +76,16 @@ var directives = map[string]func(d *config.Display, args []string){
 		n, err := strconv.Atoi(args[0])
 		if err == nil {
 			d.Cols = n
+		}
+	},
+	separatorBlankDirective: func(d *config.Display, args []string) {
+		if len(args) == 0 {
+			return
+		}
+
+		value, err := parseBool(args[0])
+		if err == nil {
+			d.SeparatorBlank = value
 		}
 	},
 }
@@ -156,8 +169,13 @@ func scanLines(r io.Reader, visit func(int, string)) error {
 // (a ';' followed by optional spaces and a '#', outside any double-quoted span)
 // truncates the line at the ';'. It is quote-aware, so a '#'/';#' inside a quoted
 // attribute value is preserved — quote a value to keep a literal ';#'. Tabs are
-// already collapsed to spaces by the caller before this runs.
+// already collapsed to spaces by the caller before this runs. A standalone #blank
+// marker is preserved as an explicit display row rather than removed as a comment.
 func stripComment(line string) string {
+	if strings.EqualFold(strings.TrimSpace(line), blankMarker) {
+		return line
+	}
+
 	if t := strings.TrimLeft(line, " \t"); t == "" || t[0] == '#' {
 		return "" // blank line or whole-line comment.
 	}
@@ -240,6 +258,10 @@ func tokenize(line string) ([]string, bool) {
 // quote was left open).
 func parseTarget(fields []string) (config.Line, config.Note) {
 	note := config.Note{Name: fields[0]}
+	if len(fields) == 1 && strings.EqualFold(note.Name, blankMarker) {
+		return config.Blank{}, note
+	}
+
 	if len(fields) > 1 {
 		note.Addr = fields[1]
 	}

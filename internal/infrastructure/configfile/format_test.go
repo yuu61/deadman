@@ -16,6 +16,16 @@ func TestFormat(t *testing.T) {
 	}{
 		{"empty", "", ""},
 		{"blank lines", "\n \t \r\n\n", "\n\n\n"},
+		{
+			"display blanks",
+			"\ufeff  #blank\r\n\n #BlAnK \nblank\t192.0.2.1\n#blank\n#blank\n",
+			"#blank\n\n#BlAnK\nblank  192.0.2.1\n#blank\n#blank\n",
+		},
+		{
+			"automatic separator blanks",
+			" separator_blank\t on \n--- First\nh 192.0.2.1\n--- Second\n",
+			"separator_blank on\n--- First\nh  192.0.2.1\n--- Second\n",
+		},
 		{"BOM and CRLF", "\ufeff  Scale\t 5\r\nhost　 192.0.2.1", "Scale 5\nhost  192.0.2.1\n"},
 		{
 			"comments", "  # header  \n h  192.0.2.1  ; # keep  this\tcomment  \n",

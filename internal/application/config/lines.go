@@ -2,12 +2,15 @@ package config
 
 import "github.com/yuu61/deadman/internal/domain/probe"
 
-// Line is one line of the target list, in config order: a separator, a target line whose
-// attributes describe a probe, or one whose attributes describe none. Each kind carries
-// only what it has.
+// Line is one line of the target list, in config order: a blank, a separator, a target
+// line whose attributes describe a probe, or one whose attributes describe none. Each
+// kind carries only what it has.
 //
 //sumtype:decl
 type Line interface{ line() }
+
+// Blank is an explicitly requested empty display row.
+type Blank struct{}
 
 // Separator is a visual separator row with an optional label.
 type Separator struct {
@@ -37,6 +40,7 @@ func (t Target) ProbeSpec() probe.Spec {
 	return probe.Spec{Addr: t.Addr, Params: t.Params}
 }
 
+func (Blank) line()     {}
 func (Separator) line() {}
 func (Target) line()    {}
 func (Malformed) line() {}
