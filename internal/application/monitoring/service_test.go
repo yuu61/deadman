@@ -322,11 +322,12 @@ func TestReloadCarriesOverStatsByKey(t *testing.T) {
 
 	oldGen := s.gen.id
 
-	// "moved" changes its address, so its identity changes; a separator is added.
+	// "moved" changes its address, so its identity changes; static lines are added.
 	src.cfg = config.Config{
 		Lines: []config.Line{
 			config.Separator{Label: "Reloaded group"},
 			config.Target{Name: "moved", Addr: "1.0.0.1", Params: probe.Direct{}},
+			config.Blank{},
 			config.Target{Name: "kept", Addr: "8.8.8.8", Params: probe.Direct{}},
 		},
 		Display: config.Display{Columns: map[string]bool{"MIN": false}},
@@ -338,9 +339,9 @@ func TestReloadCarriesOverStatsByKey(t *testing.T) {
 	}
 
 	got := s.gen.rows
-	if len(got) != 2 || len(s.Table()) != 3 ||
-		s.Table()[0] != (Separator{Label: "Reloaded group"}) {
-		t.Fatalf("want two monitored targets and one visual separator, got %+v", got)
+	if len(got) != 2 || len(s.Table()) != 4 ||
+		s.Table()[0] != (Separator{Label: "Reloaded group"}) || s.Table()[2] != (Blank{}) {
+		t.Fatalf("want two monitored targets, a separator and a blank, got %+v", s.Table())
 	}
 
 	if moved := got[0].target; moved == old[1].target || moved.Snapshot().Snt != 0 {
@@ -367,7 +368,7 @@ func TestReloadCarriesOverStatsByKey(t *testing.T) {
 		t.Errorf("Columns = %v, want the reloaded config's MIN=off", out.Reload.Display.Columns)
 	}
 
-	if !slices.Equal(out.Inflight, []bool{false, false, false}) {
+	if !slices.Equal(out.Inflight, []bool{false, false, false, false}) {
 		t.Errorf("Inflight = %v, want the new generation's rows, none probing yet", out.Inflight)
 	}
 }
@@ -488,9 +489,9 @@ func TestReloadDuplicateRowsKeepIndependentHistories(t *testing.T) {
 	old[1].target.Consume(probe.SuccessResult(20))
 	old[1].target.Consume(probe.SuccessResult(30))
 
-	fresh, lines, _ := svc.build(configOf(spec, config.Separator{}, spec, spec))
+	fresh, lines, _ := svc.build(configOf(spec, config.Separator{}, config.Blank{}, spec, spec))
 
-	want := []Line{Monitored{}, Separator{}, Monitored{}, Monitored{}}
+	want := []Line{Monitored{}, Separator{}, Blank{}, Monitored{}, Monitored{}}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("lines = %v, want %v", lines, want)
 	}

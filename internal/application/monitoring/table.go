@@ -11,6 +11,9 @@ import (
 //sumtype:decl
 type Line interface{ line() }
 
+// Blank is an empty display line, never monitored or logged.
+type Blank struct{}
+
 // Separator is a visual separator line with an optional label.
 type Separator struct {
 	Label string
@@ -29,6 +32,7 @@ type Rejected struct {
 	Name, Addr, Reason string
 }
 
+func (Blank) line()     {}
 func (Separator) line() {}
 func (Monitored) line() {}
 func (Rejected) line()  {}

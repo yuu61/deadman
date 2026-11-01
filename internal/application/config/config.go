@@ -11,11 +11,12 @@ package config
 // default for one it cannot use. A zero value means the directive is absent (or was
 // never well-formed), letting the frontend fall back to the CLI flag or its default.
 type Display struct {
-	Columns   map[string]bool // column key (upper-case) -> shown; only the columns named.
-	Scale     float64         // "scale": RTT-bar ms-per-step (or log-mode floor).
-	Precision string          // "precision": stat-precision label.
-	Glyph     string          // "glyph": RESULT-bar glyph set name.
-	Cols      int             // "split": newspaper-column count.
+	Columns        map[string]bool // column key (upper-case) -> shown; only the columns named.
+	Scale          float64         // "scale": RTT-bar ms-per-step (or log-mode floor).
+	Precision      string          // "precision": stat-precision label.
+	Glyph          string          // "glyph": RESULT-bar glyph set name.
+	Cols           int             // "split": newspaper-column count.
+	SeparatorBlank bool            // "separator_blank": ensure a blank before non-leading separators.
 }
 
 // Config is the parsed configuration: the target list, the notes on how its lines were

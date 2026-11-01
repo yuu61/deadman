@@ -21,7 +21,8 @@ func TestCheckReportsPhysicalLines(t *testing.T) {
 		"bare example.com extra words\r\n" +
 		"glyph \"ascii\r\n" +
 		"--- \"label\r\n" +
-		"valid example.com probe=quic\r\n"
+		"valid example.com probe=quic\r\n" +
+		"\"#blank\"\r\n\"\"#blank\r\n"
 	want := []struct {
 		line int
 		text string
@@ -33,6 +34,8 @@ func TestCheckReportsPhysicalLines(t *testing.T) {
 		{7, "bare words"},
 		{8, "unterminated"},
 		{9, "unterminated"},
+		{11, "address is required"},
+		{12, "address is required"},
 	}
 
 	got, err := Check(strings.NewReader(input), acceptSetting)
@@ -61,6 +64,7 @@ func TestCheckDirectiveSyntax(t *testing.T) {
 	for _, input := range []string{
 		"scale", "scale nope", "scale 1 extra", "split 1.5", "split",
 		"glyph", "precision", "columns", "columns MIN", "columns =on", "columns MIN=maybe",
+		"separator_blank", "separator_blank maybe", "separator_blank on off",
 	} {
 		t.Run(input, func(t *testing.T) {
 			got, err := Check(strings.NewReader(input), acceptSetting)
@@ -74,7 +78,8 @@ func TestCheckDirectiveSyntax(t *testing.T) {
 func TestCheckSettingsIncludingOverriddenValues(t *testing.T) {
 	var got []config.Setting
 
-	input := "Scale 0\nscale 5\nsplit 0\nprecision \"\"\nglyph ASCII\ncolumns min=YES MAX=off\n"
+	input := "Scale 0\nscale 5\nsplit 0\nprecision \"\"\nglyph ASCII\ncolumns min=YES MAX=off\n" +
+		"separator_blank on\nseparator_blank off\n"
 
 	diagnostics, err := Check(strings.NewReader(input), func(setting config.Setting) error {
 		got = append(got, setting)
@@ -95,6 +100,8 @@ func TestCheckSettingsIncludingOverriddenValues(t *testing.T) {
 		config.Glyph("ASCII"),
 		config.Column{Key: "MIN", Visible: true},
 		config.Column{Key: "MAX", Visible: false},
+		config.SeparatorBlank(true),
+		config.SeparatorBlank(false),
 	}
 	if !reflect.DeepEqual(got, want) || len(diagnostics) != len(want) {
 		t.Fatalf("settings = %#v, diagnostics = %+v; want %#v", got, diagnostics, want)
@@ -102,11 +109,12 @@ func TestCheckSettingsIncludingOverriddenValues(t *testing.T) {
 }
 
 func TestCheckValidConfig(t *testing.T) {
-	input := "# comment\n\n--- Servers ;# hidden\n" +
+	input := "# comment\n\n#blank\n  #BlAnK  \n　#blank　\n" +
+		"　#blank ;# \u8aac\u660e\n\t　#BlAnK ; # \u8aac\u660e\n--- Servers ;# hidden\n" +
 		"\"web ;# 2\" example.invalid probe=tcp port=443\n" +
 		"remote 192.0.2.1 probe=ssh relay=jump.invalid os=Linux key=\"/a b\"\n" +
 		"router 192.0.2.2 probe=routeros relay=192.0.2.1 username=ops password=\"a;# b\"\n" +
-		"namespace 192.0.2.3 probe=netns relay=blue\n"
+		"namespace 192.0.2.3 probe=netns relay=blue\nblank 192.0.2.4\n#blank\n"
 
 	got, err := Check(strings.NewReader(input), acceptSetting)
 	if err != nil || len(got) != 0 {

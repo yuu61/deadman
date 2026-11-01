@@ -24,6 +24,10 @@ func Check(r io.Reader, checkSetting func(config.Setting) error) ([]Diagnostic, 
 	var diagnostics []Diagnostic
 
 	err := scanLines(r, func(number int, raw string) {
+		if isBlankMarker(raw) {
+			return
+		}
+
 		line := stripComment(strings.ReplaceAll(raw, "\t", " "))
 		for _, problem := range checkLine(line, checkSetting) {
 			diagnostics = append(diagnostics, Diagnostic{Line: number, Problem: problem.Error()})
@@ -70,8 +74,8 @@ func checkTarget(fields []string) []error {
 		}
 	case config.Malformed:
 		problems = append(problems, errors.New(value.Problem))
-	case config.Separator:
-		// Separator labels have no probe parameters to validate.
+	case config.Blank, config.Separator:
+		// Static display lines have no probe parameters to validate.
 	default:
 		panic("unhandled config line")
 	}
@@ -128,6 +132,13 @@ func readSetting(keyword, value string) (config.Setting, error) {
 		return config.Precision(value), nil
 	case glyphDirective:
 		return config.Glyph(value), nil
+	case separatorBlankDirective:
+		visible, err := parseBool(value)
+		if err != nil {
+			return nil, fmt.Errorf("separator_blank expects on|off: %w", err)
+		}
+
+		return config.SeparatorBlank(visible), nil
 	default:
 		panic("unhandled display directive")
 	}

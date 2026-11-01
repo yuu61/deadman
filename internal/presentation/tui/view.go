@@ -63,9 +63,9 @@ func (m Model) View() string {
 		sb.WriteByte('\n')
 	}
 
-	// Trim the trailing newline so the logical line count equals the physical
-	// line count, keeping the row-window math (fixedHeaderLines) exact.
-	out := strings.TrimRight(sb.String(), "\n")
+	// Remove the final line terminator while preserving explicitly requested blank
+	// rows at the end of the list, keeping the row-window math exact.
+	out := strings.TrimSuffix(sb.String(), "\n")
 
 	// When the terminal is shorter than the fixed header itself (height <
 	// fixedHeaderLines), keep only the first m.height lines so Bubble Tea's top-drop
@@ -197,6 +197,8 @@ func (m Model) headerLine() string {
 // is drawn by its kind.
 func (m Model) rowLine(idx, width int) string {
 	switch r := m.rows()[idx].(type) {
+	case monitoring.Blank:
+		return ""
 	case monitoring.Monitored:
 		return m.targetLine(idx, r)
 	case monitoring.Rejected:

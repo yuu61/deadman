@@ -24,6 +24,51 @@ src-t	1.2.3.4 source=10.0.0.1
 tcp-t	1.2.3.4 probe=tcp port=80
 `
 
+func TestParseBlankRows(t *testing.T) {
+	input := "\ufeff#blank\r\n# comment\r\n\r\n \t#BlAnK　\r\n" +
+		"#blank explanation\r\n#blank ;# comment\r\n" +
+		"　#blank explanation\r\n　#blank ;# \u8aac\u660e\r\n\t　#BlAnK ; # \u8aac\u660e\r\n" +
+		"blank 192.0.2.1\r\n#blank\r\n"
+
+	cfg, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cfg.Lines) != 4 || len(cfg.Notes) != 0 {
+		t.Fatalf("config = %+v, want three display blanks and one target without warnings", cfg)
+	}
+
+	for _, index := range []int{0, 1, 3} {
+		if cfg.Lines[index] != (config.Blank{}) {
+			t.Errorf("line %d = %+v, want a display blank", index, cfg.Lines[index])
+		}
+	}
+
+	if got := target(t, cfg, 2); got.Name != "blank" || got.Addr != "192.0.2.1" {
+		t.Errorf("target named blank = %+v", got)
+	}
+}
+
+func TestParseBlankMarkerRequiresPhysicalLine(t *testing.T) {
+	for _, input := range []string{`"#blank"`, `"#bl""ank"`, `""#blank`, `"#blank`} {
+		t.Run(input, func(t *testing.T) {
+			cfg, err := Parse(strings.NewReader(input + "\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(cfg.Lines) != 1 {
+				t.Fatalf("lines = %+v, want one target", cfg.Lines)
+			}
+
+			if got := target(t, cfg, 0); got.Name != blankMarker || got.Addr != "" {
+				t.Errorf("target = %+v, want a target named #blank with no address", got)
+			}
+		})
+	}
+}
+
 func TestParseSeparatorLabel(t *testing.T) {
 	for _, c := range []struct {
 		name, input, label string
@@ -578,6 +623,32 @@ func TestParseConfigSplit(t *testing.T) {
 	}
 }
 
+func TestParseSeparatorBlank(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  bool
+	}{
+		{"", false},
+		{"separator_blank on\n", true},
+		{"separator_blank off\n", false},
+		{"SePaRaToR_BlAnK YeS ;# enabled\n", true},
+		{"separator_blank 1\nseparator_blank NO\n", false},
+		{"separator_blank off\nseparator_blank true\n", true},
+		{"separator_blank on\nseparator_blank maybe\nseparator_blank\n", true},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			cfg, err := Parse(strings.NewReader("host 192.0.2.1\n" + tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if cfg.Display.SeparatorBlank != tc.want || len(cfg.Lines) != 1 {
+				t.Errorf("config = %+v, want one target and separator_blank=%v", cfg, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseConfigSplitLenient(t *testing.T) {
 	// A non-integer or missing split is malformed and ignored, leaving Cols unset (0) so
 	// the caller falls back to the CLI/default rather than aborting the parse.
@@ -670,7 +741,7 @@ func TestParseConfigDirectiveWithoutValue(t *testing.T) {
 
 			d := cfg.Display
 			if d.Scale != 0 || d.Precision != "" || d.Glyph != "" || d.Cols != 0 ||
-				len(d.Columns) != 0 {
+				len(d.Columns) != 0 || d.SeparatorBlank {
 				t.Errorf("display = %+v, want the defaults", d)
 			}
 

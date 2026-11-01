@@ -11,14 +11,14 @@ const rejectedLabel = "error"
 const quicPortWithoutDetail = 443
 
 // rowLabel is a line's VIA label: how its plan probes it, or "error" for a row that could
-// not be built. A separator has none.
+// not be built. Static display lines have none.
 func rowLabel(line monitoring.Line) string {
 	switch l := line.(type) {
 	case monitoring.Monitored:
 		return planLabel(l.Plan)
 	case monitoring.Rejected:
 		return rejectedLabel
-	case monitoring.Separator:
+	case monitoring.Blank, monitoring.Separator:
 		return ""
 	default:
 		return "" // unreachable: monitoring.Line is a closed set, each kind cased above.
