@@ -209,5 +209,5 @@ func neighborError(data []byte) error {
 		return errors.New("unexpected neighbor netlink acknowledgement")
 	}
 
-	return syscall.Errno(-int64(code))
+	return fmt.Errorf("neighbor netlink request: %w", syscall.Errno(-int64(code)))
 }

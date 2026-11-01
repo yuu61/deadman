@@ -208,8 +208,8 @@ func TestProgramExitReleasesUndeliveredReload(t *testing.T) {
 	}
 
 	select {
-	case <-done:
-		t.Fatal("model closed before the pending reload finished")
+	case err := <-done:
+		t.Fatalf("model closed before the pending reload finished: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}
 

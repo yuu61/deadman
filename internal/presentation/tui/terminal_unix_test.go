@@ -42,7 +42,10 @@ func TestWatchTerminalStopsAfterProgramExit(t *testing.T) {
 
 		timer := time.NewTimer(time.Second)
 		select {
-		case <-done:
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
 		case <-timer.C:
 			t.Fatal("terminal watcher did not release its resources")
 		}
@@ -62,7 +65,10 @@ func TestWatchTerminalStopsBeforeProgramStarts(t *testing.T) {
 	defer timer.Stop()
 
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-timer.C:
 		t.Fatal("terminal watcher did not stop before Run")
 	}
