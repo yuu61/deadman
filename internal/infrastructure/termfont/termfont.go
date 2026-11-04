@@ -13,8 +13,8 @@
 //     tty1-tty63), the loaded font's Unicode map, which lists exactly the characters the
 //     font can draw. The common default Lat15 font lacks ▁▂▃▄▅▆▇.
 //
-// A pty (a terminal emulator, ssh, tmux, fbterm) cannot be inspected: the font on the
-// far side decides, so it counts as renderable.
+// Behind a pty (a terminal emulator such as kmscon, ssh, tmux) the font belongs to the
+// program on the far side and cannot be inspected, so it counts as renderable.
 package termfont
 
 import (

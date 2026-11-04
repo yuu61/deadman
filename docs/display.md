@@ -96,10 +96,11 @@ RESULT バーは、1 回のプローブを 1 文字で、左を最新として�
 `auto` は次のどちらかに当てはまると `ascii` を選び、どちらにも当てはまらなければ `block` を選びます。
 
 - ロケール（`LC_ALL` → `LC_CTYPE` → `LANG` のうち、最初に設定されている値）が UTF-8 でない（例: `C`、`ja_JP.eucJP`）。何も設定されていない場合と Windows では判定しません。
-- Linux の仮想コンソール（tty1 など）で実行しており、読み込まれているコンソールフォントに `▁`〜`█` のどれかが無い。カーネルからフォントの Unicode 表を取得して確かめます。Debian 系の既定フォント Lat15 が該当します。
+- Linux 標準のコンソール画面（tty1 など）で直接実行していて、そのフォントに `▁`〜`█` のどれかが無い。Debian 系の既定フォント Lat15 が該当します。
 
-SSH、端末エミュレータ、tmux、fbterm などの疑似端末（pty）では、実際の描画は接続元の端末のフォントが行うため判定できず、`block` のままです。
-**Linux コンソールから SSH で別ホストの deadman を開く**場合は、`-g ascii` か `glyph ascii` を指定してください。
+フォントを確かめられるのは、Linux 標準のコンソール画面で直接実行したときだけです。
+SSH、Windows Terminal などの端末アプリ、tmux、kmscon の中では、文字を描くのは deadman の外のプログラムで、そのフォントは deadman から分からないため、`block` のままです。
+特に、**Linux 標準のコンソール画面から SSH で別ホストの deadman を開く**場合は、ブロック文字が崩れても自動では切り替わらないため、`-g ascii` か `glyph ascii` を指定してください。
 
 ## RESULT バーの色
 
@@ -124,7 +125,7 @@ scale・対数表示・文字の組を変えると、色の境目も変わりま
 - **24 ビットカラー**（`COLORTERM=truecolor` などを設定する端末）: 上の表の色と、その間のグラデーションです。
 - **256 色**（`TERM=xterm-256color` など）: 256 色パレット（16〜255 番）のうち、背景に対してコントラスト比 3:1 以上ある最も近い色です。明るい背景では、白地で 3:1 を満たす暗い黄が少ないため、隣り合う段階が同じ色になることがあります。
   - SSH で `COLORTERM` が転送されるのは、クライアントの `SendEnv` とサーバーの `AcceptEnv` の両方に含まれる場合だけです。転送されなければ、24 ビットカラーに対応した端末でも、SSH 越しでは 256 色で表示します。
-- **16 色**（Linux の仮想コンソール、`TERM=xterm` など）: 色合いは端末の配色設定に従います。
+- **16 色**（Linux 標準のコンソール画面、`TERM=xterm` など）: 色合いは端末の配色設定に従います。
   - 16 色には橙が無いため、速い側をシアン、中央を黄、最も遅い側を通常の黄で表します。
   - 暗い背景では、注意に明るい黄を使います。通常の黄は、Linux コンソールでは茶色（`#AA5500`）に、ほかの多くの端末では明るい黄より暗い黄に見えるため、最も遅い側だけに使います。明るい背景では、明るい黄が白地で見えにくいため注意にも通常の黄を使い、最も遅い側と同じ色になります。
   - 失敗は、赤地（通常の赤）に明るい白の文字です。Linux コンソールの赤地（`#AA0000`）は黒地に対して 2.7:1 と 3:1 に届きませんが、セル全体を塗るので読み取る必要がなく、文字と赤地のコントラスト比は 7.8:1 あります。
@@ -184,40 +185,49 @@ RESULT バーの左側（矢印からホスト名・統計列まで）は、ホ�
 
 ## コンソールフォント
 
-RESULT バーのブロック文字（`▁▂▃▄▅▆▇█`）を表示するため、Unicode に対応した端末（Windows Terminal など）を推奨します。
-SSH 経由では接続元の端末のフォントで表示します。
-Linux の仮想コンソール（tty1 など）に直接表示する場合は、フォントの収録字数が限られるため、ブロック文字が欠けたり `#` のように崩れたりすることがあります。
+RESULT バーのブロック文字（`▁▂▃▄▅▆▇█`）は、Windows Terminal などの Unicode に対応した端末アプリなら、そのまま表示できます。
+SSH 経由では、手元の端末アプリのフォントで表示します。
 
-deadman はこれを起動時に判定し（[`auto` の判定](#auto-の判定)）、ブロック文字の無いフォントでは RESULT バーを ASCII で表示します。
+Linux 標準のコンソール画面（tty1 など）は使えるフォントの文字数が少なく、ブロック文字が欠けたり `#` のように崩れたりすることがあります。
+deadman は起動時にこれを確かめ（[`auto` の判定](#auto-の判定)）、ブロック文字の無いフォントでは RESULT バーを ASCII で表示します。
 数字表示（`-g digit` / `b` キー）も ASCII だけで描けるので、同じように使えます。
 
-ブロック文字のまま表示したい場合は、次のどちらかでフォントを差し替えてください。
-コンソールフォントを差し替えると、`auto` もブロック表示を選びます。
-fbterm は疑似端末なので判定の対象外で、ブロック表示になります。
+コンソール画面でもブロック文字で表示したい場合は、次のどちらかの方法を使います。
 
-### fbterm と Source Han Sans（推奨）
+### kmscon（推奨）
 
-`/dev/tty1` などの HDMI 側の仮想コンソールで実行する場合は、framebuffer 上で OTF を描画できる `fbterm` が最も確実です。
+HDMI につないだモニターのコンソール画面（tty1 など）で実行する場合は、標準のコンソール画面を `kmscon` に置き換えるのが最も確実です。
+kmscon はコンソール画面用の端末アプリで、デスクトップの端末アプリと同じように普通のフォントを使えます。
 
 ```console
-# Source Han Sans を導入する
-mkdir -p ~/.local/share/fonts/source-han-sans
-curl -L -o /tmp/source-han-sans.zip \
-  https://github.com/adobe-fonts/source-han-sans/releases/latest/download/01_SourceHanSans.ttc.zip
-unzip -o /tmp/source-han-sans.zip -d ~/.local/share/fonts/source-han-sans
-fc-cache -fv
+# 元に戻すときのために、インストールの前に今の設定を控える（ふつうは getty@tty1.service）
+systemctl show -P Id autovt@tty1.service
 
-# fbterm をインストールして起動する（-s はフォントサイズ）
-sudo apt install fbterm
-fbterm -n "Source Han Sans" -s 32
-./deadman deadman.conf
+# kmscon をインストールする
+sudo apt install kmscon
+
+# ブロック文字を含むフォントを使う
+sudo mkdir -p /etc/kmscon
+echo 'font-name=DejaVu Sans Mono' | sudo tee -a /etc/kmscon/kmscon.conf
+
+# コンソール画面を kmscon に切り替えて、再起動する
+sudo systemctl disable autovt@.service
+sudo systemctl enable kmsconvt@.service
+sudo reboot
 ```
 
-一般ユーザーが `/dev/fb0` にアクセスするには、`video` グループに追加してください（`sudo usermod -aG video "$USER"`）。
+再起動すると、tty1 と、Ctrl+Alt+F2 などで切り替えた先の画面が kmscon になります。ログインして deadman を起動してください。
+
+- Debian 13（trixie）では、kmscon は backports にしかありません。backports のリポジトリを有効にして、`sudo apt install -t trixie-backports kmscon` でインストールしてください。
+- 切り替えの 2 行は、今コンソール画面で何が動いていても kmscon に置き換えます。インストールしただけで kmscon が有効になる版でも、そのまま実行して構いません。詳しくは `/usr/share/doc/kmscon/README.Debian`（kmscon 10 以降）を参照してください。
+- 元に戻すには、`sudo systemctl disable kmsconvt@.service` を実行し、控えた名前の `@` から後ろを `@.service` にしたもの（`getty@tty1.service` なら `getty@.service`）を `sudo systemctl enable` してから再起動します。enable を忘れると、コンソール画面にログイン画面が出なくなることがあります。
+- フォントを指定しない場合、どのフォントになるかは入っているフォントで変わり、日本語フォントを入れた環境ではブロック文字の無いフォントになることがあります。DejaVu Sans Mono 以外を使う場合は、`fc-list ':charset=2581-2588' family` でブロック文字を含むフォントを探せます。
+- GNOME や KDE などのデスクトップのログイン画面（gdm3・sddm）が tty1 に出る機種では、kmscon と画面を取り合うことがあります。`sudo systemctl mask kmsconvt@tty1.service` で tty1 だけ kmscon を使わないようにし、tty2 以降で使ってください。
 
 ### コンソールフォントの差し替え（簡易）
 
-`fbterm` を使えない環境では、仮想コンソールのフォント自体を差し替えます。
+`kmscon` を使えない環境（systemd を使わない環境など）では、コンソール画面のフォントを、ブロック文字を含むものに差し替えます。
+差し替えたフォントにブロック文字があれば、`auto` もブロック表示を選びます。
 
 ```console
 sudo apt install psf-unifont
