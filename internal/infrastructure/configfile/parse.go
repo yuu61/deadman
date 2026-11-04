@@ -4,7 +4,8 @@
 // stripped, blank lines are skipped, and the remaining "NAME ADDRESS
 // key=value..." line is split into fields on whitespace. A field may be wrapped in
 // double quotes to include spaces — most usefully the name ("My Host" 1.2.3.4) —
-// and the quotes are removed. A lone "#blank" requests an empty display row. A name
+// and the quotes are removed. A lone "#blank" requests an empty display row, and
+// "#pane [description]" marks where a split column begins. A name
 // matching ^-+$ denotes a visual separator; its remaining fields form the label.
 package configfile
 
@@ -23,7 +24,10 @@ import (
 	"github.com/yuu61/deadman/internal/application/config"
 )
 
-const blankMarker = "#blank"
+const (
+	blankMarker       = "#blank"
+	columnBreakMarker = "#pane"
+)
 
 // Directive keywords. A line whose first field is one of these is a global display
 // setting rather than a target (a host named like a directive is not expected).
@@ -123,6 +127,12 @@ func Parse(r io.Reader) (config.Config, error) {
 			return
 		}
 
+		if label, ok := columnBreakLabel(raw); ok {
+			cfg.Lines = append(cfg.Lines, config.ColumnBreak{Label: label})
+
+			return
+		}
+
 		line := strings.ReplaceAll(raw, "\t", " ")
 		line = stripComment(line)
 
@@ -174,6 +184,17 @@ func scanLines(r io.Reader, visit func(int, string)) error {
 // tokenization can turn other content into a standalone marker.
 func isBlankMarker(line string) bool {
 	return strings.EqualFold(strings.TrimSpace(line), blankMarker)
+}
+
+// columnBreakLabel reads a description as plain text. Keeping the
+// marker comment-shaped avoids reserving another possible target name.
+func columnBreakLabel(line string) (string, bool) {
+	marker, label := strings.TrimSpace(line), ""
+	if index := strings.IndexFunc(marker, unicode.IsSpace); index >= 0 {
+		marker, label = marker[:index], strings.TrimSpace(marker[index:])
+	}
+
+	return label, strings.EqualFold(marker, columnBreakMarker)
 }
 
 // stripComment removes a comment from a config line: a whole-line comment (the

@@ -173,6 +173,8 @@ func (m Model) refreshRows() Model {
 		m.labels[i] = rowLabel(line)
 	}
 
+	m = m.refreshSections()
+
 	return m
 }
 

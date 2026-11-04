@@ -38,25 +38,8 @@ func (m Model) View() string {
 	vp := m.scrollMetrics()
 
 	sb.WriteByte('\n') // blank line before the column header(s).
-
-	// Render only the visible window. targetLine takes the absolute row index so the
-	// probe arrow (arrowFor reads m.arrowIdx / m.inflight by absolute index) stays
-	// correct when scrolled.
-	if vp.cols <= 1 {
-		sb.WriteString(m.headerLine())
-		sb.WriteByte('\n')
-
-		for i := vp.top; i < vp.top+vp.count && i < len(m.rows()); i++ {
-			sb.WriteString(m.rowLine(i, m.width))
-			sb.WriteByte('\n')
-		}
-	} else {
-		// Newspaper layout: header and rows laid out as side-by-side columns. The
-		// merged block's first line is the (repeated) column header, so it occupies the
-		// same screen row headerLine() would, keeping fixedHeaderLines() exact.
-		sb.WriteString(m.renderColumns(vp))
-		sb.WriteByte('\n')
-	}
+	sb.WriteString(m.renderTable(vp))
+	sb.WriteByte('\n')
 
 	if vp.status {
 		sb.WriteString(m.scrollStatus(vp))
@@ -83,6 +66,27 @@ func (m Model) View() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// renderTable shares the same headers, row rendering and scroll window for
+// automatic splits and explicitly positioned column breaks.
+func (m Model) renderTable(vp viewport) string {
+	switch {
+	case len(m.sections) > 0:
+		return m.renderSplitPositions(vp)
+	case vp.cols > 1:
+		return m.renderColumns(vp)
+	default:
+		var output strings.Builder
+		output.WriteString(m.headerLine())
+
+		for index := vp.top; index < vp.top+vp.count && index < len(m.rows()); index++ {
+			output.WriteByte('\n')
+			output.WriteString(m.rowLine(index, m.width))
+		}
+
+		return output.String()
+	}
 }
 
 // keysLine is the scale + key-legend line (line 2), factored into a method to sit
@@ -131,6 +135,10 @@ func scaleLabel(scale float64) string {
 // the list is scrolled. It is truncated to the terminal width so it always
 // occupies exactly one physical line, which the row-window math assumes.
 func (m Model) scrollStatus(vp viewport) string {
+	if len(m.sections) > 0 {
+		return m.splitScrollStatus(vp)
+	}
+
 	first := vp.top + 1
 	last := min(vp.top+vp.count, len(m.rows()))
 	s := fmt.Sprintf(
@@ -205,6 +213,8 @@ func (m Model) rowLine(idx, width int) string {
 		return m.rejectedLine(idx, r)
 	case monitoring.Separator:
 		return m.separatorCell(width, r.Label)
+	case monitoring.ColumnBreak:
+		return rear + r.Label
 	default:
 		return "" // unreachable: monitoring.Line is a closed set, each kind cased above.
 	}

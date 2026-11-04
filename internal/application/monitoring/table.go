@@ -14,6 +14,11 @@ type Line interface{ line() }
 // Blank is an empty display line, never monitored or logged.
 type Blank struct{}
 
+// ColumnBreak marks a split position and an optional description, never monitored or logged.
+type ColumnBreak struct {
+	Label string
+}
+
 // Separator is a visual separator line with an optional label.
 type Separator struct {
 	Label string
@@ -32,7 +37,8 @@ type Rejected struct {
 	Name, Addr, Reason string
 }
 
-func (Blank) line()     {}
-func (Separator) line() {}
-func (Monitored) line() {}
-func (Rejected) line()  {}
+func (Blank) line()       {}
+func (ColumnBreak) line() {}
+func (Separator) line()   {}
+func (Monitored) line()   {}
+func (Rejected) line()    {}

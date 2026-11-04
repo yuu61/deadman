@@ -99,26 +99,28 @@ func (s *Service) buildRows(cfg config.Config) ([]entry, []Line, Loaded) {
 	var ids monitor.Numbering
 
 	for _, line := range cfg.Lines {
-		switch l := line.(type) {
+		switch value := line.(type) {
 		case config.Blank:
 			table = append(table, Blank{})
+		case config.ColumnBreak:
+			table = append(table, ColumnBreak{Label: value.Label})
 		case config.Separator:
 			if cfg.Display.SeparatorBlank {
 				table = withSeparatorGap(table)
 			}
 
-			table = append(table, Separator{Label: l.Label})
+			table = append(table, Separator{Label: value.Label})
 		case config.Malformed:
 			loaded.reject(
 				&table,
-				l.Name,
-				l.Addr,
-				fmt.Errorf("invalid configuration: %s", l.Problem),
+				value.Name,
+				value.Addr,
+				fmt.Errorf("invalid configuration: %s", value.Problem),
 			)
 		case config.Target:
-			row, err := s.buildRow(l, &ids)
+			row, err := s.buildRow(value, &ids)
 			if err != nil {
-				loaded.reject(&table, l.Name, l.Addr, err)
+				loaded.reject(&table, value.Name, value.Addr, err)
 
 				continue
 			}
@@ -138,8 +140,13 @@ func (s *Service) buildRows(cfg config.Config) ([]entry, []Line, Loaded) {
 // doubling an existing blank. These table positions also drive probe arrows and scrolling.
 func withSeparatorGap(table []Line) []Line {
 	if len(table) > 0 {
-		if _, blank := table[len(table)-1].(Blank); !blank {
+		switch table[len(table)-1].(type) {
+		case Blank, ColumnBreak:
+			// A split starts a new list, so its first separator needs no gap.
+		case Monitored, Rejected, Separator:
 			table = append(table, Blank{})
+		default:
+			panic("unhandled monitoring line")
 		}
 	}
 

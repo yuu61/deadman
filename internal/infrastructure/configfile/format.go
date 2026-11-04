@@ -34,6 +34,10 @@ type formatLine struct {
 }
 
 func prepareFormatLine(number int, raw string) formatLine {
+	if label, split := columnBreakLabel(raw); split {
+		return formatLine{body: strings.TrimSpace(columnBreakMarker + " " + label)}
+	}
+
 	// Tabs are one byte, so comment offsets also apply to the original text. Keep
 	// that text to preserve tabs and all other content inside quotes and comments.
 	body := stripComment(strings.ReplaceAll(raw, "\t", " "))
