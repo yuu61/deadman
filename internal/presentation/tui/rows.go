@@ -15,7 +15,7 @@ func rowIdentity(line monitoring.Line) identity {
 		return identity{l.Target.Name, addressLabel(l.Target.Addr, l.Plan)}
 	case monitoring.Rejected:
 		return identity{l.Name, l.Addr}
-	case monitoring.Blank, monitoring.Separator:
+	case monitoring.Blank, monitoring.Separator, monitoring.ColumnBreak:
 		return identity{}
 	default:
 		return identity{} // unreachable: monitoring.Line is a closed set, each kind cased above.
@@ -30,7 +30,7 @@ func rowStats(line monitoring.Line) (monitor.Stats, bool) {
 		return l.Target.Stats, true
 	case monitoring.Rejected:
 		return monitor.Stats{}, true
-	case monitoring.Blank, monitoring.Separator:
+	case monitoring.Blank, monitoring.Separator, monitoring.ColumnBreak:
 		return monitor.Stats{}, false
 	default:
 		return monitor.Stats{}, false // unreachable: monitoring.Line is a closed set, each kind cased above.

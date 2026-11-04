@@ -2,15 +2,20 @@ package config
 
 import "github.com/yuu61/deadman/internal/domain/probe"
 
-// Line is one line of the target list, in config order: a blank, a separator, a target
-// line whose attributes describe a probe, or one whose attributes describe none. Each
-// kind carries only what it has.
+// Line is one line of the target list, in config order: a blank, a separator, a column
+// boundary, a target line whose attributes describe a probe, or one whose attributes
+// describe none. Each kind carries only what it has.
 //
 //sumtype:decl
 type Line interface{ line() }
 
 // Blank is an explicitly requested empty display row.
 type Blank struct{}
+
+// ColumnBreak marks a split position, with an optional description shown as text.
+type ColumnBreak struct {
+	Label string
+}
 
 // Separator is a visual separator row with an optional label.
 type Separator struct {
@@ -40,10 +45,11 @@ func (t Target) ProbeSpec() probe.Spec {
 	return probe.Spec{Addr: t.Addr, Params: t.Params}
 }
 
-func (Blank) line()     {}
-func (Separator) line() {}
-func (Target) line()    {}
-func (Malformed) line() {}
+func (Blank) line()       {}
+func (ColumnBreak) line() {}
+func (Separator) line()   {}
+func (Target) line()      {}
+func (Malformed) line()   {}
 
 // Note is what the parser had to guess on one line, for the frontend to warn about
 // rather than fail silently: the bare words after the address it dropped (an unquoted

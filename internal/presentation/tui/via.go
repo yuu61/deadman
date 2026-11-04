@@ -18,7 +18,7 @@ func rowLabel(line monitoring.Line) string {
 		return planLabel(l.Plan)
 	case monitoring.Rejected:
 		return rejectedLabel
-	case monitoring.Blank, monitoring.Separator:
+	case monitoring.Blank, monitoring.Separator, monitoring.ColumnBreak:
 		return ""
 	default:
 		return "" // unreachable: monitoring.Line is a closed set, each kind cased above.

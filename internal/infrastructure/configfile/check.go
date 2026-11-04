@@ -24,6 +24,10 @@ func Check(r io.Reader, checkSetting func(config.Setting) error) ([]Diagnostic, 
 	var diagnostics []Diagnostic
 
 	err := scanLines(r, func(number int, raw string) {
+		if _, split := columnBreakLabel(raw); split {
+			return
+		}
+
 		if isBlankMarker(raw) {
 			return
 		}
@@ -74,7 +78,7 @@ func checkTarget(fields []string) []error {
 		}
 	case config.Malformed:
 		problems = append(problems, errors.New(value.Problem))
-	case config.Blank, config.Separator:
+	case config.Blank, config.Separator, config.ColumnBreak:
 		// Static display lines have no probe parameters to validate.
 	default:
 		panic("unhandled config line")

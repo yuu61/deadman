@@ -16,6 +16,7 @@ type layout struct {
 	statW map[string]int
 
 	scrollTop int // first visible row when the list exceeds the viewport; moved with j/k/g/G/PgUp/PgDn.
+	sections  []splitSection
 }
 
 // recalcWidths recomputes the dynamic column widths and returns the updated model,
@@ -115,6 +116,12 @@ func (m Model) usableRows() int {
 // larger request would leave a phantom header-only column on the right. (When the
 // list overflows and scrolls, every column is full, so no row reduction applies.)
 func (m Model) effectiveCols() int {
+	if len(m.sections) > 0 {
+		fit := (m.width + colGutterWidth) / (m.minColumnWidth() + colGutterWidth)
+
+		return max(1, min(m.cols, fit, m.splitCapacity()))
+	}
+
 	// An empty row set (a config of only directives/comments, or a reload to a
 	// temporarily empty config) trivially fits one column. Returning here keeps the
 	// width/request fit from leaving header-only phantom columns the row-count clamp
@@ -191,6 +198,10 @@ func ceilDiv(a, b int) int {
 // (to clamp scrollTop), so the rendered window and the clamp can never disagree.
 // Before the first WindowSizeMsg (width/height still 0) the whole list is shown.
 func (m Model) scrollMetrics() viewport {
+	if len(m.sections) > 0 {
+		return m.splitViewport()
+	}
+
 	if m.width == 0 || m.height <= 0 {
 		return viewport{count: len(m.rows()), cols: 1, perCol: len(m.rows())}
 	}
