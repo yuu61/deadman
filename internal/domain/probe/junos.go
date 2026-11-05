@@ -17,7 +17,7 @@ func (s SSH) compileOptions(dest Destination) (SSH, error) {
 		return s, err
 	}
 
-	echo, err := s.Echo.normalize(0, RelayPayloadSize)
+	echo, err := s.Echo.normalizeRelay(s.OS, s.Family)
 	if err != nil {
 		return s, err
 	}

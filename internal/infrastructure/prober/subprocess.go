@@ -34,6 +34,9 @@ var (
 	reNoReply   = regexp.MustCompile(
 		`(?m)\b[1-9]\d* packets? transmitted, 0 (?:packets? )?received\b`,
 	)
+	reReceived = regexp.MustCompile(
+		`(?m)\b[1-9]\d* packets? transmitted, [1-9]\d* (?:packets? )?received\b`,
+	)
 	rePingError = regexp.MustCompile(
 		`(?i)\+[1-9]\d* errors?\b|message too long|packet too (?:big|large)|frag(?:mentation)? needed|cannot fragment`,
 	)
@@ -331,8 +334,8 @@ func parsePingResult(out output) probe.Result {
 	return result
 }
 
-// parsePingOutput recognizes a reply's RTT or a completed, unanswered probe from
-// ping's sent/received summary. Without either, the command did not prove target loss.
+// parsePingOutput recognizes a reply's RTT or ping's sent/received summary.
+// Short payloads cannot hold ping's timestamp: their replies have no RTT and use 0 ms.
 func parsePingOutput(out string) probe.Result {
 	var rtt float64
 
@@ -342,15 +345,21 @@ func parsePingOutput(out string) probe.Result {
 		rtt, matched = parseRTT(fm[1])
 	} else if im := reTimeInt.FindStringSubmatch(out); im != nil {
 		rtt, matched = parseRTT(im[1])
-	} else if reNoReply.MatchString(out) && !rePingError.MatchString(out) {
+	}
+
+	if matched {
+		return probe.SuccessResult(rtt)
+	}
+
+	if reReceived.MatchString(out) {
+		return probe.SuccessResult(0)
+	}
+
+	if reNoReply.MatchString(out) && !rePingError.MatchString(out) {
 		return probe.FailedResult()
 	}
 
-	if !matched {
-		return probe.UnavailableResult()
-	}
-
-	return probe.SuccessResult(rtt)
+	return probe.UnavailableResult()
 }
 
 // parseRTT reads a reply's RTT in milliseconds. A number too large for a float (a relay

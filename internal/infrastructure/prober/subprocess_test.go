@@ -29,6 +29,16 @@ func TestParsePingOutput(t *testing.T) {
 			2.5,
 		},
 		{"no_ttl", "round-trip time=1.00 ms", probe.Success, 1.0},
+		{"short_linux", "8 bytes from 127.0.0.1: icmp_seq=1 ttl=64\n" +
+			"1 packets transmitted, 1 received, 0% packet loss", probe.Success, 0},
+		{
+			"short_bsd",
+			"1 packets transmitted, 1 packets received, 0.0% packet loss",
+			probe.Success,
+			0,
+		},
+		{"short_no_summary", "8 bytes from 127.0.0.1: icmp_seq=1 ttl=64", probe.Unavailable, 0},
+		{"received_nothing_sent", "0 packets transmitted, 1 received", probe.Unavailable, 0},
 		{"linux_no_reply", "1 packets transmitted, 0 received, 100% packet loss", probe.Failed, 0},
 		{
 			"bsd_no_reply",

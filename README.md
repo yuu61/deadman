@@ -141,6 +141,7 @@ kame6             2001:200:dff:fff1:216:3eff:feb1:44d7
 属性や値に誤りのある行は監視せず、RESULT 欄に理由を表示します。ほかの行は監視を続けます。
 属性、監視方式、表示の既定値を決めるディレクティブ、旧版の書式からの移行は [設定ファイル](docs/configuration.md) を参照してください。
 `size=`・`df=` は `direct` / `ssh` / `netns` / `vrf` で使えます。直接 ICMP の `df=on` は Linux / macOS / FreeBSD に対応し、Windows では構築エラーです。
+中継先のサイズ制限は OS と IP ファミリーに応じて検証します（JUNOS の上限は 65468、Darwin / FreeBSD の IPv6 の最小値は 1 バイト）。
 
 分野ごとに段組みの区切りを指定する場合は、同じ conf に次のように書きます。
 

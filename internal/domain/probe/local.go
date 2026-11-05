@@ -55,7 +55,7 @@ func (d Direct) compile(dest Destination) (Params, error) {
 
 	d.Source, d.Family = src, f
 
-	d.Echo, err = d.Echo.normalize(DirectPayloadSize, DirectPayloadSize)
+	d.Echo, err = d.Echo.normalize(DirectPayloadSize, maxEchoPayload, DirectPayloadSize)
 	if err != nil {
 		return nil, err
 	}

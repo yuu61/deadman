@@ -1,6 +1,7 @@
 package prober
 
 import (
+	"bytes"
 	"net"
 	"testing"
 
@@ -10,6 +11,53 @@ import (
 
 	"github.com/yuu61/deadman/internal/domain/probe"
 )
+
+func TestNativeIPv4HeaderRemoval(t *testing.T) {
+	peer := net.ParseIP("192.0.2.1")
+	payload := echoPayload(24)
+	message := icmp.Message{
+		Type: ipv4.ICMPTypeEchoReply,
+		Body: &icmp.Echo{ID: 7, Seq: 1, Data: payload},
+	}
+
+	reply, err := message.Marshal(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, headerLen := range []uint8{0, ipv4.HeaderLen, ipv4.HeaderLen + 4, 60} {
+		data := make([]byte, int(headerLen)+len(reply))
+		copy(data[headerLen:], reply)
+
+		if headerLen > 0 {
+			data[0] = 0x40 | headerLen/ipv4IHLWordSize
+		}
+
+		stripped := stripNativeIPv4Header(data)
+		if !nativeEchoReply(
+			stripped,
+			&net.UDPAddr{IP: peer},
+			peer,
+			42,
+			payload,
+			false,
+			echoKindV4,
+		) {
+			t.Errorf("header length %d: datagram echo reply rejected", headerLen)
+		}
+	}
+
+	for _, data := range [][]byte{
+		nil,
+		{0x45},
+		append([]byte{0x44}, make([]byte, 19)...),
+		append([]byte{0x4f}, make([]byte, 19)...), append([]byte{0x65}, make([]byte, 19)...),
+	} {
+		if !bytes.Equal(stripNativeIPv4Header(data), data) {
+			t.Fatalf("changed packet without a complete IPv4 header: %x", data)
+		}
+	}
+}
 
 func TestJumboEchoReplyMatching(t *testing.T) {
 	for _, tc := range []struct {

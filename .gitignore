@@ -4,6 +4,6 @@ test.conf
 /plans/
 
 # ビルド生成物 (Makefile)
-/bin/
-/dist/
+bin/
+dist/
 /coverage.out

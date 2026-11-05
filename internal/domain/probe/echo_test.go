@@ -32,6 +32,51 @@ func TestEchoOptionsRejectInvalidConditions(t *testing.T) {
 	}
 }
 
+func TestRelayPayloadRanges(t *testing.T) {
+	for _, relayOS := range []OS{OSLinux, OSDarwin, OSFreeBSD, OSJUNOS} {
+		for _, addr := range []string{"192.0.2.1", "2001:db8::1"} {
+			for _, size := range []int{-1, 0, 1, 56, 65468, 65469, 65507, 65508} {
+				params := SSH{Host: "r", OS: relayOS, Echo: EchoOptions{Size: PayloadBytes(size)}}
+				_, err := Compile(Spec{Addr: addr, Params: params})
+
+				valid := size >= 0 && size <= 65507
+				if relayOS == OSJUNOS {
+					valid = size >= 0 && size <= 65468
+				}
+
+				if (relayOS == OSDarwin || relayOS == OSFreeBSD) && addr == "2001:db8::1" &&
+					size == 0 {
+					valid = false
+				}
+
+				if (err == nil) != valid {
+					t.Errorf(
+						"%s %s size=%d: error=%v, want valid=%v",
+						relayOS,
+						addr,
+						size,
+						err,
+						valid,
+					)
+				}
+			}
+		}
+	}
+
+	// A hostname's family is settled by Compile before applying the dialect's limits.
+	for _, params := range []SSH{
+		{Host: "r", OS: OSFreeBSD, Family: FamilyIPv6},
+		{Host: "r", OS: OSDarwin, Source: SourceAddr(netip.MustParseAddr("2001:db8::2"))},
+	} {
+		params.Echo.Size = PayloadBytes(0)
+
+		_, err := Compile(Spec{Addr: "target.example", Params: params})
+		if err == nil {
+			t.Errorf("accepted zero IPv6 payload: %+v", params)
+		}
+	}
+}
+
 func TestJUNOSSourceAndFamily(t *testing.T) {
 	plan := mustCompile(t, Spec{Addr: "router.example", Params: SSH{
 		Host:      "r",

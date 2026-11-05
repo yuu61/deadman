@@ -271,11 +271,11 @@ SNMPv2c でエージェントに RFC 4560（DISMAN-PING-MIB）の ping を依頼
 
 `direct` / `ssh` / `netns` / `vrf` で使えます。TCP・QUIC・nexthop・RouterOS・SNMP には指定できません。
 
-- `size=バイト数` は、IP ヘッダーと ICMP ヘッダーを除くペイロードの長さです。上限は 65507 バイトです。直接 ICMP は返信を識別する情報を収めるため 24 バイト以上、中継先の ping は 0 バイト以上を受け付けます。既定は直接 ICMP が 24、中継先の ping が 56 バイトです。
+- `size=バイト数` は、IP ヘッダーと ICMP ヘッダーを除くペイロードの長さです。上限は 65507 バイト（JUNOS は 65468 バイト）です。直接 ICMP は返信を識別する情報を収めるため 24 バイト以上、中継先の ping は 0 バイト以上（Darwin / FreeBSD の IPv6 は 1 バイト以上）を受け付けます。既定は直接 ICMP が 24、中継先の ping が 56 バイトです。短いペイロードで中継先の ping が RTT を出力しない場合も、受信数から成功と判定し、RTT は 0 ms として記録します。
 - `df=on|off` は断片化を禁止するかです。`true` / `false`、`yes` / `no`、`1` / `0` も、大文字小文字を区別せずに受け付けます。既定は `off`（OS の標準動作）です。
 - Linux の中継先には `-s` / `-M do`、Darwin / FreeBSD には `-s` / `-D`、JUNOS には `size` / `do-not-fragment` として渡します。JUNOS の IPv6 では `df` を無視し、IPv4 でだけ `do-not-fragment` を付けます。
 - 直接 ICMP は外部の ping を使いません。`df=on` は Linux / macOS / FreeBSD に対応し、Windows などの非対応 OS では構築エラーです。
-- MTU 9000 の経路を調べる例は IPv4 で `size=8972 df=1`、IPv6 で `size=8952 df=1` です。送信元でサイズ超過などにより送信できない結果は死活不明（`?`）として、損失の統計に加えません。
+- MTU 9000 の経路を調べる例は IPv4 で `size=8972 df=1`、IPv6 で `size=8952 df=1` です。送信元でサイズ超過などにより送信できない結果や、Linux の直接 ICMP の DF 経路で受信した対応する MTU エラーは死活不明（`?`）として、損失の統計に加えません。
 
 ### source
 

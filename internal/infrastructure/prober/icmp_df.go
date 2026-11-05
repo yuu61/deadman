@@ -16,6 +16,11 @@ import (
 	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
+const (
+	ipv4IHLMask     = 0x0f
+	ipv4IHLWordSize = 4
+)
+
 func nativeDFAvailable() bool {
 	switch runtime.GOOS {
 	case "linux", "darwin", "freebsd":
@@ -52,7 +57,27 @@ func (c *nativeEchoConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
 		return n, from, fmt.Errorf("read native ICMP echo: %w", err)
 	}
 
+	if c.v4 != nil {
+		data := stripNativeIPv4Header(buffer[:n])
+		n = copy(buffer, data)
+	}
+
 	return n, from, nil
+}
+
+// Darwin's ICMP datagram socket retains the IPv4 header even through x/net/ipv4.
+// Other readers already remove it, so strip only when the version and IHL agree.
+func stripNativeIPv4Header(data []byte) []byte {
+	if len(data) < ipv4.HeaderLen || data[0]>>4 != ipv4.Version {
+		return data
+	}
+
+	headerLen := int(data[0]&ipv4IHLMask) * ipv4IHLWordSize
+	if headerLen < ipv4.HeaderLen || headerLen > len(data) {
+		return data
+	}
+
+	return data[headerLen:]
 }
 
 func (c *nativeEchoConn) WriteTo(data []byte, dest net.Addr) (int, error) {
