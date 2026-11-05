@@ -23,6 +23,10 @@ func (p *icmpPinger) sendPortable(ctx context.Context) probe.Result {
 		return probe.UnavailableResult()
 	}
 
+	if p.echo.DF {
+		return p.sendDF(ctx, dest)
+	}
+
 	if source, ok := p.source.Addr(); ok && source.Zone() != "" {
 		return p.sendScoped(ctx, dest, source)
 	}
@@ -37,6 +41,7 @@ func (p *icmpPinger) sendPortable(ctx context.Context) probe.Result {
 	pinger.SetPrivileged(p.privileged)
 	pinger.Count = 1
 	pinger.Timeout = icmpTimeout
+	pinger.Size = p.echo.Size.Bytes()
 
 	// pro-bing's Source binds by address, InterfaceName by name.
 	if addr, hasAddr := p.source.Addr(); hasAddr {

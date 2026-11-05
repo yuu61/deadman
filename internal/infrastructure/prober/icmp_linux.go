@@ -90,10 +90,10 @@ func (p *icmpPinger) Send(ctx context.Context) probe.Result {
 		privileged: p.privileged,
 		id:         nextProbeID(),
 		seq:        1,
-		token:      newProbeToken(),
+		token:      echoPayload(p.echo.Size.Bytes()),
 	}
 
-	conn, err := dialICMP(fam, sockType, p.source, pr.id)
+	conn, err := p.dial(fam, sockType, pr.id)
 	if err != nil {
 		return probe.UnavailableResult()
 	}
@@ -378,7 +378,7 @@ func (pr icmpProbe) build() ([]byte, error) {
 // os.File read deadline passes, skipping foreign ICMP (raw fan-out). A parked read holds
 // no OS thread, and the absolute deadline bounds the loop even under continuous ICMP.
 func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) probe.Result {
-	buf := make([]byte, recvBufSize)
+	buf := make([]byte, echoReceiveSize(len(pr.token)))
 	oob := make([]byte, controlBufSize)
 
 	for {

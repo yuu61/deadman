@@ -13,6 +13,7 @@ type Namespace struct {
 	Name   string // relay=: the namespace or VRF name.
 	Source Source // source=: the ping's source address or interface.
 	Family Family // resolve_family=, as for SSH.
+	Echo   EchoOptions
 }
 
 // Netns runs this host's ping inside a network namespace (MethodNetns).
@@ -74,6 +75,11 @@ func (n Namespace) resolve(m Method, dest Destination) (Namespace, error) {
 
 	n.Source, n.Family = src, f
 
+	n.Echo, err = n.Echo.normalize(0, RelayPayloadSize)
+	if err != nil {
+		return Namespace{}, err
+	}
+
 	return n, nil
 }
 
@@ -81,4 +87,5 @@ func (n Namespace) identity(b *strings.Builder) {
 	writeKey(b, n.Name)
 	writeKey(b, n.Source.String())
 	writeKey(b, n.Family.resolveSpelling())
+	n.Echo.identity(b, RelayPayloadSize)
 }

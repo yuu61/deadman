@@ -3,6 +3,7 @@ package prober
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"math"
 	"net"
 	"runtime"
@@ -25,15 +26,36 @@ type icmpPinger struct {
 	source     probe.Source
 	network    string // "ip4"/"ip6" to pin the resolve family (resolve_family=), "" for auto.
 	privileged bool
+	echo       probe.EchoOptions
 }
 
 func newICMPPinger(dest probe.Destination, d probe.Direct) (probe.Pinger, error) {
+	if d.Echo.DF && !nativeDFAvailable() {
+		return nil, fmt.Errorf("direct df is not supported on %s", runtime.GOOS)
+	}
+
 	return &icmpPinger{
 		dest:       dest,
 		source:     d.Source,
 		network:    resolveNetwork(d.Family),
 		privileged: useICMPPrivileged(),
+		echo:       d.Echo,
 	}, nil
+}
+
+// echoPayload retains a random token at the start of the requested payload.
+func echoPayload(size int) []byte {
+	payload := make([]byte, size)
+	copy(payload, newProbeToken())
+
+	return payload
+}
+
+// echoReceiveSize leaves room for a maximum IPv4 header and the ICMP echo header.
+func echoReceiveSize(payload int) int {
+	const headerRoom = 68
+
+	return max(recvBufSize, payload+headerRoom)
 }
 
 // probeCounter hands out per-probe ICMP IDs. Under the raw-socket fan-out every

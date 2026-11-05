@@ -259,7 +259,7 @@ func methodNamed(name string) (probe.Method, bool) {
 // probe.Methods entry has one and that its parameters compile to that method.
 var readers = map[probe.Method]func(p *probeInput) probe.Params{
 	probe.MethodDirect: func(p *probeInput) probe.Params {
-		return probe.Direct{Source: p.source(), Family: p.family()}
+		return probe.Direct{Source: p.source(), Family: p.family(), Echo: p.echo()}
 	},
 	probe.MethodTCP: func(p *probeInput) probe.Params {
 		return probe.TCP{Port: p.port(), Family: p.family()}
@@ -278,12 +278,16 @@ var readers = map[probe.Method]func(p *probeInput) probe.Params{
 	},
 	probe.MethodSSH: func(p *probeInput) probe.Params {
 		return probe.SSH{
-			Host:   p.take("relay"),
-			Source: p.source(),
-			OS:     probe.OS(p.take("os")),
-			Family: p.family(),
-			User:   p.take("user"),
-			Key:    p.take("key"),
+			Host:      p.take("relay"),
+			Source:    p.source(),
+			OS:        probe.OS(p.take("os")),
+			Family:    p.family(),
+			User:      p.take("user"),
+			Key:       p.take("key"),
+			Echo:      p.echo(),
+			Interface: p.take("interface"),
+			Instance:  p.take("instance"),
+			Timeout:   p.timeout(),
 		}
 	},
 	probe.MethodNetns: func(p *probeInput) probe.Params { return probe.Netns(p.namespace()) },
@@ -307,5 +311,10 @@ var readers = map[probe.Method]func(p *probeInput) probe.Params{
 
 // namespace reads the attributes netns and vrf share.
 func (p *probeInput) namespace() probe.Namespace {
-	return probe.Namespace{Name: p.take("relay"), Source: p.source(), Family: p.family()}
+	return probe.Namespace{
+		Name:   p.take("relay"),
+		Source: p.source(),
+		Family: p.family(),
+		Echo:   p.echo(),
+	}
 }

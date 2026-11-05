@@ -30,6 +30,28 @@ func TestICMPLoopback(t *testing.T) {
 	t.Logf("loopback rtt=%.3fms", res.RTT)
 }
 
+func TestICMPJumboLoopback(t *testing.T) {
+	for _, address := range []string{"127.0.0.1", "::1"} {
+		for _, df := range []bool{false, true} {
+			if df && !nativeDFAvailable() {
+				continue
+			}
+
+			params := probe.Direct{Echo: probe.EchoOptions{Size: probe.PayloadBytes(8972), DF: df}}
+
+			p, err := New(compiled(t, probe.Spec{Addr: address, Params: params}), "jumbo#1")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result := p.Send(t.Context())
+			if !result.IsSuccess() {
+				t.Fatalf("jumbo %s df=%v: %+v", address, df, result)
+			}
+		}
+	}
+}
+
 // TestICMPConcurrent checks that several native ICMP probes really run in
 // parallel (what -a relies on). Five unreachable TEST-NET addresses each hit the
 // 1s timeout; concurrent => ~1s total, serialized => ~5s.

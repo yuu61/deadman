@@ -83,7 +83,7 @@ func (p *icmpPinger) sendScoped(
 	stop := interruptOnDone(ctx, conn.SetDeadline)
 	defer stop()
 
-	id, token := nextProbeID(), newProbeToken()
+	id, token := nextProbeID(), echoPayload(p.echo.Size.Bytes())
 	message := icmp.Message{
 		Type: ipv6.ICMPTypeEchoRequest,
 		Body: &icmp.Echo{ID: id, Seq: 1, Data: token},
@@ -117,7 +117,7 @@ func (p *icmpPinger) sendScoped(
 func (p *icmpPinger) receiveScoped(
 	ctx context.Context, conn *icmp.PacketConn, peer net.IP, id int, token []byte, start time.Time,
 ) probe.Result {
-	buffer := make([]byte, recvBufSize)
+	buffer := make([]byte, echoReceiveSize(len(token)))
 	for {
 		n, from, err := conn.ReadFrom(buffer)
 		if err != nil {

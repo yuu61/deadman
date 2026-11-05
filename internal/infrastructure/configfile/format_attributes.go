@@ -8,8 +8,8 @@ import (
 
 // attributeOrder groups method, routing, method-specific options and credentials.
 // Missing attributes remain missing; the formatter changes only written order.
-const attributeOrder = "probe relay nexthop source resolve_family os port scheme alpn sni verify " +
-	"user key username password community"
+const attributeOrder = "probe relay nexthop source resolve_family os size df interface instance timeout " +
+	"port scheme alpn sni verify user key username password community"
 
 // writtenFields splits a normalized body at spaces outside quotes, preserving the
 // exact spelling of each field. tokenize supplies its unquoted counterpart.

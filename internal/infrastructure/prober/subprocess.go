@@ -17,12 +17,6 @@ import (
 
 const subprocessTimeout = 5 * time.Second
 
-// Darwin's ping6 has no option that bounds its wait for a reply (its -W asks for node
-// information): with -c 1 it waits 10 seconds for an unanswered echo, so the outer
-// deadline must let it report its sent/received counts, or target loss would read as a
-// relay timeout. Only an IPv6 probe through a Darwin relay takes this long.
-const ping6Timeout = 15 * time.Second
-
 // sshExitCodeError is the exit status ssh uses for its own connection-level
 // failures (as opposed to the remote command's exit code).
 const sshExitCodeError = 255
@@ -40,30 +34,37 @@ var (
 	reNoReply   = regexp.MustCompile(
 		`(?m)\b[1-9]\d* packets? transmitted, 0 (?:packets? )?received\b`,
 	)
+	rePingError = regexp.MustCompile(
+		`(?i)\+[1-9]\d* errors?\b|message too long|packet too (?:big|large)|frag(?:mentation)? needed|cannot fragment`,
+	)
 )
 
 // subprocessPinger runs `ping -c 1` on a remote host (SSH) or inside a Linux
 // network namespace / VRF, and parses the resulting output. When the underlying
 // binary (ssh/ip) is absent — e.g. on Windows — the probe fails gracefully as X.
 type subprocessPinger struct {
-	addr    string
-	named   bool         // addr is a host name, which the ping resolves there.
-	wrapper []string     // the argv that runs the ping there: ssh … HOST, or ip netns|vrf exec NAME.
-	os      probe.OS     // the ping's dialect.
-	family  probe.Family // the family the ping runs in, fixed by the plan.
-	source  probe.Source
+	addr     string
+	named    bool         // addr is a host name, which the ping resolves there.
+	wrapper  []string     // the argv that runs the ping there: ssh … HOST, or ip netns|vrf exec NAME.
+	os       probe.OS     // the ping's dialect.
+	family   probe.Family // the family the ping runs in, fixed by the plan.
+	source   probe.Source
+	echo     probe.EchoOptions
+	iface    string
+	instance string
+	timeout  time.Duration
 	// ssh: the ping's argv reaches the relay's shell as one command line, and an
 	// ssh-level failure (exit 255) is the relay's, not the target's.
 	ssh bool
 }
 
-func newSSHPinger(dest probe.Destination, s probe.SSH) (probe.Pinger, error) {
+func newSSHPinger(dest probe.Destination, relay probe.SSH) (probe.Pinger, error) {
 	// The ssh host and the remote ping's destination are bare operands in the argv, so a
 	// leading '-' would be parsed as an option — most dangerously a relay of
 	// "-oProxyCommand=..." that runs an arbitrary local command. Reject both.
 	addr := dest.String()
 
-	err := validateOperands(s.Host, addr)
+	err := validateOperands(relay.Host, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -71,13 +72,17 @@ func newSSHPinger(dest probe.Destination, s probe.SSH) (probe.Pinger, error) {
 	_, named := dest.Name()
 
 	return &subprocessPinger{
-		addr:    addr,
-		named:   named,
-		wrapper: sshArgs(s),
-		os:      s.OS,
-		family:  s.Family,
-		source:  s.Source,
-		ssh:     true,
+		addr:     addr,
+		named:    named,
+		wrapper:  sshArgs(relay),
+		os:       relay.OS,
+		family:   relay.Family,
+		source:   relay.Source,
+		echo:     relay.Echo,
+		iface:    relay.Interface,
+		instance: relay.Instance,
+		timeout:  relay.Timeout.Duration(),
+		ssh:      true,
 	}, nil
 }
 
@@ -113,16 +118,13 @@ func newNamespacePinger(
 		os:      probe.OSLinux,
 		family:  n.Family,
 		source:  n.Source,
+		echo:    n.Echo,
+		timeout: subprocessTimeout,
 	}, nil
 }
 
 func (p *subprocessPinger) Send(ctx context.Context) probe.Result {
-	timeout := subprocessTimeout
-	if p.family == probe.FamilyIPv6 && p.os == probe.OSDarwin {
-		timeout = ping6Timeout
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
 	out, err := runCapped(ctx, p.buildArgs(), append(os.Environ(), "LC_ALL=C"))
@@ -145,7 +147,7 @@ func (p *subprocessPinger) Send(ctx context.Context) probe.Result {
 		return probe.UnavailableResult()
 	}
 
-	return parsePingOutput(out.stdout)
+	return parsePingResult(out)
 }
 
 // pingExitStatus accepts successful exits and the OS's no-reply exit code.
@@ -162,6 +164,10 @@ func pingExitStatus(pingOS probe.OS, err error) bool {
 
 	if pingOS == probe.OSLinux {
 		return exitErr.ExitCode() == 1
+	}
+
+	if pingOS == probe.OSJUNOS && exitErr.ExitCode() == 1 {
+		return true
 	}
 
 	return exitErr.ExitCode() == 2
@@ -193,8 +199,13 @@ func sshFailure(ctx context.Context, err error, stderr string) (probe.Result, bo
 // as one command line its shell splits again, so each word is quoted for that shell: a
 // name or source is then one word there, never a glob, an expansion or another command.
 func (p *subprocessPinger) buildArgs() []string {
+	if p.os == probe.OSJUNOS {
+		return append(slices.Clone(p.wrapper), p.junosCommand()...)
+	}
+
 	ping := pingCommand(p.family, p.os, p.named)
 	ping = append(ping, p.sourceArgs()...)
+	ping = append(ping, p.echoArgs()...)
 	ping = append(ping, p.addr)
 
 	if p.ssh {
@@ -309,6 +320,17 @@ func pingCommand(family probe.Family, pingOS probe.OS, named bool) []string {
 	return append(cmd, "-c", "1", "-W", wait)
 }
 
+// parsePingResult also reads stderr: a send failure is not an unanswered echo, even
+// when the ping summary counts the attempted send as a transmitted packet.
+func parsePingResult(out output) probe.Result {
+	result := parsePingOutput(out.stdout)
+	if result.Code == probe.Failed && rePingError.MatchString(out.stderr) {
+		return probe.UnavailableResult()
+	}
+
+	return result
+}
+
 // parsePingOutput recognizes a reply's RTT or a completed, unanswered probe from
 // ping's sent/received summary. Without either, the command did not prove target loss.
 func parsePingOutput(out string) probe.Result {
@@ -320,7 +342,7 @@ func parsePingOutput(out string) probe.Result {
 		rtt, matched = parseRTT(fm[1])
 	} else if im := reTimeInt.FindStringSubmatch(out); im != nil {
 		rtt, matched = parseRTT(im[1])
-	} else if reNoReply.MatchString(out) {
+	} else if reNoReply.MatchString(out) && !rePingError.MatchString(out) {
 		return probe.FailedResult()
 	}
 

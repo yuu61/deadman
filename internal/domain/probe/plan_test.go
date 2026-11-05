@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 )
 
 func mustCompile(t *testing.T, s Spec) Plan {
@@ -321,6 +322,7 @@ func TestCompileResolvesParams(t *testing.T) {
 			Netns{
 				Name:   "ns",
 				Family: FamilyIPv4,
+				Echo:   EchoOptions{Size: PayloadBytes(56)},
 			},
 		},
 
@@ -334,9 +336,11 @@ func TestCompileResolvesParams(t *testing.T) {
 				},
 			},
 			SSH{
-				Host:   "jump",
-				OS:     OSDarwin,
-				Family: FamilyIPv6,
+				Host:    "jump",
+				OS:      OSDarwin,
+				Family:  FamilyIPv6,
+				Echo:    EchoOptions{Size: PayloadBytes(56)},
+				Timeout: TimeoutAfter(15 * time.Second),
 			},
 		},
 
@@ -346,7 +350,10 @@ func TestCompileResolvesParams(t *testing.T) {
 				Addr:   "router.local",
 				Params: Direct{Source: SourceAddr(netip.MustParseAddr("fe80::9%eth0"))},
 			},
-			Direct{Source: SourceAddr(netip.MustParseAddr("fe80::9%eth0")), Family: FamilyIPv6},
+			Direct{
+				Source: SourceAddr(netip.MustParseAddr("fe80::9%eth0")), Family: FamilyIPv6,
+				Echo: EchoOptions{Size: PayloadBytes(24)},
+			},
 		},
 
 		{
@@ -355,10 +362,12 @@ func TestCompileResolvesParams(t *testing.T) {
 				Params: SSH{Host: "jump", OS: OSLinux, Source: SourceAddr(netip.MustParseAddr("2001:db8::9"))},
 			},
 			SSH{
-				Host:   "jump",
-				OS:     OSLinux,
-				Source: SourceAddr(netip.MustParseAddr("2001:db8::9")),
-				Family: FamilyIPv6,
+				Host:    "jump",
+				OS:      OSLinux,
+				Source:  SourceAddr(netip.MustParseAddr("2001:db8::9")),
+				Family:  FamilyIPv6,
+				Echo:    EchoOptions{Size: PayloadBytes(56)},
+				Timeout: TimeoutAfter(5 * time.Second),
 			},
 		},
 	} {

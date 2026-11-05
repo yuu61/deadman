@@ -95,6 +95,7 @@ func TestPortableScopedLoopback(t *testing.T) {
 			dest:       compiled(t, probe.Spec{Addr: "::1"}).Destination(),
 			source:     probe.SourceAddr(source),
 			privileged: true,
+			echo:       probe.EchoOptions{Size: probe.PayloadBytes(24)},
 		}
 		if result := p.sendPortable(t.Context()); !result.IsSuccess() {
 			t.Fatalf("scoped loopback: %+v", result)

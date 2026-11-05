@@ -55,7 +55,7 @@ HOSTNAME 列を隠した場合は、`--- ` の直後から表示します。
 
 - 属性は `key=value` で書きます。同じ属性を 2 度書くこと、値の空な `key=` は構築エラーです。既定値を使うときは属性ごと省略します。
 - 未知の属性、その方式が使わない属性、不正な値、必須属性の欠落も構築エラーです。
-- 属性の値は大文字小文字を区別します（`verify=` を除く）。`probe=TCP` や `os=linux` は構築エラーです。
+- 属性の値は大文字小文字を区別します（`verify=`・`df=` を除く）。`probe=TCP` や `os=linux` は構築エラーです。
 - アドレス（ゾーンを含む）・送信元・名前空間名・SSH のユーザー名や鍵パスに NUL 文字は使えません。実行時まで待たず、構築エラーにします。
 - アドレスの後の `=` を含まない語は無視し、画面上部に警告を出します。空白を含む名前を引用符で囲み忘れた場合などです。閉じていない二重引用符も警告します（行の残りが 1 つの語になります）。
 
@@ -97,7 +97,7 @@ deadman deadman.conf --format -w
 - 対象行は名前・アドレス・属性の 3 列に分け、スペースで左揃えにします。名前とアドレスの列幅は、空行や区切り行をまたいでファイル全体の最長の項目に合わせ、列間には最低 2 スペースを入れます。
 - 列幅は引用符を含めた表示幅で数え、日本語などの全角文字を 2 文字分、結合文字を 0 文字分として扱います。
 - 属性同士、ディレクティブ、区切り行の語の間は 1 スペースに揃えます。属性がない行の末尾には、列揃えの空白を追加しません。
-- 対象行の属性は `probe` → `relay` → `nexthop` → `source` → `resolve_family` → `os` → `port` → `scheme` → `alpn` → `sni` → `verify` → `user` → `key` → `username` → `password` → `community` の順に並べ替えます。省略した属性を補うことはありません。
+- 対象行の属性は `probe` → `relay` → `nexthop` → `source` → `resolve_family` → `os` → `size` → `df` → `interface` → `instance` → `timeout` → `port` → `scheme` → `alpn` → `sni` → `verify` → `user` → `key` → `username` → `password` → `community` の順に並べ替えます。省略した属性を補うことはありません。
 - 引用符内の内容、コメント本文、属性の綴り、行順、空行の数を保ちます。コメントの前後の空白は整えます。
 - 先頭の UTF-8 BOM を除き、改行を LF に揃え、空でない出力には最後の改行を付けます。
 - 空白の変更で文字列が新たにコメントとして解釈される場合は、その行の本文を保ちます。
@@ -144,12 +144,12 @@ long-host  2001:db8::1  probe=quic
 
 | `probe=` | 送るもの | 必須の属性 | 任意の属性 |
 | --- | --- | --- | --- |
-| [`direct`](#direct) | 監視元からの ICMP echo | なし | `source`, `resolve_family` |
+| [`direct`](#direct) | 監視元からの ICMP echo | なし | `source`, `resolve_family`, `size`, `df` |
 | [`nexthop`](#nexthop) | ゲートウェイを強制した ICMP echo（Linux のみ） | `nexthop` | `source` |
 | [`tcp`](#tcp) | TCP 接続（IPv4 / IPv6） | `port` | `resolve_family` |
 | [`quic`](#quic) | QUIC ハンドシェイク | なし | `port`, `alpn`, `sni`, `verify`, `resolve_family` |
-| [`ssh`](#ssh) | 中継先で実行する ping | `relay`, `os` | `user`, `key`, `source`, `resolve_family` |
-| [`netns` / `vrf`](#netns--vrf) | ネットワーク名前空間 / VRF の中で実行する ping（Linux） | `relay` | `source`, `resolve_family` |
+| [`ssh`](#ssh) | 中継先で実行する ping | `relay`, `os` | `user`, `key`, `source`, `resolve_family`, `size`, `df`, `timeout`。JUNOS では `interface`, `instance` も可 |
+| [`netns` / `vrf`](#netns--vrf) | ネットワーク名前空間 / VRF の中で実行する ping（Linux） | `relay` | `source`, `resolve_family`, `size`, `df` |
 | [`routeros`](#routeros) | RouterOS REST API に依頼する ping | `relay`, `username`, `password` | `scheme`, `verify` |
 | [`snmp`](#snmp非推奨)（非推奨） | SNMP エージェントに依頼する ping | `relay`, `community` | なし |
 
@@ -211,15 +211,25 @@ QUIC ハンドシェイクが完了するまでの時間を RTT として測り�
 `relay=` のホストへ ssh で入り、そこで ping を実行します。
 
 - `relay=HOST` か `relay=USER@HOST` で書きます。`relay=ops@jump` は `relay=jump user=ops` と同じで、両方にユーザーを書いた場合は `relay=` 内のユーザーを使います。ユーザーやホストが空のもの、`@` が 2 つ以上あるもの、空白や制御文字を含むものは構築エラーです。
-- `os=Linux|Darwin|FreeBSD` は必須です。中継先の ping の書式を決めるもので、監視元の OS から推測しません。
+- `os=Linux|Darwin|FreeBSD|JUNOS` は必須です。中継先の ping の書式を決めるもので、監視元の OS から推測しません。
   - Linux と FreeBSD は IPv6 を `ping -6` で送り、ホスト名を IPv4 で送るときは `ping -4` を付けます（FreeBSD は `-4` / `-6` を持つ 13 以降が必要）。
   - Darwin の IPv6 は `ping6` で送ります。応答が無いと約 10 秒待ちます（[待ち時間](platform.md#プローブの待ち時間)）。
+  - JUNOS は操作モードの CLI で `ping 宛先 count 1 inet|inet6 wait 1` を実行します。SSH のコマンドを JUNOS CLI として受け付けるユーザーを使ってください。
 - `user=` はログインユーザー、`key=` は秘密鍵のファイル（`ssh -i`）です。
 - ssh は `BatchMode=yes` で動かすため、パスワードや鍵のパスフレーズを尋ねません。鍵認証を用意し、パスフレーズ付きの鍵は ssh-agent に載せてください。尋ねる必要のある中継は `s` になります。
 - 中継のホスト鍵は、初回の接続で known_hosts に登録します（`StrictHostKeyChecking=accept-new`）。登録済みの鍵が変わった中継は拒否し、`s` になります。
-- ping の引数は中継先のシェル向けに引用して渡すため、宛先名や送信元の空白・ワイルドカード・`$(...)` は展開されません。
-- `source=` は、Linux ではアドレスとインタフェース名、Darwin ではアドレスだけ使えます。FreeBSD では指定できません。
+- Linux / Darwin / FreeBSD の ping の引数は中継先のシェル向けに引用して渡すため、宛先名や送信元の空白・ワイルドカード・`$(...)` は展開されません。
+- `source=` は、Linux ではアドレスとインタフェース名、Darwin / JUNOS ではアドレスだけ使えます。FreeBSD では指定できません。
 - 宛先がホスト名なら、`resolve_family` か送信元アドレスが必須です。名前は中継先で解決します。
+- `interface=` と `instance=` は JUNOS 専用です。それぞれ `interface` と `routing-instance` として渡します。JUNOS の宛先・送信元・この 2 属性は、英数字と `-`・`_`・`.`・`/`・`:`・`%` の単語だけを受け付けます。CLI のパイプやコマンド区切りは使えません。
+- `timeout=秒数` は SSH 接続と ping を含む全体の制限時間です。正の小数も使えます（例: `timeout=7.5`）。既定値は JUNOS が 3 秒、Darwin の IPv6 が 15 秒、それ以外が 5 秒です。ping 自体の応答待ち時間や SSH の接続待ち 3 秒は変えません。
+
+```text
+ll-via-rtr   fe80::1      probe=ssh relay=198.51.100.1 os=JUNOS interface=ge-0/0/0.0
+vrf-via-rtr  192.0.2.33  probe=ssh relay=198.51.100.1 os=JUNOS instance=MGMT source=192.0.2.2 timeout=10
+```
+
+JUNOS の引数は [Juniper の ping コマンド仕様](https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/ping.html) に合わせています。JUNOS 実機での動作確認は行っていません。
 
 ### netns / vrf
 
@@ -256,6 +266,16 @@ SNMPv2c でエージェントに RFC 4560（DISMAN-PING-MIB）の ping を依頼
 - エージェントが要求を拒否したとき（MIB を実装していないときを含む）は `s`、応答しないときは `t` です。エージェントが送ったプローブに応答が無かったときだけ `X` になります。RTT はエージェントが測った値で、ミリ秒単位の整数です。
 
 ## 共通の属性
+
+### size / df
+
+`direct` / `ssh` / `netns` / `vrf` で使えます。TCP・QUIC・nexthop・RouterOS・SNMP には指定できません。
+
+- `size=バイト数` は、IP ヘッダーと ICMP ヘッダーを除くペイロードの長さです。上限は 65507 バイトです。直接 ICMP は返信を識別する情報を収めるため 24 バイト以上、中継先の ping は 0 バイト以上を受け付けます。既定は直接 ICMP が 24、中継先の ping が 56 バイトです。
+- `df=on|off` は断片化を禁止するかです。`true` / `false`、`yes` / `no`、`1` / `0` も、大文字小文字を区別せずに受け付けます。既定は `off`（OS の標準動作）です。
+- Linux の中継先には `-s` / `-M do`、Darwin / FreeBSD には `-s` / `-D`、JUNOS には `size` / `do-not-fragment` として渡します。JUNOS の IPv6 では `df` を無視し、IPv4 でだけ `do-not-fragment` を付けます。
+- 直接 ICMP は外部の ping を使いません。`df=on` は Linux / macOS / FreeBSD に対応し、Windows などの非対応 OS では構築エラーです。
+- MTU 9000 の経路を調べる例は IPv4 で `size=8972 df=1`、IPv6 で `size=8952 df=1` です。送信元でサイズ超過などにより送信できない結果は死活不明（`?`）として、損失の統計に加えません。
 
 ### source
 
@@ -393,20 +413,24 @@ IP アドレスの中継先も正規化して比べます。ホスト名の大�
 
 | `probe=` | 監視経路に入る条件 | 入らない属性 |
 | --- | --- | --- |
-| `direct` | `source`, `resolve_family` | |
+| `direct` | `source`, `resolve_family`, `size`, `df` | |
 | `nexthop` | `nexthop`, `source` | |
 | `tcp` | `port`, `resolve_family` | |
 | `quic` | `port`, `alpn`, `sni`, `verify`, `resolve_family` | |
-| `ssh` | `relay` のホスト, `os`, `source`, `resolve_family` | `user`（`relay=` 内のユーザーを含む）, `key` |
-| `netns` / `vrf` | `relay`, `source`, `resolve_family` | |
+| `ssh` | `relay` のホスト, `os`, `source`, `resolve_family`, `size`, `df`, `interface`, `instance`, `timeout` | `user`（`relay=` 内のユーザーを含む）, `key` |
+| `netns` / `vrf` | `relay`, `source`, `resolve_family`, `size`, `df` | |
 | `routeros` | `relay` のホストとポート, `scheme`, `verify` | `username`, `password` |
 | `snmp` | `relay` | `community` |
 
 - 名前、認証情報（`user` / `key` / `username` / `password` / `community`）を変えても、同じ行のままです。
 - 条件を変えると、新しい履歴と新しいログファイルで始まります。`verify` の切り替えは成功とみなす条件が変わるため、ここに含めています。
+- 新しい ping オプションを省略した既存行の同一性とログファイル名は変わりません。`size`・`timeout` の既定値や `df=off` を明示しても同じ行です。JUNOS の IPv6 の `df` は監視経路に含めません。
 - 出現順は構築できた行だけで数えます。同じ監視経路の行が複数あるときに前の行を構築エラーにすると、後の行が繰り上がって、その行の履歴とログファイルを引き継ぎます。
 
 ## 旧版からの移行
+
+直接 ICMP の既定ペイロードは OS 間で 24 バイトに揃えました（従来の Linux は 8 バイト）。
+新しい ping オプションを省略した既存行は、同じ履歴とログファイルを使い続けます。
 
 TCP は hping3 による SYN 送信から標準の TCP 接続に変わりました。既存の `probe=tcp port=...` はそのまま使えます。ファミリーを行の同一性に加えたため、既存の TCP 行も新しいログファイルに書き始めます。
 
