@@ -3,8 +3,6 @@
 package prober
 
 import (
-	"errors"
-	"net"
 	"strconv"
 	"testing"
 
@@ -13,35 +11,36 @@ import (
 	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
-func TestBSDDFSocketBuffers(t *testing.T) {
-	for _, address := range []string{"127.0.0.1", "::1"} {
+func TestBSDNativeEchoDFOption(t *testing.T) {
+	for _, tc := range []struct {
+		address string
+		level   int
+		option  int
+	}{
+		{"127.0.0.1", unix.IPPROTO_IP, unix.IP_DONTFRAG},
+		{"::1", unix.IPPROTO_IPV6, unix.IPV6_DONTFRAG},
+	} {
 		for _, privileged := range []bool{false, true} {
-			t.Run(address+"/raw="+strconv.FormatBool(privileged), func(t *testing.T) {
-				p := &icmpPinger{
-					privileged: privileged,
-					echo:       probe.EchoOptions{Size: probe.PayloadBytes(8972), DF: true},
-				}
+			t.Run(tc.address+"/raw="+strconv.FormatBool(privileged), func(t *testing.T) {
+				for _, df := range []bool{false, true} {
+					t.Run("df="+strconv.FormatBool(df), func(t *testing.T) {
+						p := &icmpPinger{
+							privileged: privileged,
+							echo:       probe.EchoOptions{Size: probe.PayloadBytes(8972), DF: df},
+						}
 
-				fd, err := p.dfSocket(&net.IPAddr{IP: net.ParseIP(address)})
-				if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) {
-					t.Skipf("ICMP socket requires privileges: %v", err)
-				}
+						fd := openBSDTestEchoSocket(t, p, tc.address)
+						defer unix.Close(fd)
 
-				if err != nil {
-					t.Fatal(err)
-				}
+						value, err := unix.GetsockoptInt(fd, tc.level, tc.option)
+						if err != nil {
+							t.Fatal(err)
+						}
 
-				defer unix.Close(fd)
-
-				for _, option := range []int{unix.SO_SNDBUF, unix.SO_RCVBUF} {
-					size, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, option)
-					if err != nil {
-						t.Fatal(err)
-					}
-
-					if size < echoSocketBufferSize(p.echo.Size.Bytes()) {
-						t.Errorf("socket option %d = %d, too small for a jumbo echo", option, size)
-					}
+						if (value != 0) != df {
+							t.Errorf("DF socket option = %d, want enabled=%v", value, df)
+						}
+					})
 				}
 			})
 		}

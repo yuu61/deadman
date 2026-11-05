@@ -49,8 +49,16 @@ vet: ## 開発機と CROSS_PLATFORMS で go vet する (manual タグのテス�
 		GOOS=$${p%/*} GOARCH=$${p#*/} go vet -tags manual ./... || exit 1; \
 	done
 
-test: ## テストを実行する (例: TEST_ARGS='-race -run=TestReload')
-	go test -race -count=1 $(TEST_ARGS) ./...
+# OpenBSD などの非対応 OS や CGO 無効の環境では race 検出を使えない。
+# OS の対応表を複製せず、使用中の Go に runtime を race 付きでロードできるか問い合わせる。
+test: ## テストを実行する (対応環境では race 検出。例: TEST_ARGS='-run=TestReload')
+	@set --; \
+	if go list -race runtime >/dev/null 2>&1; then \
+		set -- -race; \
+	else \
+		echo ">> race 検出はこの Go 環境では利用できないため、通常のテストを実行します"; \
+	fi; \
+	go test "$$@" -count=1 $(TEST_ARGS) ./...
 
 fix: ## lint の指摘のうち機械的に直せるものを直す
 	go mod tidy

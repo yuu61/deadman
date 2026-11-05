@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"strconv"
 	"testing"
 
 	"golang.org/x/net/icmp"
@@ -91,14 +92,18 @@ func TestPortableScopedLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		p := &icmpPinger{
-			dest:       compiled(t, probe.Spec{Addr: "::1"}).Destination(),
-			source:     probe.SourceAddr(source),
-			privileged: true,
-			echo:       probe.EchoOptions{Size: probe.PayloadBytes(24)},
-		}
-		if result := p.sendPortable(t.Context()); !result.IsSuccess() {
-			t.Fatalf("scoped loopback: %+v", result)
+		for _, size := range []int{24, 8972} {
+			t.Run(strconv.Itoa(size), func(t *testing.T) {
+				p := &icmpPinger{
+					dest:       compiled(t, probe.Spec{Addr: "::1"}).Destination(),
+					source:     probe.SourceAddr(source),
+					privileged: true,
+					echo:       probe.EchoOptions{Size: probe.PayloadBytes(size)},
+				}
+				if result := p.sendPortable(t.Context()); !result.IsSuccess() {
+					t.Fatalf("scoped loopback: %+v", result)
+				}
+			})
 		}
 
 		return

@@ -30,8 +30,8 @@ func nativeDFAvailable() bool {
 	}
 }
 
-// nativeEchoConn retains the underlying socket so DF can be set before it is wrapped
-// by x/net. Its IPv4 reader also handles Darwin's IP_STRIPHDR socket behavior.
+// nativeEchoConn retains the underlying socket so buffers and DF can be set before
+// it is wrapped by x/net. Its IPv4 reader also handles Darwin's IP_STRIPHDR behavior.
 type nativeEchoConn struct {
 	net.PacketConn
 
@@ -99,10 +99,10 @@ func (c *nativeEchoConn) WriteTo(data []byte, dest net.Addr) (int, error) {
 	return n, nil
 }
 
-// sendDF is the portable native DF path. Linux uses its kernel-timestamped Send;
-// pro-bing cannot set DF on Darwin or FreeBSD, so these sockets are opened here.
-func (p *icmpPinger) sendDF(ctx context.Context, dest *net.IPAddr) probe.Result {
-	conn, err := p.listenDF(dest)
+// sendNativeEcho sends BSD probes through sockets with payload-sized buffers,
+// including scoped sources and DF. Linux uses its kernel-timestamped Send.
+func (p *icmpPinger) sendNativeEcho(ctx context.Context, dest *net.IPAddr) probe.Result {
+	conn, err := p.listenNativeEcho(dest)
 	if err != nil {
 		return probe.UnavailableResult()
 	}
@@ -133,7 +133,7 @@ func (p *icmpPinger) sendDF(ctx context.Context, dest *net.IPAddr) probe.Result 
 		return probe.UnavailableResult()
 	}
 
-	peer := p.dfPeer(dest)
+	peer := p.nativeEchoPeer(dest)
 
 	var target net.Addr = &peer
 	if !p.privileged {
@@ -150,7 +150,7 @@ func (p *icmpPinger) sendDF(ctx context.Context, dest *net.IPAddr) probe.Result 
 	return p.receiveNativeEcho(ctx, conn, peer.IP, id, payload, start, kind)
 }
 
-func (p *icmpPinger) dfPeer(dest *net.IPAddr) net.IPAddr {
+func (p *icmpPinger) nativeEchoPeer(dest *net.IPAddr) net.IPAddr {
 	peer := *dest
 	if peer.Zone == "" && peer.IP.IsLinkLocalUnicast() {
 		if source, ok := p.source.Addr(); ok {
