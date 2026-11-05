@@ -58,6 +58,12 @@ func echoReceiveSize(payload int) int {
 	return max(recvBufSize, payload+headerRoom)
 }
 
+// echoSocketBufferSize also reserves kernel address/control data and room for a
+// request and reply to be queued together on an unfiltered raw loopback socket.
+func echoSocketBufferSize(payload int) int {
+	return 2 * echoReceiveSize(payload)
+}
+
 // probeCounter hands out per-probe ICMP IDs. Under the raw-socket fan-out every
 // listener sees every host's ICMP, so each in-flight probe needs a distinct id to
 // disambiguate its own reply (together with the peer address).

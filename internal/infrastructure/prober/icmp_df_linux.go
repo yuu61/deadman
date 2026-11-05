@@ -3,15 +3,12 @@ package prober
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"net"
 	"slices"
 	"syscall"
 
 	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
 )
 
@@ -61,21 +58,21 @@ func setLinuxDF(conn syscall.RawConn, family icmpFamily) error {
 	return nil
 }
 
-// An EMSGSIZE wakes the normal reader before its quoted request is read from the
-// error queue. Ignore it only when the queued error belongs to another probe.
-func (pr icmpProbe) skipForeignMTUError(conn syscall.RawConn, peer net.IP, recvErr error) bool {
-	if !pr.df || !errors.Is(recvErr, unix.EMSGSIZE) {
+// RECVERR wakes the normal reader for all queued errors, including unrelated
+// unreachable errors on raw sockets. Ignore only a successfully read foreign error.
+func (pr icmpProbe) skipForeignError(conn syscall.RawConn, peer net.IP, recvErr error) bool {
+	if !pr.df || recvErr == nil {
 		return false
 	}
 
-	matched, err := pr.receiveMTUError(conn, peer)
+	matched, err := pr.receiveQueuedError(conn, peer)
 
 	return !matched && err == nil
 }
 
 // Linux queues the offending request separately from normal ICMP input. This works
 // for ping datagram sockets and bypasses the raw socket's echo-only receive filter.
-func (pr icmpProbe) receiveMTUError(conn syscall.RawConn, peer net.IP) (bool, error) {
+func (pr icmpProbe) receiveQueuedError(conn syscall.RawConn, peer net.IP) (bool, error) {
 	buffer := make([]byte, echoReceiveSize(len(pr.token)))
 	oob := make([]byte, controlBufSize)
 
@@ -94,21 +91,21 @@ func (pr icmpProbe) receiveMTUError(conn syscall.RawConn, peer net.IP) (bool, er
 		recvErr = readErr
 
 		if readErr == nil {
-			matched = pr.matchMTUError(buffer[:n], oob[:oobn], dest, peer)
+			matched = pr.matchQueuedError(buffer[:n], oob[:oobn], dest, peer)
 		}
 	})
 	if err != nil {
 		return false, fmt.Errorf("read ICMP error queue: %w", err)
 	}
 
-	if recvErr != nil && !retryable(recvErr) {
+	if recvErr != nil {
 		return false, fmt.Errorf("receive ICMP error: %w", recvErr)
 	}
 
 	return matched, nil
 }
 
-func (pr icmpProbe) matchMTUError(data, oob []byte, dest unix.Sockaddr, peer net.IP) bool {
+func (pr icmpProbe) matchQueuedError(data, oob []byte, dest unix.Sockaddr, peer net.IP) bool {
 	if !sockaddrIP(dest).Equal(peer) || !pr.matchQuotedRequest(data) {
 		return false
 	}
@@ -118,7 +115,7 @@ func (pr icmpProbe) matchMTUError(data, oob []byte, dest unix.Sockaddr, peer net
 		return false
 	}
 
-	return slices.ContainsFunc(messages, pr.fam.mtuError)
+	return slices.ContainsFunc(messages, pr.fam.extendedError)
 }
 
 func (pr icmpProbe) matchQuotedRequest(data []byte) bool {
@@ -140,13 +137,13 @@ func (pr icmpProbe) matchQuotedEcho(echo *icmp.Echo) bool {
 		len(quoted) <= len(pr.token) && bytes.Equal(quoted, pr.token[:len(quoted)])
 }
 
-func (f icmpFamily) mtuError(message unix.SocketControlMessage) bool {
+func (f icmpFamily) extendedError(message unix.SocketControlMessage) bool {
 	level, option := unix.IPPROTO_IPV6, unix.IPV6_RECVERR
-	origin, kind, code := uint8(unix.SO_EE_ORIGIN_ICMP6), uint8(ipv6.ICMPTypePacketTooBig), uint8(0)
+	origin := uint8(unix.SO_EE_ORIGIN_ICMP6)
 
 	if f.domain == unix.AF_INET {
 		level, option = unix.IPPROTO_IP, unix.IP_RECVERR
-		origin, kind, code = unix.SO_EE_ORIGIN_ICMP, uint8(ipv4.ICMPTypeDestinationUnreachable), 4
+		origin = unix.SO_EE_ORIGIN_ICMP
 	}
 
 	if message.Header.Level != int32(level) || message.Header.Type != int32(option) {
@@ -156,9 +153,9 @@ func (f icmpFamily) mtuError(message unix.SocketControlMessage) bool {
 	var extended unix.SockExtendedErr
 
 	err := binary.Read(bytes.NewReader(message.Data), binary.NativeEndian, &extended)
-	if err != nil || !errors.Is(unix.Errno(extended.Errno), unix.EMSGSIZE) {
+	if err != nil || extended.Errno == 0 {
 		return false
 	}
 
-	return extended.Origin == origin && extended.Type == kind && extended.Code == code
+	return extended.Origin == origin || extended.Origin == unix.SO_EE_ORIGIN_LOCAL
 }

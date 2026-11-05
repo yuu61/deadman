@@ -82,7 +82,11 @@ func (p *icmpPinger) dfSocket(dest *net.IPAddr) (int, error) {
 
 	unix.CloseOnExec(fd)
 
-	err = unix.SetsockoptInt(fd, level, option, 1)
+	err = growDFSocketBuffers(fd, p.echo.Size.Bytes())
+	if err == nil {
+		err = unix.SetsockoptInt(fd, level, option, 1)
+	}
+
 	if err == nil {
 		err = p.bindDFSource(fd)
 	}
@@ -94,6 +98,30 @@ func (p *icmpPinger) dfSocket(dest *net.IPAddr) (int, error) {
 	}
 
 	return fd, nil
+}
+
+// BSD raw sockets may default to 8192 bytes, too small for a jumbo echo. Grow
+// both kernel buffers before sending, retaining any larger system defaults.
+func growDFSocketBuffers(fd, payload int) error {
+	size := echoSocketBufferSize(payload)
+
+	for _, option := range []int{unix.SO_SNDBUF, unix.SO_RCVBUF} {
+		current, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, option)
+		if err != nil {
+			return fmt.Errorf("get ICMP socket buffer: %w", err)
+		}
+
+		if current >= size {
+			continue
+		}
+
+		err = unix.SetsockoptInt(fd, unix.SOL_SOCKET, option, size)
+		if err != nil {
+			return fmt.Errorf("grow ICMP socket buffer: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (p *icmpPinger) bindDFSource(fd int) error {

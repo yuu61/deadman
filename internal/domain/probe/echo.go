@@ -27,7 +27,7 @@ type EchoOptions struct {
 // DirectPayloadSize is the native echo's default payload, including its reply token.
 const DirectPayloadSize = 24
 
-// RelayPayloadSize is the system ping's default payload length.
+// RelayPayloadSize is the default payload length Compile resolves for relays.
 const RelayPayloadSize = 56
 
 const maxEchoPayload = 65507 // An IPv4 packet minus its IP and ICMP headers.

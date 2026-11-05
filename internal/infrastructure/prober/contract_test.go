@@ -48,7 +48,7 @@ func TestRelayUsesCompiledFamilyWithoutLocalResolution(t *testing.T) {
 	}{
 		{probe.OSLinux, probe.FamilyIPv4, []string{"ping", "-4", "-c", "1", "-W", "1"}},
 		{probe.OSLinux, probe.FamilyIPv6, []string{"ping", "-6", "-c", "1", "-W", "1"}},
-		{probe.OSDarwin, probe.FamilyIPv6, []string{"ping6", "-c", "1"}},
+		{probe.OSDarwin, probe.FamilyIPv6, []string{"ping6", "-c", "1", "-s", "56"}},
 		{probe.OSFreeBSD, probe.FamilyIPv4, []string{"ping", "-4", "-c", "1", "-W", "1000"}},
 	} {
 		plan := compiled(
@@ -94,7 +94,7 @@ func TestRelayPassesTypedSource(t *testing.T) {
 					Source: probe.SourceAddr(netip.MustParseAddr("fe80::9%en0")),
 				},
 			},
-			[]string{"-S", "fe80::9%en0", "2001:db8::1"},
+			[]string{"-S", "fe80::9%en0", "-s", "56", "2001:db8::1"},
 		},
 		{
 			probe.Spec{

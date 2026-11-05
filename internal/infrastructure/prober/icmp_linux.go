@@ -393,7 +393,7 @@ func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) probe
 
 		recvUser := time.Now()
 
-		if readErr == nil && pr.skipForeignMTUError(rc, peer, rerr) {
+		if readErr == nil && pr.skipForeignError(rc, peer, rerr) {
 			continue
 		}
 

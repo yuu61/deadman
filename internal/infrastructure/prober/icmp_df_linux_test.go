@@ -56,7 +56,7 @@ func TestLinuxDFSocketOptions(t *testing.T) {
 	}
 }
 
-func mtuErrorOOB(t *testing.T, family icmpFamily, extended unix.SockExtendedErr) []byte {
+func extendedErrorOOB(t *testing.T, family icmpFamily, extended unix.SockExtendedErr) []byte {
 	t.Helper()
 
 	header := unix.Cmsghdr{Level: unix.IPPROTO_IPV6, Type: unix.IPV6_RECVERR}
@@ -81,7 +81,7 @@ func mtuErrorOOB(t *testing.T, family icmpFamily, extended unix.SockExtendedErr)
 	return oob
 }
 
-func TestLinuxMTUErrorMatching(t *testing.T) {
+func TestLinuxQueuedErrorMatching(t *testing.T) {
 	for _, address := range []string{"192.0.2.1", "2001:db8::1"} {
 		for _, privileged := range []bool{false, true} {
 			peer := net.ParseIP(address)
@@ -103,80 +103,108 @@ func TestLinuxMTUErrorMatching(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			extended := unix.SockExtendedErr{
-				Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_ICMP6,
-				Type: uint8(ipv6.ICMPTypePacketTooBig), Info: 1500,
-			}
-			if pr.fam.domain == unix.AF_INET {
-				extended.Origin, extended.Type, extended.Code = unix.SO_EE_ORIGIN_ICMP,
-					uint8(ipv4.ICMPTypeDestinationUnreachable), 4
-			}
-
-			oob := mtuErrorOOB(t, pr.fam, extended)
-			for _, length := range []int{8, 12, len(wire)} {
-				if !pr.matchMTUError(wire[:length], oob, dest, peer) {
-					t.Fatalf(
-						"%s raw=%v: matching MTU error with %d quoted bytes rejected",
-						address,
-						privileged,
-						length,
-					)
+			for _, extended := range queuedICMPErrors(pr.fam) {
+				oob := extendedErrorOOB(t, pr.fam, extended)
+				for _, length := range []int{8, 12, len(wire)} {
+					if !pr.matchQueuedError(wire[:length], oob, dest, peer) {
+						t.Fatalf(
+							"%s raw=%v: matching queued error with %d quoted bytes rejected: %+v",
+							address,
+							privileged,
+							length,
+							extended,
+						)
+					}
 				}
-			}
 
-			foreignID := bytes.Clone(wire)
-			foreignID[4] ^= 1
+				foreignID := bytes.Clone(wire)
+				foreignID[4] ^= 1
 
-			if pr.matchMTUError(foreignID, oob, dest, peer) == privileged {
-				t.Fatalf("%s raw=%v: wrong identifier matching", address, privileged)
-			}
-
-			for _, offset := range []int{0, 1, 6, 8, len(wire) - 1} {
-				foreign := bytes.Clone(wire)
-				foreign[offset] ^= 1
-
-				if pr.matchMTUError(foreign, oob, dest, peer) {
-					t.Fatalf(
-						"%s raw=%v: altered request byte %d accepted",
-						address,
-						privileged,
-						offset,
-					)
+				if pr.matchQueuedError(foreignID, oob, dest, peer) == privileged {
+					t.Fatalf("%s raw=%v: wrong identifier matching", address, privileged)
 				}
-			}
 
-			if pr.matchMTUError(wire[:7], oob, dest, peer) ||
-				pr.matchMTUError(wire, oob, nil, peer) ||
-				pr.matchMTUError(wire, oob, dest, net.ParseIP("192.0.2.2")) ||
-				pr.matchMTUError(wire, []byte{1}, dest, peer) {
-				t.Fatal("truncated or unrelated MTU error accepted")
-			}
+				for _, offset := range []int{0, 1, 6, 8, len(wire) - 1} {
+					foreign := bytes.Clone(wire)
+					foreign[offset] ^= 1
 
-			for _, wrong := range []unix.SockExtendedErr{
-				{Errno: uint32(unix.EHOSTUNREACH), Origin: extended.Origin, Type: extended.Type, Code: extended.Code},
-				{Errno: extended.Errno, Origin: unix.SO_EE_ORIGIN_LOCAL, Type: extended.Type, Code: extended.Code},
-				{Errno: extended.Errno, Origin: extended.Origin, Type: extended.Type + 1, Code: extended.Code},
-				{Errno: extended.Errno, Origin: extended.Origin, Type: extended.Type, Code: extended.Code + 1},
-			} {
-				if pr.matchMTUError(wire, mtuErrorOOB(t, pr.fam, wrong), dest, peer) {
-					t.Fatalf("unrelated extended error accepted: %+v", wrong)
+					if pr.matchQueuedError(foreign, oob, dest, peer) {
+						t.Fatalf(
+							"%s raw=%v: altered request byte %d accepted",
+							address,
+							privileged,
+							offset,
+						)
+					}
 				}
-			}
 
-			// A normal received echo must not be mistaken for a queued MTU error.
-			reply := icmp.Message{
-				Type: pr.fam.replyType,
-				Body: &icmp.Echo{ID: pr.id, Seq: pr.seq, Data: pr.token},
-			}
+				if pr.matchQueuedError(wire[:7], oob, dest, peer) ||
+					pr.matchQueuedError(wire, oob, nil, peer) ||
+					pr.matchQueuedError(wire, oob, dest, net.ParseIP("192.0.2.2")) ||
+					pr.matchQueuedError(wire, []byte{1}, dest, peer) {
+					t.Fatal("truncated or unrelated queued error accepted")
+				}
 
-			data, err := reply.Marshal(nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+				for _, wrong := range []unix.SockExtendedErr{
+					{Origin: extended.Origin, Type: extended.Type, Code: extended.Code},
+					{Errno: extended.Errno, Origin: unix.SO_EE_ORIGIN_NONE, Type: extended.Type, Code: extended.Code},
+				} {
+					if pr.matchQueuedError(wire, extendedErrorOOB(t, pr.fam, wrong), dest, peer) {
+						t.Fatalf("unrelated extended error accepted: %+v", wrong)
+					}
+				}
 
-			if pr.matchMTUError(data, oob, dest, peer) {
-				t.Fatal("echo reply accepted as an MTU error")
+				// A normal received echo must not be mistaken for a queued error.
+				reply := icmp.Message{
+					Type: pr.fam.replyType,
+					Body: &icmp.Echo{ID: pr.id, Seq: pr.seq, Data: pr.token},
+				}
+
+				data, err := reply.Marshal(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if pr.matchQueuedError(data, oob, dest, peer) {
+					t.Fatal("echo reply accepted as a queued error")
+				}
 			}
 		}
+	}
+}
+
+func queuedICMPErrors(family icmpFamily) []unix.SockExtendedErr {
+	if family.domain == unix.AF_INET {
+		return []unix.SockExtendedErr{
+			{
+				Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_ICMP,
+				Type: uint8(ipv4.ICMPTypeDestinationUnreachable), Code: 4, Info: 1500,
+			},
+			{
+				Errno: uint32(unix.EHOSTUNREACH), Origin: unix.SO_EE_ORIGIN_ICMP,
+				Type: uint8(ipv4.ICMPTypeDestinationUnreachable), Code: 1,
+			},
+			{
+				Errno: uint32(unix.ECONNREFUSED), Origin: unix.SO_EE_ORIGIN_ICMP,
+				Type: uint8(ipv4.ICMPTypeDestinationUnreachable), Code: 3,
+			},
+			{Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_LOCAL},
+		}
+	}
+
+	return []unix.SockExtendedErr{
+		{
+			Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_ICMP6,
+			Type: uint8(ipv6.ICMPTypePacketTooBig), Info: 1500,
+		},
+		{
+			Errno: uint32(unix.EHOSTUNREACH), Origin: unix.SO_EE_ORIGIN_ICMP6,
+			Type: uint8(ipv6.ICMPTypeDestinationUnreachable), Code: 3,
+		},
+		{
+			Errno: uint32(unix.ECONNREFUSED), Origin: unix.SO_EE_ORIGIN_ICMP6,
+			Type: uint8(ipv6.ICMPTypeDestinationUnreachable), Code: 4,
+		},
+		{Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_LOCAL},
 	}
 }

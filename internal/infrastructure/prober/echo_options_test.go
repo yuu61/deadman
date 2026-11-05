@@ -3,6 +3,7 @@ package prober
 import (
 	"net/netip"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -29,11 +30,11 @@ func TestRelayPingOptions(t *testing.T) {
 		}},
 		{probe.OSDarwin, "2001:db8::1", []string{
 			"env", "LC_ALL=C", "ping6", "-c", "1",
-			"-s", "8972", "-D", "2001:db8::1",
+			"-s", "8972", "-b", "49152", "-D", "2001:db8::1",
 		}},
 		{probe.OSFreeBSD, "2001:db8::1", []string{
 			"env", "LC_ALL=C", "ping", "-6", "-c", "1", "-W", "1000",
-			"-s", "8972", "-D", "2001:db8::1",
+			"-s", "8972", "-b", "49152", "-D", "2001:db8::1",
 		}},
 		{probe.OSJUNOS, "192.0.2.1", []string{
 			"ping", "192.0.2.1", "count", "1", "inet", "wait", "1",
@@ -57,6 +58,44 @@ func TestRelayPingOptions(t *testing.T) {
 		got := p.buildArgs()[len(p.wrapper):]
 		if !slices.Equal(got, tc.want) {
 			t.Errorf("%s %s: argv = %q, want %q", tc.os, tc.addr, got, tc.want)
+		}
+	}
+}
+
+func TestBSDIPv6RelayPayload(t *testing.T) {
+	for _, os := range []probe.OS{probe.OSDarwin, probe.OSFreeBSD} {
+		for _, size := range []probe.PayloadSize{{}, probe.PayloadBytes(56), probe.PayloadBytes(8)} {
+			p := subprocessFromPlan(t, probe.Spec{Addr: "2001:db8::1", Params: probe.SSH{
+				Host: "relay", OS: os, Echo: probe.EchoOptions{Size: size},
+			}})
+			args := p.buildArgs()
+
+			want := []string{"-s", strconv.Itoa(p.echo.Size.Bytes()), "2001:db8::1"}
+			if !slices.Equal(args[len(args)-len(want):], want) {
+				t.Errorf("%s size=%+v: argv = %q, want suffix %q", os, size, args, want)
+			}
+		}
+	}
+}
+
+func TestBSDIPv6RelayBufferWithoutDF(t *testing.T) {
+	for _, os := range []probe.OS{probe.OSDarwin, probe.OSFreeBSD} {
+		for _, tc := range []struct {
+			size   int
+			buffer string
+		}{
+			{8972, "49152"},
+			{65507, "131150"},
+		} {
+			p := subprocessFromPlan(t, probe.Spec{Addr: "2001:db8::1", Params: probe.SSH{
+				Host: "relay", OS: os, Echo: probe.EchoOptions{Size: probe.PayloadBytes(tc.size)},
+			}})
+			args := p.buildArgs()
+
+			want := []string{"-s", strconv.Itoa(tc.size), "-b", tc.buffer, "2001:db8::1"}
+			if !slices.Equal(args[len(args)-len(want):], want) {
+				t.Errorf("%s: argv = %q, want suffix %q", os, args, want)
+			}
 		}
 	}
 }

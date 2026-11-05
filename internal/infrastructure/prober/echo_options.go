@@ -8,8 +8,23 @@ import (
 
 func (p *subprocessPinger) echoArgs() []string {
 	var args []string
-	if size := p.echo.Size.Bytes(); size != probe.RelayPayloadSize {
+
+	size := p.echo.Size.Bytes()
+	bsdIPv6 := p.family == probe.FamilyIPv6 && (p.os == probe.OSDarwin || p.os == probe.OSFreeBSD)
+	// BSD IPv6 ping defaults to 8 bytes, while Compile resolves omission to 56.
+	if size != probe.RelayPayloadSize || bsdIPv6 {
 		args = append(args, "-s", strconv.Itoa(size))
+	}
+
+	// -b sets both buffers. Grow the 8 KiB send buffer while retaining ping's
+	// default 48 KiB receive capacity, including ancillary data and packet bursts.
+	const (
+		defaultBSDSendBuffer    = 8 * 1024
+		defaultBSDReceiveBuffer = 48 * 1024
+	)
+	if bsdIPv6 && echoReceiveSize(size) > defaultBSDSendBuffer {
+		buffer := max(defaultBSDReceiveBuffer, echoSocketBufferSize(size))
+		args = append(args, "-b", strconv.Itoa(buffer))
 	}
 
 	if p.echo.DF {
