@@ -227,6 +227,7 @@ func (m Model) growStatWidths(st monitor.Stats) Model {
 	if grew {
 		used := m.rowFixedWidth()
 		m.resW = max(m.colContentWidth()-used, minResultWidth)
+		m = m.refreshSplitGrid()
 	}
 
 	return m

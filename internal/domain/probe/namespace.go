@@ -57,6 +57,11 @@ func (n Namespace) resolve(m Method, dest Destination) (Namespace, error) {
 		return Namespace{}, fmt.Errorf("%s requires relay", m)
 	}
 
+	err := checkNUL("namespace name", n.Name)
+	if err != nil {
+		return Namespace{}, err
+	}
+
 	src, err := relaySource(OSLinux, n.Source)
 	if err != nil {
 		return Namespace{}, err

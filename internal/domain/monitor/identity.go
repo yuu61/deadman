@@ -18,9 +18,18 @@ import (
 // numbers a fresh table.
 type Numbering struct{ seen map[string]int }
 
+// NextID is the next row's ID without advancing the numbering. A caller that must build
+// an adapter using the ID can do so first, then call Next only after building succeeds.
+func (n *Numbering) NextID(plan probe.Plan) string {
+	path := plan.Identity()
+
+	return path + "#" + strconv.Itoa(n.seen[path]+1)
+}
+
 // Next builds the target of the table's next row, which probes by plan and shows name and
 // addr.
 func (n *Numbering) Next(plan probe.Plan, name, addr string) *Target {
+	id := n.NextID(plan)
 	if n.seen == nil {
 		n.seen = make(map[string]int)
 	}
@@ -28,7 +37,7 @@ func (n *Numbering) Next(plan probe.Plan, name, addr string) *Target {
 	path := plan.Identity()
 	n.seen[path]++
 
-	return NewTarget(path+"#"+strconv.Itoa(n.seen[path]), name, addr)
+	return NewTarget(id, name, addr)
 }
 
 // Carry continues each live target in the fresh target with the same ID: the fresh

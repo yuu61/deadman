@@ -55,6 +55,11 @@ func (s Source) normalize() (Source, error) {
 		return SourceAddr(a), nil
 	}
 
+	err := checkNUL("source", s.iface)
+	if err != nil {
+		return Source{}, err
+	}
+
 	if _, ok := ipLiteral(s.iface); ok {
 		return Source{}, fmt.Errorf("source interface %q is an IP address", s.iface)
 	}

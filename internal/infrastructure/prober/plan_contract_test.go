@@ -28,6 +28,8 @@ func addPlanSeeds(f *testing.F) {
 		{"-8", "-oProxyCommand=/tmp/x", "-x", "-l", "-i"},
 		{"192.0.2.1", "ops@admin@jump", "ns", "u", "p"},
 		{"192.0.2.1", "router_1.example", "ns", "u", "p"},
+		{"192.0.2.1", "jump", "ns\x00bad", "user\x00bad", "key\x00bad"},
+		{"fe80::1%eth\x00bad", "fe80::2%eth\x00bad", "ns", "eth0", "key"},
 	} {
 		f.Add(seed[0], seed[1], seed[2], seed[3], seed[4])
 	}

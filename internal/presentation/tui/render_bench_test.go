@@ -76,6 +76,37 @@ func BenchmarkView(b *testing.B) {
 	}
 }
 
+// Keep visible content constant while scaling the rows outside the viewport. Explicit
+// breaks should not require rebuilding all column indices on each redraw.
+func BenchmarkPaneView(b *testing.B) {
+	for _, count := range []int{1000, 10000} {
+		for _, pane := range []bool{false, true} {
+			b.Run(fmt.Sprintf("rows=%d/pane=%v", count, pane), func(b *testing.B) {
+				m := Model{
+					layout:    layout{width: 180, height: 40},
+					viewPrefs: viewPrefs{scale: 1, cols: 1},
+				}
+
+				for index := range count {
+					if pane && index == count/2 {
+						m.lines = append(m.lines, monitoring.ColumnBreak{})
+					}
+
+					m.lines = append(m.lines, monitoring.Blank{})
+				}
+
+				m = m.refreshSections().recalcWidths()
+
+				b.ReportAllocs()
+
+				for b.Loop() {
+					m.View()
+				}
+			})
+		}
+	}
+}
+
 func benchmarkHistory(failureEvery int) monitor.Snapshot {
 	target := monitor.NewTarget("row#1", "web", "example.com")
 

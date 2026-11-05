@@ -168,12 +168,12 @@ func (s *Service) buildRow(t config.Target, ids *monitor.Numbering) (entry, erro
 		return entry{}, err
 	}
 
-	target := ids.Next(plan, t.Name, plan.Destination().String())
-
-	p, err := s.ports.NewPinger(plan, target.Snapshot().ID)
+	p, err := s.ports.NewPinger(plan, ids.NextID(plan))
 	if err != nil {
 		return entry{}, err
 	}
+
+	target := ids.Next(plan, t.Name, plan.Destination().String())
 
 	return entry{target: target, plan: plan, pinger: p}, nil
 }

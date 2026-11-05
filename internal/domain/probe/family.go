@@ -57,6 +57,11 @@ func resolveFamily(dest Destination, family Family) (Family, error) {
 // address as IPv4. An IPv4 address has no zone, so a zoned mapped one would lose it and is
 // refused.
 func canonicalIP(raw string, a netip.Addr) (netip.Addr, error) {
+	err := checkNUL("IP address", raw)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+
 	if a.Is4In6() && a.Zone() != "" {
 		return netip.Addr{}, fmt.Errorf("IPv4-mapped address %q cannot have a zone", raw)
 	}

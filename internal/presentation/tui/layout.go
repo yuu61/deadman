@@ -15,8 +15,10 @@ type layout struct {
 	// shifting the result bar. Recomputed in recalcWidths.
 	statW map[string]int
 
-	scrollTop int // first visible row when the list exceeds the viewport; moved with j/k/g/G/PgUp/PgDn.
-	sections  []splitSection
+	scrollTop       int // first visible row when the list exceeds the viewport; moved with j/k/g/G/PgUp/PgDn.
+	sections        []splitSection
+	sectionCapacity int
+	grid            splitGrid // immutable column indices, refreshed when sections or the effective count change.
 }
 
 // recalcWidths recomputes the dynamic column widths and returns the updated model,
@@ -61,6 +63,8 @@ func (m Model) recalcWidths() Model {
 	// colContentWidth == m.width, so this matches the original full-width bar exactly.
 	used := m.rowFixedWidth()
 	m.resW = max(m.colContentWidth()-used, minResultWidth)
+
+	m = m.refreshSplitGrid()
 
 	return m
 }
@@ -119,7 +123,7 @@ func (m Model) effectiveCols() int {
 	if len(m.sections) > 0 {
 		fit := (m.width + colGutterWidth) / (m.minColumnWidth() + colGutterWidth)
 
-		return max(1, min(m.cols, fit, m.splitCapacity()))
+		return max(1, min(m.cols, fit, m.sectionCapacity))
 	}
 
 	// An empty row set (a config of only directives/comments, or a reload to a

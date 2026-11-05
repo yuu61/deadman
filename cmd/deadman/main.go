@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -66,8 +67,8 @@ type cliArgs struct {
 }
 
 // parseArgs parses the command line. Flags may appear before or after the configfile;
-// Go's flag package stops at the first non-flag argument, so we collect positionals and
-// re-parse the remainder to let flags and the configfile intermix.
+// Go's flag package stops at the first non-flag argument, so parseIntermixed passes it
+// each option and its value while collecting positionals and honoring the -- terminator.
 func parseArgs(args []string) (cliArgs, error) {
 	fs := flag.NewFlagSet("deadman", flag.ContinueOnError)
 	scaleUsage := fmt.Sprintf(
@@ -137,21 +138,49 @@ func parseArgs(args []string) (cliArgs, error) {
 func parseIntermixed(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 
-	rest := args
-	for {
-		err := fs.Parse(rest)
+	for len(args) > 0 {
+		arg := args[0]
+		if arg == "--" {
+			return append(positional, args[1:]...), nil
+		}
+
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positional = append(positional, arg)
+			args = args[1:]
+
+			continue
+		}
+
+		count := min(optionArgCount(fs, arg), len(args))
+
+		err := fs.Parse(args[:count])
 		if err != nil {
 			return nil, err
 		}
 
-		rest = fs.Args()
-		if len(rest) == 0 {
-			return positional, nil
-		}
-
-		positional = append(positional, rest[0])
-		rest = rest[1:]
+		args = args[count:]
 	}
+
+	return positional, nil
+}
+
+// optionArgCount includes a separate value only for a known non-boolean flag. Parse
+// itself remains responsible for invalid options, missing values and value syntax.
+func optionArgCount(fs *flag.FlagSet, arg string) int {
+	name := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
+	name, _, inline := strings.Cut(name, "=")
+
+	option := fs.Lookup(name)
+	if option == nil || inline {
+		return 1
+	}
+
+	boolean, ok := option.Value.(interface{ IsBoolFlag() bool })
+	if ok && boolean.IsBoolFlag() {
+		return 1
+	}
+
+	return 2
 }
 
 // flagGiven reports whether a flag under any of names was actually given on the command

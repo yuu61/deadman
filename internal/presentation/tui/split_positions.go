@@ -53,28 +53,32 @@ func (m Model) refreshSections() Model {
 	}
 
 	m.sections = sections
+	m.sectionCapacity = 0
+	m.grid = splitGrid{}
+
+	for _, section := range sections {
+		m.sectionCapacity += max(1, len(section.indices))
+	}
+
+	m = m.refreshSplitGrid()
 
 	return m
 }
 
-func (m Model) splitGrid() splitGrid {
-	grid := splitGrid{columns: m.splitColumns(m.effectiveCols())}
-	for _, column := range grid.columns {
-		grid.rows = max(grid.rows, len(column.indices))
+// refreshSplitGrid keeps placement off the redraw path. A new grid owns fresh slices;
+// older model values may still read their grid while the next model is being prepared.
+func (m Model) refreshSplitGrid() Model {
+	cols := m.effectiveCols()
+	if len(m.sections) == 0 || len(m.grid.columns) == cols {
+		return m
 	}
 
-	return grid
-}
-
-// splitCapacity counts the columns the content can fill. A guide provides a
-// preferred break; it must not cap the number of columns requested by the user.
-func (m Model) splitCapacity() int {
-	capacity := 0
-	for _, section := range m.sections {
-		capacity += max(1, len(section.indices))
+	m.grid = splitGrid{columns: m.splitColumns(cols)}
+	for _, column := range m.grid.columns {
+		m.grid.rows = max(m.grid.rows, len(column.indices))
 	}
 
-	return capacity
+	return m
 }
 
 // splitColumns lays the sections out side by side in cols columns. With enough
@@ -185,7 +189,7 @@ func partitionSection(section splitSection, parts int) []splitSection {
 }
 
 func (m Model) splitViewport() viewport {
-	grid := m.splitGrid()
+	grid := m.grid
 	cols := m.effectiveCols()
 
 	usable := m.usableRows()
@@ -214,7 +218,7 @@ func (m Model) splitViewport() viewport {
 
 func (m Model) renderSplitPositions(vp viewport) string {
 	width := m.colContentWidth()
-	grid := m.splitGrid()
+	grid := m.grid
 	blocks := make([][]string, vp.cols)
 
 	for column := range blocks {
@@ -242,7 +246,7 @@ func (m Model) splitCell(grid splitGrid, row, column, width int) string {
 
 func (m Model) splitScrollStatus(vp viewport) string {
 	text := fmt.Sprintf("%s[%d-%d/%d] j/k scroll  PgUp/PgDn page  g/G top/bottom", rear,
-		vp.top+1, vp.top+vp.count, m.splitGrid().rows)
+		vp.top+1, vp.top+vp.count, m.grid.rows)
 
 	return styleBold.Render(strings.TrimRight(padCell(text, m.width), " "))
 }

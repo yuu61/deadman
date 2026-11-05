@@ -151,6 +151,16 @@ func (s SSH) normalizeRelay() (SSH, error) {
 
 	s.Host = normalized
 
+	err = checkNUL("ssh user", s.User)
+	if err != nil {
+		return s, err
+	}
+
+	err = checkNUL("ssh key", s.Key)
+	if err != nil {
+		return s, err
+	}
+
 	return s, nil
 }
 

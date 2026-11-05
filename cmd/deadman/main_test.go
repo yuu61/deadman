@@ -111,12 +111,45 @@ func TestParseArgsRejectsMultipleConfigs(t *testing.T) {
 	cases := [][]string{
 		{"a.conf", "b.conf"},
 		{"--", "-a", "cfg.conf"}, // previously dropped cfg.conf and ran "-a".
+		{"--", "cfg.conf", "-a"},
+		{"--", "cfg.conf", "--format", "-w"},
+		{"cfg.conf", "--", "--format", "-w"},
 	}
 	for _, args := range cases {
 		_, err := parseArgs(args)
 		if err == nil {
 			t.Errorf("parseArgs(%v) = nil error, want rejection of multiple configfiles", args)
 		}
+	}
+}
+
+func TestParseArgsTerminatorAndFlagValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		path string
+		log  string
+	}{
+		{"option-like path", []string{"--", "-a"}, "-a", ""},
+		{"terminator after flags", []string{"-l", "logs", "--", "-w"}, "-w", "logs"},
+		{"terminator as value", []string{"-l", "--", "cfg.conf", "-a"}, "cfg.conf", "--"},
+		{"inline value", []string{"--logging=--", "cfg.conf", "-a"}, "cfg.conf", "--"},
+		{"single dash path", []string{"-"}, "-", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseArgs(tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got.ConfigPath != tc.path || got.LogDir != tc.log {
+				t.Fatalf("path=%q log=%q, want %q/%q", got.ConfigPath, got.LogDir, tc.path, tc.log)
+			}
+
+			if tc.log == "--" && !got.Async {
+				t.Fatal("a flag value ended option parsing")
+			}
+		})
 	}
 }
 

@@ -207,6 +207,62 @@ func TestBadTargetIsStaticRejectedRow(t *testing.T) {
 	}
 }
 
+func TestRejectedDuplicateDoesNotConsumeID(t *testing.T) {
+	var assigned []string
+
+	rejectFirst := false
+	src := source(config.Target{Name: "same", Addr: "192.0.2.1"})
+	log := &recordingLog{}
+	svc := NewService(Ports{
+		NewPinger: func(_ probe.Plan, id string) (probe.Pinger, error) {
+			assigned = append(assigned, id)
+
+			if rejectFirst {
+				rejectFirst = false
+
+				return nil, errUnbuildable
+			}
+
+			return downPinger{}, nil
+		},
+		LoadConfig: src.load,
+		Host:       capable,
+		Log:        log,
+	})
+	s, _ := openSession(t, svc, false)
+	old := s.gen.rows[0].target
+	old.Consume(probe.SuccessResult(8))
+
+	src.cfg.Lines = append(src.cfg.Lines, src.cfg.Lines[0])
+	rejectFirst = true
+
+	if out := reload(s); out.Reload == nil || !out.Reload.Applied {
+		t.Fatal("reload was not applied")
+	}
+
+	if len(s.gen.rows) != 1 {
+		t.Fatalf("built %d rows, want only the successful duplicate", len(s.gen.rows))
+	}
+
+	row := s.gen.rows[0].target
+	if row.Snapshot().ID != old.Snapshot().ID || row.Snapshot().Snt != 1 {
+		t.Fatalf(
+			"rejected predecessor changed the surviving row's identity or history: %+v",
+			row.Snapshot(),
+		)
+	}
+
+	s.record(row, probe.SuccessResult(9), time.Now())
+
+	if assigned[0] != assigned[1] || assigned[0] != assigned[2] || log.lines[0].id != assigned[2] {
+		t.Fatalf(
+			"factory and log identities differ: assigned=%q logged=%q",
+			assigned,
+			log.lines[0].id,
+		)
+	}
+}
+
 // A line whose attributes describe no probe (here an unknown probe=) is rejected with the
 // parser's reason and never reaches the adapter factory.
 func TestMalformedLineDoesNotReachPingerFactory(t *testing.T) {

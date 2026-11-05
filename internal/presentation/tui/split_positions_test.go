@@ -137,7 +137,7 @@ func TestFewerColumnsStackWholeSections(t *testing.T) {
 	width := 3*m.minColumnWidth() + 2*colGutterWidth - 1
 
 	m, out := drive(t, m, tea.WindowSizeMsg{Width: width, Height: 100})
-	if m.effectiveCols() != 2 || m.splitGrid().rows != 61 || strings.Count(out, "HOSTNAME") != 2 {
+	if m.effectiveCols() != 2 || m.grid.rows != 61 || strings.Count(out, "HOSTNAME") != 2 {
 		t.Fatalf("want LAN alone and WAN with NOC beside it: %q", out)
 	}
 
@@ -301,6 +301,30 @@ func TestSplitPositionProbeIndicators(t *testing.T) {
 		if snapshotAt(t, m, 2).Snt != 1 || snapshotAt(t, m, 5).Snt != 0 {
 			t.Fatalf("result went to another section, async=%v: %q", async, out)
 		}
+	}
+}
+
+func TestSplitPositionsFollowGrowingStatWidths(t *testing.T) {
+	m := newModel(t, positionedSpecs(), testOptions{Cols: 2})
+	m = m.recalcWidths()
+	width := 2*m.minColumnWidth() + colGutterWidth
+	m, _ = drive(t, m, tea.WindowSizeMsg{Width: width, Height: 20})
+
+	if m.effectiveCols() != 2 {
+		t.Fatal("expected two columns before the statistics grew")
+	}
+
+	m, out := drive(t, m, answer{row: 1, res: probe.SuccessResult(100000)})
+	if m.effectiveCols() != 1 || strings.Count(out, "HOSTNAME") != 1 ||
+		!strings.Contains(out, "server") {
+		t.Fatalf("growing statistics did not restack every section into one column: %q", out)
+	}
+
+	// Resetting the statistics restores the original width and two-column placement.
+	m, out = drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if m.effectiveCols() != 2 || strings.Count(out, "HOSTNAME") != 2 ||
+		!strings.Contains(out, "server") {
+		t.Fatalf("reset did not restore both columns: %q", out)
 	}
 }
 
