@@ -34,11 +34,8 @@ var (
 	reNoReply   = regexp.MustCompile(
 		`(?m)\b[1-9]\d* packets? transmitted, 0 (?:packets? )?received\b`,
 	)
-	reReceived = regexp.MustCompile(
-		`(?m)\b[1-9]\d* packets? transmitted, [1-9]\d* (?:packets? )?received\b`,
-	)
 	rePingError = regexp.MustCompile(
-		`(?i)\+[1-9]\d* errors?\b|message too long|packet too (?:big|large)|frag(?:mentation)? needed|cannot fragment`,
+		`(?i)message too long|packet too (?:big|large)|frag(?:mentation)? needed|cannot fragment`,
 	)
 )
 
@@ -53,8 +50,8 @@ type subprocessPinger struct {
 	family   probe.Family // the family the ping runs in, fixed by the plan.
 	source   probe.Source
 	echo     probe.EchoOptions
-	iface    string
-	instance string
+	iface    probe.CLIWord // JUNOS egress interface.
+	instance probe.CLIWord // JUNOS routing instance.
 	timeout  time.Duration
 	// ssh: the ping's argv reaches the relay's shell as one command line, and an
 	// ssh-level failure (exit 255) is the relay's, not the target's.
@@ -268,10 +265,11 @@ func sshArgs(s probe.SSH) []string {
 	return append(cmd, s.Host)
 }
 
-// sourceFlags maps each relay OS whose remote `ping` takes a source to that flag: -I on
-// Linux (an address or an interface), -S on Darwin (an address). Which sources each
-// dialect takes is Compile's rule, which a plan has passed; this is only their spelling
-// (a test checks every dialect Compile gives a source has one).
+// sourceFlags maps each relay OS whose remote `ping` takes a source as a flag to that flag:
+// -I on Linux (an address or an interface), -S on Darwin (an address). JUNOS takes a
+// source as a CLI keyword instead (junosCommand). Which sources each dialect takes is
+// Compile's rule, which a plan has passed; this is only their spelling (a test checks that
+// every dialect Compile gives a source has one).
 var sourceFlags = map[probe.OS]string{probe.OSLinux: "-I", probe.OSDarwin: "-S"}
 
 // sourceArgs returns the remote ping's source flag and value, or nil when no source is
@@ -334,8 +332,9 @@ func parsePingResult(out output) probe.Result {
 	return result
 }
 
-// parsePingOutput recognizes a reply's RTT or ping's sent/received summary.
-// Short payloads cannot hold ping's timestamp: their replies have no RTT and use 0 ms.
+// parsePingOutput recognizes a reply's RTT, or ping's summary of an echo that got no reply.
+// A reply with no RTT is not a measurement: Compile keeps payloads too small to hold ping's
+// timestamp out, so this is output the parser does not know, and it is unavailable.
 func parsePingOutput(out string) probe.Result {
 	var rtt float64
 
@@ -349,10 +348,6 @@ func parsePingOutput(out string) probe.Result {
 
 	if matched {
 		return probe.SuccessResult(rtt)
-	}
-
-	if reReceived.MatchString(out) {
-		return probe.SuccessResult(0)
 	}
 
 	if reNoReply.MatchString(out) && !rePingError.MatchString(out) {

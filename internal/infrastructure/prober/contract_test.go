@@ -160,6 +160,37 @@ func TestIPv4MappedTargetsReachToolsAsIPv4(t *testing.T) {
 // Every relay dialect Compile gives a source has the flag that passes it, so the source
 // reaches the relay's ping instead of being dropped.
 func TestEverySourceCompileAdmitsHasAFlag(t *testing.T) {
+	// JUNOS spells the source as a CLI keyword, not a flag.
+	for _, src := range []probe.Source{
+		probe.SourceAddr(netip.MustParseAddr("192.0.2.9")),
+		probe.SourceInterface("eth1"),
+	} {
+		plan, err := probe.Compile(probe.Spec{
+			Addr:   "192.0.2.1",
+			Params: probe.SSH{Host: "jump", OS: probe.OSJUNOS, Source: src},
+		})
+		if err != nil {
+			continue // Compile refuses this source on this dialect.
+		}
+
+		p, err := New(plan, "row#1")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		sp, ok := p.(*subprocessPinger)
+		if !ok {
+			t.Fatalf("unexpected %T", p)
+		}
+
+		args := sp.buildArgs()
+		i := slices.Index(args, "source")
+
+		if i < 0 || i+1 >= len(args) || args[i+1] != src.String() {
+			t.Errorf("JUNOS relay with source %s ran %v", src, args)
+		}
+	}
+
 	sources := []probe.Source{
 		probe.SourceAddr(netip.MustParseAddr("192.0.2.9")),
 		probe.SourceInterface("eth1"),

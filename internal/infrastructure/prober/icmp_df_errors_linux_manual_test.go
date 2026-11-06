@@ -3,8 +3,8 @@
 package prober
 
 import (
+	"encoding/binary"
 	"net"
-	"strconv"
 	"testing"
 	"time"
 
@@ -15,66 +15,104 @@ import (
 	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
-// Inject errors on loopback so the test needs CAP_NET_RAW, but no routed test
-// network. The raw socket must ignore a foreign error and still receive its reply.
-func TestICMPForeignExtendedErrors(t *testing.T) {
-	for _, code := range []int{1, 3} { // Host unreachable and port unreachable.
-		for _, foreign := range []bool{false, true} {
-			t.Run(strconv.Itoa(code)+"/foreign="+strconv.FormatBool(foreign), func(t *testing.T) {
-				peer := net.IPv4(127, 0, 0, 1)
-				pr := icmpProbe{
-					fam: familyOf(peer), privileged: true, df: true,
-					id: nextProbeID(), seq: 1, token: echoPayload(probe.DirectPayloadSize),
-				}
-				p := &icmpPinger{echo: probe.EchoOptions{DF: true}}
+const icmpFragNeeded = 4
 
-				conn, err := p.dial(pr.fam, unix.SOCK_RAW, pr.id)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer func() { discard(conn.f.Close()) }()
+// Inject errors on loopback so the test needs CAP_NET_RAW, but no routed test network.
+// Only an error saying the datagram is too big is a result; any other error, and any error
+// for another probe, is ignored while the raw socket still receives its reply.
+func TestICMPQueuedErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// errors are injected in order, each as (ICMP code, whether it quotes our echo).
+		errors []injectedError
+		want   probe.ResultCode
+	}{
+		{"own frag needed", []injectedError{{icmpFragNeeded, true}}, probe.Unavailable},
+		{"foreign frag needed", []injectedError{{icmpFragNeeded, false}}, probe.Success},
+		{"own host unreachable", []injectedError{{1, true}}, probe.Success},
+		{"own port unreachable", []injectedError{{3, true}}, probe.Success},
+		{"foreign host unreachable", []injectedError{{1, false}}, probe.Success},
+		// The queue holds the other row's error ahead of ours: every entry must be read.
+		{
+			"own frag needed behind foreign errors",
+			[]injectedError{{1, false}, {3, false}, {icmpFragNeeded, true}},
+			probe.Unavailable,
+		},
+		{
+			"own frag needed behind own unreachable",
+			[]injectedError{{1, true}, {icmpFragNeeded, true}},
+			probe.Unavailable,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			peer := net.IPv4(127, 0, 0, 1)
+			pr := icmpProbe{
+				fam: familyOf(peer), privileged: true, df: true,
+				id: nextProbeID(), seq: 1, token: echoPayload(probe.DirectPayloadSize),
+			}
+			p := &icmpPinger{echo: probe.EchoOptions{DF: true}}
 
-				err = conn.f.SetDeadline(time.Now().Add(icmpTimeout))
-				if err != nil {
-					t.Fatal(err)
-				}
+			conn, err := p.dial(pr.fam, unix.SOCK_RAW, pr.id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { discard(conn.f.Close()) }()
 
-				var config net.ListenConfig
+			err = conn.f.SetDeadline(time.Now().Add(icmpTimeout))
+			if err != nil {
+				t.Fatal(err)
+			}
 
-				injector, err := config.ListenPacket(t.Context(), "ip4:icmp", peer.String())
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer injector.Close()
+			var config net.ListenConfig
 
+			injector, err := config.ListenPacket(t.Context(), "ip4:icmp", peer.String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer injector.Close()
+
+			start := time.Now()
+
+			for _, injected := range tc.errors {
 				quoted := pr
-				if foreign {
+				if !injected.own {
 					quoted.id = nextProbeID()
 				}
 
-				data := quotedIPv4Echo(t, quoted, peer)
-				start := time.Now()
-
 				injectICMP(t, injector, peer, icmp.Message{
-					Type: ipv4.ICMPTypeDestinationUnreachable, Code: code,
-					Body: &icmp.DstUnreach{Data: data},
+					Type: ipv4.ICMPTypeDestinationUnreachable, Code: injected.code,
+					Body: &icmp.RawBody{Data: unreachableBody(quotedIPv4Echo(t, quoted, peer))},
 				})
-				injectICMP(t, injector, peer, icmp.Message{
-					Type: pr.fam.replyType,
-					Body: &icmp.Echo{ID: pr.id, Seq: pr.seq, Data: pr.token},
-				})
+			}
 
-				want := probe.Unavailable
-				if foreign {
-					want = probe.Success
-				}
-
-				if result := pr.recv(conn.rc, peer, start); result.Code != want {
-					t.Fatalf("result = %+v, want %v", result, want)
-				}
+			injectICMP(t, injector, peer, icmp.Message{
+				Type: pr.fam.replyType,
+				Body: &icmp.Echo{ID: pr.id, Seq: pr.seq, Data: pr.token},
 			})
-		}
+
+			if result := pr.recv(conn.rc, peer, start); result.Code != tc.want {
+				t.Fatalf("result = %+v, want %v", result, tc.want)
+			}
+		})
 	}
+}
+
+type injectedError struct {
+	code int
+	own  bool
+}
+
+// unreachableBody is a Destination Unreachable's body: two unused bytes, a next-hop MTU, and
+// the quoted packet. The kernel caches an MTU a Frag needed reports for the route, and loopback
+// is every probe's route, so the MTU is one just under loopback's: a smaller one would make
+// later jumbo probes on this host fail until the cache entry expires.
+func unreachableBody(quoted []byte) []byte {
+	const nextHopMTU = 65535
+
+	body := make([]byte, 2, 4+len(quoted)) // The two unused bytes.
+	body = binary.BigEndian.AppendUint16(body, nextHopMTU)
+
+	return append(body, quoted...)
 }
 
 func quotedIPv4Echo(t *testing.T, pr icmpProbe, peer net.IP) []byte {

@@ -6,9 +6,26 @@ import (
 	"strings"
 )
 
+// CLIWord is an optional value the JUNOS CLI takes as one word (interface=, instance=). The
+// zero value is an omitted one. A word written empty is a set one, which Compile refuses
+// instead of reading it as an omission.
+type CLIWord struct {
+	text string
+	set  bool
+}
+
+// CLIWordOf is an explicitly configured word.
+func CLIWordOf(text string) CLIWord { return CLIWord{text: text, set: true} }
+
+// IsSet reports whether the word was given.
+func (w CLIWord) IsSet() bool { return w.set }
+
+// String returns the word as written, or "" when omitted.
+func (w CLIWord) String() string { return w.text }
+
 // compileOptions checks conditions whose availability depends on the relay dialect.
 func (s SSH) compileOptions(dest Destination) (SSH, error) {
-	if s.OS != OSJUNOS && (s.Interface != "" || s.Instance != "") {
+	if s.OS != OSJUNOS && (s.Interface.IsSet() || s.Instance.IsSet()) {
 		return s, errors.New("interface and instance require os=JUNOS")
 	}
 
@@ -17,7 +34,7 @@ func (s SSH) compileOptions(dest Destination) (SSH, error) {
 		return s, err
 	}
 
-	echo, err := s.Echo.normalizeRelay(s.OS, s.Family)
+	echo, err := s.Echo.normalizeRelay(s.OS)
 	if err != nil {
 		return s, err
 	}
@@ -41,9 +58,17 @@ func (s SSH) checkCLIWords(dest Destination) error {
 		return nil
 	}
 
-	for _, word := range []string{dest.String(), s.Source.String(), s.Interface, s.Instance} {
+	for _, word := range []string{
+		dest.String(), s.Source.String(), s.Interface.String(), s.Instance.String(),
+	} {
 		if strings.IndexFunc(word, junosSpecial) >= 0 {
 			return fmt.Errorf("invalid JUNOS ping value %q: expected a CLI word", word)
+		}
+	}
+
+	for _, word := range []CLIWord{s.Interface, s.Instance} {
+		if word.set && word.text == "" {
+			return errors.New("invalid JUNOS ping value \"\": expected a CLI word")
 		}
 	}
 

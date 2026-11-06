@@ -24,12 +24,14 @@ func TestParseTargetPingOptions(t *testing.T) {
 	}
 
 	link := params[probe.SSH](t, target(t, cfg, 1).Params)
-	if link.Interface != "ge-0/0/0.0" || link.Timeout.Duration() != 7500*time.Millisecond {
+
+	wantTimeout := 7500 * time.Millisecond
+	if link.Interface != probe.CLIWordOf("ge-0/0/0.0") || link.Timeout.Duration() != wantTimeout {
 		t.Fatalf("link = %+v", link)
 	}
 
 	vrf := params[probe.SSH](t, target(t, cfg, 2).Params)
-	if vrf.Instance != "MGMT" || vrf.Source.String() != "192.0.2.2" {
+	if vrf.Instance != probe.CLIWordOf("MGMT") || vrf.Source.String() != "192.0.2.2" {
 		t.Fatalf("vrf = %+v", vrf)
 	}
 
@@ -44,6 +46,7 @@ func TestParseTargetPingOptions(t *testing.T) {
 func TestCheckRejectsInvalidPingOptions(t *testing.T) {
 	for _, attrs := range []string{
 		"size=huge", "size=0", "size=65508", "size=1.5", "df=maybe", "size=24 size=48", "df=",
+		"probe=ssh relay=r os=Linux size=15",
 		"probe=tcp port=443 size=8972", "probe=quic df=yes", "interface=eth0",
 		"probe=ssh relay=r os=Linux instance=MGMT",
 		"probe=ssh relay=r os=JUNOS timeout=0", "probe=ssh relay=r os=JUNOS timeout=-1",

@@ -9,8 +9,9 @@ import (
 	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
-// sendPortable sends a native ICMP echo, using sockets with payload-sized buffers
-// on BSD and pro-bing elsewhere. Linux replaces this with a synchronous,
+// sendPortable sends a native ICMP echo. A do-not-fragment echo, and on BSD one too big for a
+// raw socket's default space, use sockets with payload-sized buffers; every other echo uses
+// pro-bing, or sendScoped for a zoned source. Linux replaces this with a synchronous,
 // kernel-timestamped prober (icmp_linux.go); see that file for why.
 func (p *icmpPinger) sendPortable(ctx context.Context) probe.Result {
 	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
@@ -22,9 +23,7 @@ func (p *icmpPinger) sendPortable(ctx context.Context) probe.Result {
 		return probe.UnavailableResult()
 	}
 
-	// pro-bing cannot grow BSD's small socket buffers, even with DF disabled.
-	// This path also handles scoped sources before the pro-bing scope workaround.
-	if nativeBSDEcho || p.echo.DF {
+	if needsNativeEcho(p.echo, nativeBSDEcho) {
 		return p.sendNativeEcho(ctx, dest)
 	}
 

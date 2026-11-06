@@ -90,8 +90,8 @@ type SSH struct {
 	User      string // user=: the ssh login user.
 	Key       string // key=: the ssh identity file.
 	Echo      EchoOptions
-	Interface string // interface=: JUNOS egress interface.
-	Instance  string // instance=: JUNOS routing instance.
+	Interface CLIWord // interface=: JUNOS egress interface.
+	Instance  CLIWord // instance=: JUNOS routing instance.
 	Timeout   Timeout
 }
 
@@ -180,15 +180,13 @@ func (s SSH) identity(b *strings.Builder) {
 	writeKey(b, s.Family.resolveSpelling())
 	s.Echo.identity(b, RelayPayloadSize)
 
-	if s.Interface != "" {
-		writeKey(b, "interface="+s.Interface)
+	if s.Interface.IsSet() {
+		writeKey(b, "interface="+s.Interface.String())
 	}
 
-	if s.Instance != "" {
-		writeKey(b, "instance="+s.Instance)
+	if s.Instance.IsSet() {
+		writeKey(b, "instance="+s.Instance.String())
 	}
-
-	s.Timeout.identity(b, s.DefaultTimeout())
 }
 
 // relaySource checks a source against the relay ping's dialect: Linux's -I takes an

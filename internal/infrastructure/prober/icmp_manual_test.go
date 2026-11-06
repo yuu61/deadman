@@ -33,7 +33,7 @@ func TestICMPLoopback(t *testing.T) {
 func TestICMPJumboLoopback(t *testing.T) {
 	for _, address := range []string{"127.0.0.1", "::1"} {
 		for _, df := range []bool{false, true} {
-			if df && !nativeDFAvailable() {
+			if df && !nativeDFSupported {
 				continue
 			}
 

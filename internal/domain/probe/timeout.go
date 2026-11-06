@@ -2,7 +2,6 @@ package probe
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -31,18 +30,8 @@ func (t Timeout) normalize(def time.Duration) (Timeout, error) {
 	return TimeoutAfter(d), nil
 }
 
-func (t Timeout) identity(b *strings.Builder, def time.Duration) {
-	if t.duration != def {
-		writeKey(b, "timeout="+t.duration.String())
-	}
-}
-
 // DefaultTimeout is the overall SSH deadline, including login and ping startup.
 func (s SSH) DefaultTimeout() time.Duration {
-	if s.OS == OSJUNOS {
-		return junosTimeout
-	}
-
 	if s.OS == OSDarwin && s.Family == FamilyIPv6 {
 		return darwinIPv6Timeout
 	}
@@ -51,7 +40,6 @@ func (s SSH) DefaultTimeout() time.Duration {
 }
 
 const (
-	junosTimeout = 3 * time.Second
 	// Darwin ping6 waits about 10 seconds for an unanswered echo, with no wait flag.
 	// Allow its summary to arrive so target loss is not mistaken for a relay timeout.
 	darwinIPv6Timeout = 15 * time.Second

@@ -222,7 +222,7 @@ QUIC ハンドシェイクが完了するまでの時間を RTT として測り�
 - `source=` は、Linux ではアドレスとインタフェース名、Darwin / JUNOS ではアドレスだけ使えます。FreeBSD では指定できません。
 - 宛先がホスト名なら、`resolve_family` か送信元アドレスが必須です。名前は中継先で解決します。
 - `interface=` と `instance=` は JUNOS 専用です。それぞれ `interface` と `routing-instance` として渡します。JUNOS の宛先・送信元・この 2 属性は、英数字と `-`・`_`・`.`・`/`・`:`・`%` の単語だけを受け付けます。CLI のパイプやコマンド区切りは使えません。
-- `timeout=秒数` は SSH 接続と ping を含む全体の制限時間です。正の小数も使えます（例: `timeout=7.5`）。既定値は JUNOS が 3 秒、Darwin の IPv6 が 15 秒、それ以外が 5 秒です。ping 自体の応答待ち時間や SSH の接続待ち 3 秒は変えません。
+- `timeout=秒数` は SSH 接続と ping を含む全体の制限時間です。正の小数も使えます（例: `timeout=7.5`）。既定値は Darwin の IPv6 が 15 秒、それ以外（JUNOS を含む）が 5 秒です。ping 自体の応答待ち時間や SSH の接続待ち 3 秒は変えません。
 
 ```text
 ll-via-rtr   fe80::1      probe=ssh relay=198.51.100.1 os=JUNOS interface=ge-0/0/0.0
@@ -271,11 +271,11 @@ SNMPv2c でエージェントに RFC 4560（DISMAN-PING-MIB）の ping を依頼
 
 `direct` / `ssh` / `netns` / `vrf` で使えます。TCP・QUIC・nexthop・RouterOS・SNMP には指定できません。
 
-- `size=バイト数` は、IP ヘッダーと ICMP ヘッダーを除くペイロードの長さです。上限は 65507 バイト（JUNOS は 65468 バイト）です。直接 ICMP は返信を識別する情報を収めるため 24 バイト以上、中継先の ping は 0 バイト以上（Darwin / FreeBSD の IPv6 は 1 バイト以上）を受け付けます。既定は直接 ICMP が 24、中継先の ping が 56 バイトです。短いペイロードで中継先の ping が RTT を出力しない場合も、受信数から成功と判定し、RTT は 0 ms として記録します。
+- `size=バイト数` は、IP ヘッダーと ICMP ヘッダーを除くペイロードの長さです。上限は 65507 バイト（JUNOS は 65468 バイト）です。直接 ICMP は返信を識別する情報を収めるため 24 バイト以上、中継先の ping は 16 バイト以上を受け付けます。中継先の ping は送信時刻をペイロードに入れて RTT を出すため、それより短いと RTT の無い返信になり、0 ms と見分けがつかないからです。既定は直接 ICMP が 24、中継先の ping が 56 バイトです。
 - `df=on|off` は断片化を禁止するかです。`true` / `false`、`yes` / `no`、`1` / `0` も、大文字小文字を区別せずに受け付けます。既定は `off`（OS の標準動作）です。
 - Linux の中継先には `-s` / `-M do`、Darwin / FreeBSD には `-s` / `-D`、JUNOS には `size` / `do-not-fragment` として渡します。JUNOS の IPv6 では `df` を無視し、IPv4 でだけ `do-not-fragment` を付けます。
 - 直接 ICMP は外部の ping を使いません。`df=on` は Linux / macOS / FreeBSD に対応し、Windows などの非対応 OS では構築エラーです。
-- MTU 9000 の経路を調べる例は IPv4 で `size=8972 df=1`、IPv6 で `size=8952 df=1` です。送信元でサイズ超過などにより送信できない結果や、Linux の直接 ICMP の DF 経路で受信した対応する MTU エラーは死活不明（`?`）として、損失の統計に加えません。
+- MTU 9000 の経路を調べる例は IPv4 で `size=8972 df=1`、IPv6 で `size=8952 df=1` です。送信元でサイズ超過などにより送信できない結果や、経路の MTU を超えたことを示す ICMP エラー（Frag needed / Packet too big）は死活不明（`?`）として、損失の統計に加えません。直接 ICMP でこのエラーを読むのは Linux の `df=on` だけです。Destination Unreachable など、サイズと関係のない ICMP エラーは、`df` の有無にかかわらず応答なし（`X`）です。
 
 ### source
 
@@ -417,19 +417,20 @@ IP アドレスの中継先も正規化して比べます。ホスト名の大�
 | `nexthop` | `nexthop`, `source` | |
 | `tcp` | `port`, `resolve_family` | |
 | `quic` | `port`, `alpn`, `sni`, `verify`, `resolve_family` | |
-| `ssh` | `relay` のホスト, `os`, `source`, `resolve_family`, `size`, `df`, `interface`, `instance`, `timeout` | `user`（`relay=` 内のユーザーを含む）, `key` |
+| `ssh` | `relay` のホスト, `os`, `source`, `resolve_family`, `size`, `df`, `interface`, `instance` | `user`（`relay=` 内のユーザーを含む）, `key`, `timeout` |
 | `netns` / `vrf` | `relay`, `source`, `resolve_family`, `size`, `df` | |
 | `routeros` | `relay` のホストとポート, `scheme`, `verify` | `username`, `password` |
 | `snmp` | `relay` | `community` |
 
-- 名前、認証情報（`user` / `key` / `username` / `password` / `community`）を変えても、同じ行のままです。
+- 名前、認証情報（`user` / `key` / `username` / `password` / `community`）、制限時間（`timeout`）を変えても、同じ行のままです。
 - 条件を変えると、新しい履歴と新しいログファイルで始まります。`verify` の切り替えは成功とみなす条件が変わるため、ここに含めています。
-- 新しい ping オプションを省略した既存行の同一性とログファイル名は変わりません。`size`・`timeout` の既定値や `df=off` を明示しても同じ行です。JUNOS の IPv6 の `df` は監視経路に含めません。
+- 新しい ping オプションを省略した既存行の同一性とログファイル名は変わりません。`size` の既定値や `df=off` を明示しても同じ行です。JUNOS の IPv6 の `df` は監視経路に含めません。
 - 出現順は構築できた行だけで数えます。同じ監視経路の行が複数あるときに前の行を構築エラーにすると、後の行が繰り上がって、その行の履歴とログファイルを引き継ぎます。
 
 ## 旧版からの移行
 
 直接 ICMP の既定ペイロードは OS 間で 24 バイトに揃えました（従来の Linux は 8 バイト）。
+中継先が Darwin / FreeBSD で宛先が IPv6 の ping も、ペイロードの既定を 8 バイトから 56 バイトに揃えました（IPv4 や Linux と同じです）。
 新しい ping オプションを省略した既存行は、同じ履歴とログファイルを使い続けます。
 
 TCP は hping3 による SYN 送信から標準の TCP 接続に変わりました。既存の `probe=tcp port=...` はそのまま使えます。ファミリーを行の同一性に加えたため、既存の TCP 行も新しいログファイルに書き始めます。

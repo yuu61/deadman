@@ -48,7 +48,6 @@
 | `direct` / `nexthop` | 応答を 1 秒待つ |
 | `ssh` / `netns` / `vrf` | 実行する ping が応答を 1 秒待ち、コマンド全体を 5 秒で打ち切る。ssh の接続待ちは 3 秒 |
 | `ssh`（中継先が Darwin の IPv6） | 15 秒で打ち切る |
-| `ssh`（中継先が JUNOS） | ping の応答を 1 秒待ち、全体を 3 秒で打ち切る |
 | `tcp` / `quic` / `routeros` / `snmp` | 5 秒 |
 
 ssh の中継先が Darwin の IPv6 は `ping6` で送ります。macOS の `ping6` には応答を待つ時間を指定する方法が無く、応答が無いと約 10 秒待つため、その行のプローブは最大 15 秒かかります。

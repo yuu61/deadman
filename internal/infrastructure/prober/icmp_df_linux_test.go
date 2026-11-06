@@ -103,6 +103,13 @@ func TestLinuxQueuedErrorMatching(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			for _, other := range otherICMPErrors(pr.fam) {
+				oob := extendedErrorOOB(t, pr.fam, other)
+				if pr.matchQueuedError(wire, oob, dest, peer) {
+					t.Fatalf("%s raw=%v: non-MTU error matched: %+v", address, privileged, other)
+				}
+			}
+
 			for _, extended := range queuedICMPErrors(pr.fam) {
 				oob := extendedErrorOOB(t, pr.fam, extended)
 				for _, length := range []int{8, 12, len(wire)} {
@@ -180,14 +187,6 @@ func queuedICMPErrors(family icmpFamily) []unix.SockExtendedErr {
 				Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_ICMP,
 				Type: uint8(ipv4.ICMPTypeDestinationUnreachable), Code: 4, Info: 1500,
 			},
-			{
-				Errno: uint32(unix.EHOSTUNREACH), Origin: unix.SO_EE_ORIGIN_ICMP,
-				Type: uint8(ipv4.ICMPTypeDestinationUnreachable), Code: 1,
-			},
-			{
-				Errno: uint32(unix.ECONNREFUSED), Origin: unix.SO_EE_ORIGIN_ICMP,
-				Type: uint8(ipv4.ICMPTypeDestinationUnreachable), Code: 3,
-			},
 			{Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_LOCAL},
 		}
 	}
@@ -197,6 +196,31 @@ func queuedICMPErrors(family icmpFamily) []unix.SockExtendedErr {
 			Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_ICMP6,
 			Type: uint8(ipv6.ICMPTypePacketTooBig), Info: 1500,
 		},
+		{Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_LOCAL},
+	}
+}
+
+// otherICMPErrors are ICMP errors for the echo that are not about its size: the target did
+// not answer, as without df.
+func otherICMPErrors(family icmpFamily) []unix.SockExtendedErr {
+	if family.domain == unix.AF_INET {
+		return []unix.SockExtendedErr{
+			{
+				Errno: uint32(unix.EHOSTUNREACH), Origin: unix.SO_EE_ORIGIN_ICMP,
+				Type: uint8(ipv4.ICMPTypeDestinationUnreachable), Code: 1,
+			},
+			{
+				Errno: uint32(unix.ECONNREFUSED), Origin: unix.SO_EE_ORIGIN_ICMP,
+				Type: uint8(ipv4.ICMPTypeDestinationUnreachable), Code: 3,
+			},
+			{
+				Errno: uint32(unix.EHOSTUNREACH), Origin: unix.SO_EE_ORIGIN_ICMP,
+				Type: uint8(ipv4.ICMPTypeTimeExceeded),
+			},
+		}
+	}
+
+	return []unix.SockExtendedErr{
 		{
 			Errno: uint32(unix.EHOSTUNREACH), Origin: unix.SO_EE_ORIGIN_ICMP6,
 			Type: uint8(ipv6.ICMPTypeDestinationUnreachable), Code: 3,
@@ -205,6 +229,9 @@ func queuedICMPErrors(family icmpFamily) []unix.SockExtendedErr {
 			Errno: uint32(unix.ECONNREFUSED), Origin: unix.SO_EE_ORIGIN_ICMP6,
 			Type: uint8(ipv6.ICMPTypeDestinationUnreachable), Code: 4,
 		},
-		{Errno: uint32(unix.EMSGSIZE), Origin: unix.SO_EE_ORIGIN_LOCAL},
+		{
+			Errno: uint32(unix.EHOSTUNREACH), Origin: unix.SO_EE_ORIGIN_ICMP6,
+			Type: uint8(ipv6.ICMPTypeTimeExceeded),
+		},
 	}
 }

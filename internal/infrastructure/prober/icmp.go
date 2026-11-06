@@ -30,7 +30,7 @@ type icmpPinger struct {
 }
 
 func newICMPPinger(dest probe.Destination, d probe.Direct) (probe.Pinger, error) {
-	if d.Echo.DF && !nativeDFAvailable() {
+	if d.Echo.DF && !nativeDFSupported {
 		return nil, fmt.Errorf("direct df is not supported on %s", runtime.GOOS)
 	}
 
@@ -56,6 +56,19 @@ func echoReceiveSize(payload int) int {
 	const headerRoom = 68
 
 	return max(recvBufSize, payload+headerRoom)
+}
+
+// bsdRawSpace is the smallest default send and receive space of a BSD raw ICMP socket:
+// RIPSNDQ and RIPRCVQ are 8192 bytes in Darwin, OpenBSD, NetBSD and DragonFly (netinet/raw_ip.c),
+// and RIPV6SNDQ is 8192 in OpenBSD and NetBSD. FreeBSD's rip_sendspace is 9216. An echo that
+// does not fit is refused on send or dropped on receive, and pro-bing cannot grow the space.
+const bsdRawSpace = 8192
+
+// needsNativeEcho reports whether a direct row needs the native echo path instead of the
+// default one (pro-bing, or sendScoped for a zoned source): a do-not-fragment bit pro-bing
+// does not set, or, on a BSD, an echo too big for a raw socket's default space.
+func needsNativeEcho(echo probe.EchoOptions, bsd bool) bool {
+	return echo.DF || bsd && echoReceiveSize(echo.Size.Bytes()) > bsdRawSpace
 }
 
 // echoSocketBufferSize also reserves kernel address/control data and room for a

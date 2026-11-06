@@ -28,6 +28,18 @@ func (p *probeInput) take(key string) string {
 	return v
 }
 
+// word reads an optional single-word attribute, written with a value or omitted.
+func (p *probeInput) word(key string) probe.CLIWord {
+	raw, ok := p.attrs[key]
+	delete(p.attrs, key)
+
+	if !ok {
+		return probe.CLIWord{}
+	}
+
+	return probe.CLIWordOf(raw)
+}
+
 // port reads port= as an integer. Whether it is in range, or needed, is Compile's call,
 // so a written 0 reaches it as a port rather than as an omitted one.
 func (p *probeInput) port() probe.Port {
@@ -285,8 +297,8 @@ var readers = map[probe.Method]func(p *probeInput) probe.Params{
 			User:      p.take("user"),
 			Key:       p.take("key"),
 			Echo:      p.echo(),
-			Interface: p.take("interface"),
-			Instance:  p.take("instance"),
+			Interface: p.word("interface"),
+			Instance:  p.word("instance"),
 			Timeout:   p.timeout(),
 		}
 	},

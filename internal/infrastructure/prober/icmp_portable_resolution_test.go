@@ -29,7 +29,7 @@ func TestPortableLiteralPreservesZone(t *testing.T) {
 	}
 }
 
-func TestScopedReplyRejectsUnrelatedEchoes(t *testing.T) {
+func TestNativeEchoReplyRejectsUnrelatedEchoes(t *testing.T) {
 	peer := net.ParseIP("fe80::2")
 	token := []byte("our-token")
 	reply := icmp.Message{
@@ -43,23 +43,23 @@ func TestScopedReplyRejectsUnrelatedEchoes(t *testing.T) {
 	}
 
 	from := &net.IPAddr{IP: peer, Zone: "en0"}
-	if !scopedReply(data, from, peer, 123, token, true) {
+	if !nativeEchoReply(data, from, peer, 123, token, true, echoKindV6) {
 		t.Fatal("matching raw reply rejected")
 	}
 
-	if scopedReply(data, from, peer, 124, token, true) {
+	if nativeEchoReply(data, from, peer, 124, token, true, echoKindV6) {
 		t.Fatal("other raw identifier accepted")
 	}
 
-	if !scopedReply(data, from, peer, 124, token, false) {
+	if !nativeEchoReply(data, from, peer, 124, token, false, echoKindV6) {
 		t.Fatal("kernel datagram identifier not accepted")
 	}
 
-	if scopedReply(data, from, peer, 123, []byte("other"), false) {
+	if nativeEchoReply(data, from, peer, 123, []byte("other"), false, echoKindV6) {
 		t.Fatal("other probe payload accepted")
 	}
 
-	if scopedReply(data, from, net.ParseIP("fe80::3"), 123, token, false) {
+	if nativeEchoReply(data, from, net.ParseIP("fe80::3"), 123, token, false, echoKindV6) {
 		t.Fatal("other peer accepted")
 	}
 }

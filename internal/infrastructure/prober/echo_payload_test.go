@@ -133,12 +133,32 @@ func TestPingMTUErrorsAreUnobserved(t *testing.T) {
 	for _, out := range []output{
 		{stdout: summary, stderr: "ping: local error: message too long, mtu=1500"},
 		{stdout: "From 192.0.2.254: Frag needed and DF set\n" + summary},
-		{stdout: "1 packets transmitted, 0 received, +1 errors, 100% packet loss"},
+		{
+			stdout: "From 192.0.2.254 icmp_seq=1 Frag needed and DF set (mtu = 1400)\n" +
+				"1 packets transmitted, 0 received, +1 errors, 100% packet loss, time 0ms",
+		},
 		{stdout: summary, stderr: "ping: sendto: Message too long"},
 		{stdout: "1 packets transmitted, 0 packets received, 100% packet loss", stderr: "packet too big"},
 	} {
 		if result := parsePingResult(out); result.Code != probe.Unavailable {
 			t.Fatalf("MTU error counted as loss: %+v -> %+v", out, result)
+		}
+	}
+}
+
+// iputils counts every ICMP error reply in "+N errors", not only the MTU ones. A router that
+// answers a dead host with Destination Host Unreachable is a target that did not answer.
+func TestPingUnreachableReplyCountsAsLoss(t *testing.T) {
+	for _, stdout := range []string{
+		"From 192.0.2.1 icmp_seq=1 Destination Host Unreachable\n" +
+			"1 packets transmitted, 0 received, +1 errors, 100% packet loss, time 0ms",
+		"From 192.0.2.1 icmp_seq=1 Destination Net Unreachable\n" +
+			"1 packets transmitted, 0 received, +1 errors, 100% packet loss, time 0ms",
+		"From 2001:db8::1 icmp_seq=1 Destination unreachable: Address unreachable\n" +
+			"1 packets transmitted, 0 received, +1 errors, 100% packet loss, time 0ms",
+	} {
+		if result := parsePingResult(output{stdout: stdout}); result.Code != probe.Failed {
+			t.Fatalf("unreachable reply is not loss: %q -> %+v", stdout, result)
 		}
 	}
 }

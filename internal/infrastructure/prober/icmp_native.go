@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"runtime"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -20,15 +19,6 @@ const (
 	ipv4IHLMask     = 0x0f
 	ipv4IHLWordSize = 4
 )
-
-func nativeDFAvailable() bool {
-	switch runtime.GOOS {
-	case "linux", "darwin", "freebsd":
-		return true
-	default:
-		return false
-	}
-}
 
 // nativeEchoConn retains the underlying socket so buffers and DF can be set before
 // it is wrapped by x/net. Its IPv4 reader also handles Darwin's IP_STRIPHDR behavior.
@@ -99,8 +89,8 @@ func (c *nativeEchoConn) WriteTo(data []byte, dest net.Addr) (int, error) {
 	return n, nil
 }
 
-// sendNativeEcho sends BSD probes through sockets with payload-sized buffers,
-// including scoped sources and DF. Linux uses its kernel-timestamped Send.
+// sendNativeEcho sends probes through sockets with payload-sized buffers and, when asked,
+// the do-not-fragment bit. Linux uses its kernel-timestamped Send.
 func (p *icmpPinger) sendNativeEcho(ctx context.Context, dest *net.IPAddr) probe.Result {
 	conn, err := p.listenNativeEcho(dest)
 	if err != nil {

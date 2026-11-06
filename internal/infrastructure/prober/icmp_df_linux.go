@@ -3,6 +3,7 @@ package prober
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -60,6 +61,8 @@ func setLinuxDF(conn syscall.RawConn, family icmpFamily) error {
 
 // RECVERR wakes the normal reader for all queued errors, including unrelated
 // unreachable errors on raw sockets. Ignore only a successfully read foreign error.
+// Only df needs this: without RECVERR, an unconnected socket gets no ICMP error at all
+// (raw_err, rawv6_err and ping_err return early), and dialICMP never connects.
 func (pr icmpProbe) skipForeignError(conn syscall.RawConn, peer net.IP, recvErr error) bool {
 	if !pr.df || recvErr == nil {
 		return false
@@ -70,27 +73,39 @@ func (pr icmpProbe) skipForeignError(conn syscall.RawConn, peer net.IP, recvErr 
 	return !matched && err == nil
 }
 
+// errQueueBufSize holds the original datagram an ICMP error quotes: a router quotes at most
+// 576 bytes in all for IPv4 and 1280 for IPv6. A longer quote is truncated, and the token
+// match accepts a prefix.
+const errQueueBufSize = 2048
+
 // Linux queues the offending request separately from normal ICMP input. This works
 // for ping datagram sockets and bypasses the raw socket's echo-only receive filter.
+// It reads every queued error, so one for another probe ahead of ours cannot hide ours.
 func (pr icmpProbe) receiveQueuedError(conn syscall.RawConn, peer net.IP) (bool, error) {
-	buffer := make([]byte, echoReceiveSize(len(pr.token)))
+	buffer := make([]byte, errQueueBufSize)
 	oob := make([]byte, controlBufSize)
 
 	var (
 		matched bool
 		recvErr error
+		read    int
 	)
 
 	err := conn.Control(func(fd uintptr) {
-		n, oobn, _, dest, readErr := unix.Recvmsg(
-			int(fd),
-			buffer,
-			oob,
-			unix.MSG_ERRQUEUE|unix.MSG_DONTWAIT,
-		)
-		recvErr = readErr
+		for !matched {
+			n, oobn, _, dest, readErr := unix.Recvmsg(
+				int(fd),
+				buffer,
+				oob,
+				unix.MSG_ERRQUEUE|unix.MSG_DONTWAIT,
+			)
+			if readErr != nil {
+				recvErr = readErr
 
-		if readErr == nil {
+				return
+			}
+
+			read++
 			matched = pr.matchQueuedError(buffer[:n], oob[:oobn], dest, peer)
 		}
 	})
@@ -98,7 +113,10 @@ func (pr icmpProbe) receiveQueuedError(conn syscall.RawConn, peer net.IP) (bool,
 		return false, fmt.Errorf("read ICMP error queue: %w", err)
 	}
 
-	if recvErr != nil {
+	// The queue ran dry after at least one error: those were all read, ours among them or
+	// not. An empty queue at the first read means the wakeup was no queued error at all.
+	drained := read > 0 && errors.Is(recvErr, unix.EAGAIN)
+	if recvErr != nil && !drained {
 		return false, fmt.Errorf("receive ICMP error: %w", recvErr)
 	}
 
@@ -152,8 +170,12 @@ func (f icmpFamily) extendedError(message unix.SocketControlMessage) bool {
 
 	var extended unix.SockExtendedErr
 
+	// Only a datagram too big for the path is the "size does not fit" this option measures.
+	// Frag needed (IPv4) and Packet too big (IPv6) both arrive as EMSGSIZE. Another error
+	// for the echo, such as an unreachable host, is a target that did not answer, as it is
+	// without df.
 	err := binary.Read(bytes.NewReader(message.Data), binary.NativeEndian, &extended)
-	if err != nil || extended.Errno == 0 {
+	if err != nil || extended.Errno != uint32(unix.EMSGSIZE) {
 		return false
 	}
 

@@ -30,6 +30,12 @@ const DirectPayloadSize = 24
 // RelayPayloadSize is the default payload length Compile resolves for relays.
 const RelayPayloadSize = 56
 
+// RelayMinPayload is the smallest payload a relay's ping can time. The ping puts its send
+// time in the payload, and prints a reply's RTT only when the payload holds it:
+// iputils needs sizeof(struct timeval), 16 bytes on a 64-bit host, and the BSDs' struct tv32
+// needs 8. A smaller payload would give replies with no RTT, which cannot be told from 0 ms.
+const RelayMinPayload = 16
+
 const maxEchoPayload = 65507 // An IPv4 packet minus its IP and ICMP headers.
 
 func (e EchoOptions) normalize(minimum, maximum, def int) (EchoOptions, error) {
@@ -47,11 +53,8 @@ func (e EchoOptions) normalize(minimum, maximum, def int) (EchoOptions, error) {
 	return e, nil
 }
 
-func (e EchoOptions) normalizeRelay(os OS, family Family) (EchoOptions, error) {
-	minimum, maximum := 0, maxEchoPayload
-	if (os == OSDarwin || os == OSFreeBSD) && family == FamilyIPv6 {
-		minimum = 1
-	}
+func (e EchoOptions) normalizeRelay(os OS) (EchoOptions, error) {
+	minimum, maximum := RelayMinPayload, maxEchoPayload
 
 	if os == OSJUNOS {
 		maximum = 65468

@@ -50,7 +50,8 @@ func TestRelayPingOptions(t *testing.T) {
 			Echo: probe.EchoOptions{Size: probe.PayloadBytes(8972), DF: true},
 		}
 		if tc.os == probe.OSJUNOS {
-			params.Interface, params.Instance = "ge-0/0/0.0", "MGMT"
+			params.Interface = probe.CLIWordOf("ge-0/0/0.0")
+			params.Instance = probe.CLIWordOf("MGMT")
 		}
 
 		p := subprocessFromPlan(t, probe.Spec{Addr: tc.addr, Params: params})
@@ -64,7 +65,8 @@ func TestRelayPingOptions(t *testing.T) {
 
 func TestBSDIPv6RelayPayload(t *testing.T) {
 	for _, os := range []probe.OS{probe.OSDarwin, probe.OSFreeBSD} {
-		for _, size := range []probe.PayloadSize{{}, probe.PayloadBytes(56), probe.PayloadBytes(8)} {
+		smallest := probe.PayloadBytes(probe.RelayMinPayload)
+		for _, size := range []probe.PayloadSize{{}, probe.PayloadBytes(56), smallest} {
 			p := subprocessFromPlan(t, probe.Spec{Addr: "2001:db8::1", Params: probe.SSH{
 				Host: "relay", OS: os, Echo: probe.EchoOptions{Size: size},
 			}})
@@ -122,14 +124,14 @@ func TestJUNOSSourceArgument(t *testing.T) {
 }
 
 func TestNamespaceEchoOptions(t *testing.T) {
-	echo := probe.EchoOptions{Size: probe.PayloadBytes(0), DF: true}
+	echo := probe.EchoOptions{Size: probe.PayloadBytes(probe.RelayMinPayload), DF: true}
 	for _, params := range []probe.Params{
 		probe.Netns{Name: "ns", Echo: echo}, probe.VRF{Name: "blue", Echo: echo},
 	} {
 		p := subprocessFromPlan(t, probe.Spec{Addr: "192.0.2.1", Params: params})
 		got := p.buildArgs()[len(p.wrapper):]
 
-		want := []string{"ping", "-c", "1", "-W", "1", "-s", "0", "-M", "do", "192.0.2.1"}
+		want := []string{"ping", "-c", "1", "-W", "1", "-s", "16", "-M", "do", "192.0.2.1"}
 		if !slices.Equal(got, want) {
 			t.Fatalf("argv = %q, want %q", got, want)
 		}
@@ -144,7 +146,7 @@ func TestSSHOverallTimeout(t *testing.T) {
 		want    time.Duration
 	}{
 		{probe.OSLinux, "192.0.2.1", probe.Timeout{}, 5 * time.Second},
-		{probe.OSJUNOS, "192.0.2.1", probe.Timeout{}, 3 * time.Second},
+		{probe.OSJUNOS, "192.0.2.1", probe.Timeout{}, 5 * time.Second},
 		{probe.OSDarwin, "2001:db8::1", probe.Timeout{}, 15 * time.Second},
 		{probe.OSJUNOS, "192.0.2.1", probe.TimeoutAfter(7500 * time.Millisecond), 7500 * time.Millisecond},
 		{probe.OSDarwin, "2001:db8::1", probe.TimeoutAfter(2 * time.Second), 2 * time.Second},

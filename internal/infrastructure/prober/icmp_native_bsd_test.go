@@ -20,7 +20,7 @@ func TestBSDNativeEchoSocketBuffers(t *testing.T) {
 			t.Run(address+"/raw="+strconv.FormatBool(privileged), func(t *testing.T) {
 				for _, df := range []bool{false, true} {
 					t.Run("df="+strconv.FormatBool(df), func(t *testing.T) {
-						if df && !nativeDFAvailable() {
+						if df && !nativeDFSupported {
 							t.Skip("native DF is unsupported on this OS")
 						}
 

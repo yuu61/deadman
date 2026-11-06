@@ -59,12 +59,12 @@ func (p *subprocessPinger) junosCommand() []string {
 		args = append(args, "source", p.source.String())
 	}
 
-	if p.iface != "" {
-		args = append(args, "interface", p.iface)
+	if p.iface.IsSet() {
+		args = append(args, "interface", p.iface.String())
 	}
 
-	if p.instance != "" {
-		args = append(args, "routing-instance", p.instance)
+	if p.instance.IsSet() {
+		args = append(args, "routing-instance", p.instance.String())
 	}
 
 	return args
