@@ -67,8 +67,8 @@ func (s SSH) checkCLIWords(dest Destination) error {
 	}
 
 	for _, word := range []CLIWord{s.Interface, s.Instance} {
-		if word.set && word.text == "" {
-			return errors.New("invalid JUNOS ping value \"\": expected a CLI word")
+		if word.set && (word.text == "" || strings.HasPrefix(word.text, "-")) {
+			return fmt.Errorf("invalid JUNOS ping value %q: expected a CLI word", word.text)
 		}
 	}
 

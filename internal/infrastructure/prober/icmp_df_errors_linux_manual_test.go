@@ -25,22 +25,26 @@ func TestICMPQueuedErrors(t *testing.T) {
 		name string
 		// errors are injected in order, each as (ICMP code, whether it quotes our echo).
 		errors []injectedError
+		reply  bool
 		want   probe.ResultCode
 	}{
-		{"own frag needed", []injectedError{{icmpFragNeeded, true}}, probe.Unavailable},
-		{"foreign frag needed", []injectedError{{icmpFragNeeded, false}}, probe.Success},
-		{"own host unreachable", []injectedError{{1, true}}, probe.Success},
-		{"own port unreachable", []injectedError{{3, true}}, probe.Success},
-		{"foreign host unreachable", []injectedError{{1, false}}, probe.Success},
+		{"own frag needed", []injectedError{{icmpFragNeeded, true}}, true, probe.Unavailable},
+		{"foreign frag needed", []injectedError{{icmpFragNeeded, false}}, true, probe.Success},
+		{"own host unreachable with reply", []injectedError{{1, true}}, true, probe.Success},
+		{"own host unreachable without reply", []injectedError{{1, true}}, false, probe.Failed},
+		{"own port unreachable", []injectedError{{3, true}}, true, probe.Success},
+		{"foreign host unreachable", []injectedError{{1, false}}, true, probe.Success},
 		// The queue holds the other row's error ahead of ours: every entry must be read.
 		{
 			"own frag needed behind foreign errors",
 			[]injectedError{{1, false}, {3, false}, {icmpFragNeeded, true}},
+			true,
 			probe.Unavailable,
 		},
 		{
 			"own frag needed behind own unreachable",
 			[]injectedError{{1, true}, {icmpFragNeeded, true}},
+			true,
 			probe.Unavailable,
 		},
 	} {
@@ -58,7 +62,12 @@ func TestICMPQueuedErrors(t *testing.T) {
 			}
 			defer func() { discard(conn.f.Close()) }()
 
-			err = conn.f.SetDeadline(time.Now().Add(icmpTimeout))
+			timeout := icmpTimeout
+			if !tc.reply {
+				timeout = 50 * time.Millisecond
+			}
+
+			err = conn.f.SetDeadline(time.Now().Add(timeout))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,10 +94,12 @@ func TestICMPQueuedErrors(t *testing.T) {
 				})
 			}
 
-			injectICMP(t, injector, peer, icmp.Message{
-				Type: pr.fam.replyType,
-				Body: &icmp.Echo{ID: pr.id, Seq: pr.seq, Data: pr.token},
-			})
+			if tc.reply {
+				injectICMP(t, injector, peer, icmp.Message{
+					Type: pr.fam.replyType,
+					Body: &icmp.Echo{ID: pr.id, Seq: pr.seq, Data: pr.token},
+				})
+			}
 
 			if result := pr.recv(conn.rc, peer, start); result.Code != tc.want {
 				t.Fatalf("result = %+v, want %v", result, tc.want)

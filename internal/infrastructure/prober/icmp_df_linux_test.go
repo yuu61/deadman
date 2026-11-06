@@ -56,6 +56,28 @@ func TestLinuxDFSocketOptions(t *testing.T) {
 	}
 }
 
+func TestLinuxSkipNonMTUErrorOnEmptyQueue(t *testing.T) {
+	p := &icmpPinger{echo: probe.EchoOptions{DF: true}}
+
+	conn, err := p.dial(familyOf(net.ParseIP("127.0.0.1")), unix.SOCK_DGRAM, 1)
+	if err != nil {
+		t.Skipf("ICMP datagram socket unavailable: %v", err)
+	}
+	defer conn.f.Close()
+
+	pr := icmpProbe{
+		fam:   familyOf(net.ParseIP("127.0.0.1")),
+		df:    true,
+		id:    1,
+		seq:   1,
+		token: echoPayload(24),
+	}
+
+	if !pr.skipNonMTUError(conn.rc, net.ParseIP("127.0.0.1"), unix.EHOSTUNREACH) {
+		t.Fatal("skipNonMTUError returned false on an empty error queue")
+	}
+}
+
 func extendedErrorOOB(t *testing.T, family icmpFamily, extended unix.SockExtendedErr) []byte {
 	t.Helper()
 

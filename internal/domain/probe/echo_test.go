@@ -23,6 +23,8 @@ func TestEchoOptionsRejectInvalidConditions(t *testing.T) {
 		SSH{Host: "r", OS: OSJUNOS, Instance: CLIWordOf("MGMT\x00")},
 		SSH{Host: "r", OS: OSJUNOS, Interface: CLIWordOf("")},
 		SSH{Host: "r", OS: OSJUNOS, Instance: CLIWordOf("")},
+		SSH{Host: "r", OS: OSJUNOS, Interface: CLIWordOf("-ge-0/0/0.0")},
+		SSH{Host: "r", OS: OSJUNOS, Instance: CLIWordOf("-MGMT")},
 		SSH{Host: "r", OS: OSJUNOS, Instance: CLIWordOf("$(reboot)")},
 		SSH{Host: "r", OS: OSJUNOS, Timeout: TimeoutAfter(0)},
 		SSH{Host: "r", OS: OSLinux, Timeout: TimeoutAfter(-time.Second)},

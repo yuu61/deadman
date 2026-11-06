@@ -60,10 +60,12 @@ func setLinuxDF(conn syscall.RawConn, family icmpFamily) error {
 }
 
 // RECVERR wakes the normal reader for all queued errors, including unrelated
-// unreachable errors on raw sockets. Ignore only a successfully read foreign error.
+// unreachable errors on raw sockets and non-MTU errors (such as Host Unreachable)
+// for our own probe. Ignore every successfully drained error queue unless it
+// contains an MTU error (EMSGSIZE) for this probe.
 // Only df needs this: without RECVERR, an unconnected socket gets no ICMP error at all
 // (raw_err, rawv6_err and ping_err return early), and dialICMP never connects.
-func (pr icmpProbe) skipForeignError(conn syscall.RawConn, peer net.IP, recvErr error) bool {
+func (pr icmpProbe) skipNonMTUError(conn syscall.RawConn, peer net.IP, recvErr error) bool {
 	if !pr.df || recvErr == nil {
 		return false
 	}
@@ -80,7 +82,8 @@ const errQueueBufSize = 2048
 
 // Linux queues the offending request separately from normal ICMP input. This works
 // for ping datagram sockets and bypasses the raw socket's echo-only receive filter.
-// It reads every queued error, so one for another probe ahead of ours cannot hide ours.
+// It drains every queued error, so one for another probe ahead of ours cannot hide ours,
+// and an empty queue on a concurrent error wakeup still clears sk_err.
 func (pr icmpProbe) receiveQueuedError(conn syscall.RawConn, peer net.IP) (bool, error) {
 	buffer := make([]byte, errQueueBufSize)
 	oob := make([]byte, controlBufSize)
@@ -88,11 +91,10 @@ func (pr icmpProbe) receiveQueuedError(conn syscall.RawConn, peer net.IP) (bool,
 	var (
 		matched bool
 		recvErr error
-		read    int
 	)
 
 	err := conn.Control(func(fd uintptr) {
-		for !matched {
+		for {
 			n, oobn, _, dest, readErr := unix.Recvmsg(
 				int(fd),
 				buffer,
@@ -100,23 +102,29 @@ func (pr icmpProbe) receiveQueuedError(conn syscall.RawConn, peer net.IP) (bool,
 				unix.MSG_ERRQUEUE|unix.MSG_DONTWAIT,
 			)
 			if readErr != nil {
+				if errors.Is(readErr, unix.EINTR) {
+					continue
+				}
+
 				recvErr = readErr
 
 				return
 			}
 
-			read++
-			matched = pr.matchQueuedError(buffer[:n], oob[:oobn], dest, peer)
+			if pr.matchQueuedError(buffer[:n], oob[:oobn], dest, peer) {
+				matched = true
+			}
 		}
 	})
 	if err != nil {
 		return false, fmt.Errorf("read ICMP error queue: %w", err)
 	}
 
-	// The queue ran dry after at least one error: those were all read, ours among them or
-	// not. An empty queue at the first read means the wakeup was no queued error at all.
-	drained := read > 0 && errors.Is(recvErr, unix.EAGAIN)
-	if recvErr != nil && !drained {
+	// Drain until the queue is empty (EAGAIN/EWOULDBLOCK). Even if the queue was
+	// already empty on the first read (because the kernel reported sk_err without
+	// queuing or after another read cleared it), an ICMP error wakeup that is not
+	// our EMSGSIZE must not terminate the probe early as Unavailable.
+	if recvErr != nil && !errors.Is(recvErr, unix.EAGAIN) && !errors.Is(recvErr, unix.EWOULDBLOCK) {
 		return false, fmt.Errorf("receive ICMP error: %w", recvErr)
 	}
 
