@@ -30,6 +30,7 @@ func addPlanSeeds(f *testing.F) {
 		{"192.0.2.1", "router_1.example", "ns", "u", "p"},
 		{"192.0.2.1", "jump", "ns\x00bad", "user\x00bad", "key\x00bad"},
 		{"fe80::1%eth\x00bad", "fe80::2%eth\x00bad", "ns", "eth0", "key"},
+		{"192.0.2.33", "198.51.100.1", "MGMT", "ge-0/0/0.0", "ops"},
 	} {
 		f.Add(seed[0], seed[1], seed[2], seed[3], seed[4])
 	}
@@ -44,9 +45,19 @@ func buildableSpecs(addr, relay, name, value, secret string) []probe.Spec {
 		src = probe.SourceInterface(value)
 	}
 
+	var iface, instance probe.CLIWord
+	if value != "" {
+		iface = probe.CLIWordOf(value)
+	}
+
+	if name != "" {
+		instance = probe.CLIWordOf(name)
+	}
+
+	echo := probe.EchoOptions{Size: probe.PayloadBytes(8972), DF: true}
 	families := []probe.Family{probe.FamilyUnknown, probe.FamilyIPv4, probe.FamilyIPv6}
 
-	specs := make([]probe.Spec, 0, 1+4*len(families))
+	specs := make([]probe.Spec, 0, 1+6*len(families))
 	specs = append(
 		specs,
 		probe.Spec{
@@ -56,14 +67,41 @@ func buildableSpecs(addr, relay, name, value, secret string) []probe.Spec {
 	)
 
 	for _, family := range families {
-		specs = append(specs,
+		specs = append(
+			specs,
 			probe.Spec{Addr: addr, Params: probe.TCP{Port: probe.PortNumber(80), Family: family}},
-			probe.Spec{Addr: addr, Params: probe.Netns{Name: name, Source: src, Family: family}},
-			probe.Spec{Addr: addr, Params: probe.VRF{Name: name, Family: family}},
+			probe.Spec{
+				Addr:   addr,
+				Params: probe.Netns{Name: name, Source: src, Family: family, Echo: echo},
+			},
+			probe.Spec{Addr: addr, Params: probe.VRF{Name: name, Family: family, Echo: echo}},
 			probe.Spec{
 				Addr: addr,
 				Params: probe.SSH{
-					Host: relay, OS: probe.OSLinux, Family: family, User: value, Key: secret,
+					Host:   relay,
+					OS:     probe.OSLinux,
+					Family: family,
+					User:   value,
+					Key:    secret,
+					Echo:   echo,
+				},
+			},
+			probe.Spec{
+				Addr: addr,
+				Params: probe.SSH{
+					Host:   relay,
+					OS:     probe.OSDarwin,
+					Family: family,
+					User:   value,
+					Key:    secret,
+					Echo:   echo,
+				},
+			},
+			probe.Spec{
+				Addr: addr,
+				Params: probe.SSH{
+					Host: relay, OS: probe.OSJUNOS, Family: family, User: secret,
+					Echo: echo, Interface: iface, Instance: instance,
 				},
 			},
 		)
@@ -147,6 +185,10 @@ func checkSendable(t *testing.T, plan probe.Plan, p probe.Pinger) {
 
 		if !built.ssh && args[len(args)-1] != plan.Destination().String() {
 			t.Fatalf("%s: argv %q does not end with the destination", plan.Method(), args)
+		}
+
+		if built.os == probe.OSJUNOS && args[len(built.wrapper)+1] != plan.Destination().String() {
+			t.Fatalf("JUNOS argv %q does not place the destination after ping", args)
 		}
 	case *tcpPinger:
 		if built.dest != plan.Destination() {

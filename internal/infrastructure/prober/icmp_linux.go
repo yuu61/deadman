@@ -28,11 +28,6 @@ const (
 	// controlBufSize bounds the ancillary (cmsg) buffer: ample for the RX timestamp.
 	// Matches the reference STAMP implementation's 128.
 	controlBufSize = 128
-	// ipv4IHLMask is the low nibble of a raw IPv4 packet's first byte: the header length
-	// in 32-bit words. A raw IPv4 socket prepends this header to each received datagram.
-	ipv4IHLMask = 0x0f
-	// ipv4IHLWordSize is the byte size of one IHL word (the IHL field counts 32-bit words).
-	ipv4IHLWordSize = 4
 	// nsPerSec bounds a valid nanosecond field when validating a kernel timestamp.
 	nsPerSec = 1_000_000_000
 )
@@ -88,12 +83,13 @@ func (p *icmpPinger) Send(ctx context.Context) probe.Result {
 	pr := icmpProbe{
 		fam:        fam,
 		privileged: p.privileged,
+		df:         p.echo.DF,
 		id:         nextProbeID(),
 		seq:        1,
-		token:      newProbeToken(),
+		token:      echoPayload(p.echo.Size.Bytes()),
 	}
 
-	conn, err := dialICMP(fam, sockType, p.source, pr.id)
+	conn, err := p.dial(fam, sockType, pr.id)
 	if err != nil {
 		return probe.UnavailableResult()
 	}
@@ -353,6 +349,7 @@ func sendProbe(rc syscall.RawConn, wb, oob []byte, dst unix.Sockaddr) (time.Time
 type icmpProbe struct {
 	fam        icmpFamily
 	privileged bool
+	df         bool
 	id, seq    int
 	token      []byte
 }
@@ -378,7 +375,7 @@ func (pr icmpProbe) build() ([]byte, error) {
 // os.File read deadline passes, skipping foreign ICMP (raw fan-out). A parked read holds
 // no OS thread, and the absolute deadline bounds the loop even under continuous ICMP.
 func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) probe.Result {
-	buf := make([]byte, recvBufSize)
+	buf := make([]byte, echoReceiveSize(len(pr.token)))
 	oob := make([]byte, controlBufSize)
 
 	for {
@@ -395,6 +392,10 @@ func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) probe
 		})
 
 		recvUser := time.Now()
+
+		if readErr == nil && pr.skipNonMTUError(rc, peer, rerr) {
+			continue
+		}
 
 		if readErr != nil || rerr != nil {
 			if errors.Is(readErr, os.ErrDeadlineExceeded) {

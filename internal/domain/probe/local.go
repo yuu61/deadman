@@ -35,6 +35,7 @@ type Direct struct {
 	// Family is resolve_family=: the family a name resolves in. Omitted (FamilyUnknown), it
 	// is a literal's family, or a source address's, or else either.
 	Family Family
+	Echo   EchoOptions
 }
 
 func (Direct) local() {}
@@ -54,12 +55,18 @@ func (d Direct) compile(dest Destination) (Params, error) {
 
 	d.Source, d.Family = src, f
 
+	d.Echo, err = d.Echo.normalize(DirectPayloadSize, maxEchoPayload, DirectPayloadSize)
+	if err != nil {
+		return nil, err
+	}
+
 	return d, nil
 }
 
 func (d Direct) identity(b *strings.Builder) {
 	writeKey(b, d.Source.String())
 	writeKey(b, d.Family.resolveSpelling())
+	d.Echo.identity(b, DirectPayloadSize)
 }
 
 // TCP measures connection establishment (MethodTCP). A hostname defaults to IPv4;

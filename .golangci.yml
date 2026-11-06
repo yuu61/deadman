@@ -350,6 +350,11 @@ linters:
   exclusions:
     generated: lax
     rules:
+      # 設定の閉じた型と全ケースは同じファイルで見渡せるようにする。
+      # Line / Setting はそれぞれ 7 つの公開型を持つため、この 2 ファイルだけ上限の例外にする。
+      - linters: [revive]
+        path: ^internal/application/config/(lines|setting)\.go$
+        text: '^max-public-structs:'
       # Windows の Job Object API は型付き構造体を uintptr で受け取る。OS へ渡す
       # 実在する構造体のアドレスと sizeof だけで、ポインタ演算や寿命外の参照はしない。
       - linters: [gosec]

@@ -9,10 +9,10 @@ import (
 	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
-// Send sends a native ICMP echo using pro-bing. Native ICMP is portable
-// (Windows/macOS/*BSD) and avoids shelling out to `ping -c 1` and parsing OS-specific
-// output. Linux replaces this with a synchronous, kernel-timestamped prober
-// (icmp_linux.go); see that file for why.
+// sendPortable sends a native ICMP echo. On BSD an echo too big for a raw socket's default
+// space uses a socket with payload-sized buffers; every other echo uses pro-bing, or
+// sendScoped for a zoned source. Linux replaces this with a synchronous, kernel-timestamped
+// prober (icmp_linux.go); see that file for why.
 func (p *icmpPinger) sendPortable(ctx context.Context) probe.Result {
 	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
 	defer cancel()
@@ -21,6 +21,10 @@ func (p *icmpPinger) sendPortable(ctx context.Context) probe.Result {
 	dest, err := p.resolvePortable(ctx)
 	if err != nil {
 		return probe.UnavailableResult()
+	}
+
+	if needsNativeEcho(p.echo, nativeBSDEcho) {
+		return p.sendNativeEcho(ctx, dest)
 	}
 
 	if source, ok := p.source.Addr(); ok && source.Zone() != "" {
@@ -37,6 +41,7 @@ func (p *icmpPinger) sendPortable(ctx context.Context) probe.Result {
 	pinger.SetPrivileged(p.privileged)
 	pinger.Count = 1
 	pinger.Timeout = icmpTimeout
+	pinger.Size = p.echo.Size.Bytes()
 
 	// pro-bing's Source binds by address, InterfaceName by name.
 	if addr, hasAddr := p.source.Addr(); hasAddr {

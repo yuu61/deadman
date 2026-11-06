@@ -12,4 +12,5 @@ const (
 	OSDarwin  OS = "Darwin"
 	OSFreeBSD OS = "FreeBSD"
 	OSWindows OS = "Windows"
+	OSJUNOS   OS = "JUNOS"
 )

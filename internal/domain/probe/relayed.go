@@ -81,14 +81,18 @@ func (s SNMP) identity(b *strings.Builder) { writeKey(b, s.Host) }
 type SSH struct {
 	Host string // relay=: the ssh host.
 	// Source is source=: the ping's source on the relay. Which kinds its ping takes depends
-	// on OS: an address or an interface on Linux, an address on Darwin, none on FreeBSD.
+	// on OS: an address or interface on Linux, an address on Darwin/JUNOS, none on FreeBSD.
 	Source Source
 	// Family is resolve_family=: the family the relay's ping runs in. A literal or a source
 	// address fixes it; a host name without a source address needs it written.
-	Family Family
-	OS     OS     // os=: the relay's ping dialect; required.
-	User   string // user=: the ssh login user.
-	Key    string // key=: the ssh identity file.
+	Family    Family
+	OS        OS     // os=: the relay's ping dialect; required.
+	User      string // user=: the ssh login user.
+	Key       string // key=: the ssh identity file.
+	Echo      EchoOptions
+	Interface CLIWord // interface=: JUNOS egress interface.
+	Instance  CLIWord // instance=: JUNOS routing instance.
+	Timeout   Timeout
 }
 
 func (SSH) relayed() {}
@@ -111,11 +115,11 @@ func (s SSH) compile(dest Destination) (Params, error) {
 	}
 
 	switch s.OS {
-	case OSLinux, OSDarwin, OSFreeBSD:
+	case OSLinux, OSDarwin, OSFreeBSD, OSJUNOS:
 	case OSWindows:
 		return nil, errors.New("unsupported Windows relay ping")
 	default:
-		return nil, errors.New("ssh requires os=Linux, Darwin or FreeBSD")
+		return nil, errors.New("ssh requires os=Linux, Darwin, FreeBSD or JUNOS")
 	}
 
 	src, err := relaySource(s.OS, s.Source)
@@ -129,6 +133,11 @@ func (s SSH) compile(dest Destination) (Params, error) {
 	}
 
 	s.Source, s.Family = src, f
+
+	s, err = s.compileOptions(dest)
+	if err != nil {
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -169,10 +178,19 @@ func (s SSH) identity(b *strings.Builder) {
 	writeKey(b, s.Source.String())
 	writeKey(b, string(s.OS))
 	writeKey(b, s.Family.resolveSpelling())
+	s.Echo.identity(b, RelayPayloadSize)
+
+	if s.Interface.IsSet() {
+		writeKey(b, "interface="+s.Interface.String())
+	}
+
+	if s.Instance.IsSet() {
+		writeKey(b, "instance="+s.Instance.String())
+	}
 }
 
 // relaySource checks a source against the relay ping's dialect: Linux's -I takes an
-// address or an interface, Darwin's -S only an address, and no other dialect takes one.
+// address or interface; Darwin's -S and JUNOS source take an address.
 func relaySource(os OS, s Source) (Source, error) {
 	src, err := s.normalize()
 	if err != nil || !src.IsSet() {
@@ -182,11 +200,12 @@ func relaySource(os OS, s Source) (Source, error) {
 	switch os {
 	case OSLinux:
 		return src, nil
-	case OSDarwin:
+	case OSDarwin, OSJUNOS:
 		if name, ok := src.Interface(); ok {
 			return Source{}, fmt.Errorf(
-				"interface-name source %q is not supported on a Darwin relay; use a source address",
+				"interface-name source %q is not supported on a %s relay; use a source address",
 				name,
+				os,
 			)
 		}
 

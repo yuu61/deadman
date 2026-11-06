@@ -3,6 +3,7 @@ package prober
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"math"
 	"net"
 	"runtime"
@@ -25,15 +26,55 @@ type icmpPinger struct {
 	source     probe.Source
 	network    string // "ip4"/"ip6" to pin the resolve family (resolve_family=), "" for auto.
 	privileged bool
+	echo       probe.EchoOptions
 }
 
 func newICMPPinger(dest probe.Destination, d probe.Direct) (probe.Pinger, error) {
+	if d.Echo.DF && !nativeDFSupported {
+		return nil, fmt.Errorf("direct df is not supported on %s", runtime.GOOS)
+	}
+
 	return &icmpPinger{
 		dest:       dest,
 		source:     d.Source,
 		network:    resolveNetwork(d.Family),
 		privileged: useICMPPrivileged(),
+		echo:       d.Echo,
 	}, nil
+}
+
+// echoPayload retains a random token at the start of the requested payload.
+func echoPayload(size int) []byte {
+	payload := make([]byte, size)
+	copy(payload, newProbeToken())
+
+	return payload
+}
+
+// echoReceiveSize leaves room for a maximum IPv4 header and the ICMP echo header.
+func echoReceiveSize(payload int) int {
+	const headerRoom = 68
+
+	return max(recvBufSize, payload+headerRoom)
+}
+
+// bsdRawSpace is the smallest default send and receive space of a BSD raw ICMP socket:
+// RIPSNDQ and RIPRCVQ are 8192 bytes in Darwin, OpenBSD, NetBSD and DragonFly (netinet/raw_ip.c),
+// and RIPV6SNDQ is 8192 in OpenBSD and NetBSD. FreeBSD's rip_sendspace is 9216. An echo that
+// does not fit is refused on send or dropped on receive, and pro-bing cannot grow the space.
+const bsdRawSpace = 8192
+
+// needsNativeEcho reports whether a direct row needs the native echo path instead of the
+// default one (pro-bing, or sendScoped for a zoned source): on a BSD, an echo too big for a
+// raw socket's default space. A do-not-fragment echo is sent only by Linux's own Send.
+func needsNativeEcho(echo probe.EchoOptions, bsd bool) bool {
+	return bsd && echoReceiveSize(echo.Size.Bytes()) > bsdRawSpace
+}
+
+// echoSocketBufferSize also reserves kernel address/control data and room for a
+// request and reply to be queued together on an unfiltered raw loopback socket.
+func echoSocketBufferSize(payload int) int {
+	return 2 * echoReceiveSize(payload)
 }
 
 // probeCounter hands out per-probe ICMP IDs. Under the raw-socket fan-out every

@@ -1,9 +1,7 @@
 package prober
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -83,10 +81,10 @@ func (p *icmpPinger) sendScoped(
 	stop := interruptOnDone(ctx, conn.SetDeadline)
 	defer stop()
 
-	id, token := nextProbeID(), newProbeToken()
+	id, payload := nextProbeID(), echoPayload(p.echo.Size.Bytes())
 	message := icmp.Message{
 		Type: ipv6.ICMPTypeEchoRequest,
-		Body: &icmp.Echo{ID: id, Seq: 1, Data: token},
+		Body: &icmp.Echo{ID: id, Seq: 1, Data: payload},
 	}
 
 	data, err := message.Marshal(nil)
@@ -94,10 +92,8 @@ func (p *icmpPinger) sendScoped(
 		return probe.UnavailableResult()
 	}
 
-	peer := *dest
-	if peer.Zone == "" && peer.IP.IsLinkLocalUnicast() {
-		peer.Zone = source.Zone()
-	}
+	// The source is this row's, so a link-local destination takes its zone.
+	peer := p.nativeEchoPeer(dest)
 
 	var target net.Addr = &peer
 	if !p.privileged {
@@ -111,47 +107,5 @@ func (p *icmpPinger) sendScoped(
 		return probe.UnavailableResult()
 	}
 
-	return p.receiveScoped(ctx, conn, peer.IP, id, token, start)
-}
-
-func (p *icmpPinger) receiveScoped(
-	ctx context.Context, conn *icmp.PacketConn, peer net.IP, id int, token []byte, start time.Time,
-) probe.Result {
-	buffer := make([]byte, recvBufSize)
-	for {
-		n, from, err := conn.ReadFrom(buffer)
-		if err != nil {
-			if isTimeout(err) && !errors.Is(ctx.Err(), context.Canceled) {
-				return probe.FailedResult()
-			}
-
-			return probe.UnavailableResult()
-		}
-
-		if scopedReply(buffer[:n], from, peer, id, token, p.privileged) {
-			return probe.SuccessResult(float64(time.Since(start).Microseconds()) / usPerMs)
-		}
-	}
-}
-
-func scopedReply(
-	data []byte,
-	from net.Addr,
-	peer net.IP,
-	id int,
-	token []byte,
-	privileged bool,
-) bool {
-	if !addrIP(from).Equal(peer) {
-		return false
-	}
-
-	message, err := icmp.ParseMessage(ianaProtocolICMPv6, data)
-	if err != nil || message.Type != ipv6.ICMPTypeEchoReply {
-		return false
-	}
-
-	echo, ok := message.Body.(*icmp.Echo)
-
-	return ok && (!privileged || echo.ID == id) && echo.Seq == 1 && bytes.Equal(echo.Data, token)
+	return p.receiveNativeEcho(ctx, conn, peer.IP, id, payload, start, echoKindV6)
 }

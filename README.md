@@ -11,6 +11,7 @@ deadman は ICMP echo によるホストの死活監視に特化した TUI ツ�
 - 1 行 1 ホストの一覧をリアルタイムに更新し、結果の履歴を RESULT バーに、統計（LOSS / RTT / AVG / MIN / MAX / JIT / SNT / FAIL）を列に表示します。IPv6 に対応しています。
 - `resolve_family=ipv4|ipv6` で同じホスト名を IPv4 / IPv6 別に監視でき、ADDRESS 列の `[IPv4]` / `[IPv6]` で見分けられます。
 - 監視元からの ICMP のほか、ゲートウェイを強制した ICMP（nexthop）、TCP 接続（IPv4 / IPv6、外部コマンド不要）、QUIC ハンドシェイク、ssh / netns / VRF / RouterOS API / SNMP（非推奨）を中継した ping で監視できます。
+- `size=`・`df=` でジャンボフレームや経路 MTU を確認できます。JUNOS の SSH 中継では、送信元・インタフェース・routing-instance も対象ごとに指定できます。
 - Linux / macOS / Windows で動く単一バイナリです。ICMP は外部の `ping` コマンドを使わず、権限に応じてソケットを選びます。
 - 段組み、列の表示、統計の精度、RESULT バーの文字と色を、キー操作と設定で切り替えられます。ブロック文字を表示できない端末では、自動で ASCII 表示になります。
 - 段組みの区切り位置を設定で指定し、分野ごとの一覧を横に並べられます。区切りに付けた説明文は、分割しない表示でも残ります。
@@ -131,12 +132,16 @@ kame6             2001:200:dff:fff1:216:3eff:feb1:44d7
 #blank
 "Cloudflare QUIC" 1.1.1.1      probe=quic
 "SSH Relay"       192.168.1.1  probe=ssh relay=203.0.113.1 os=Linux user=admin
+"Jumbo"           192.0.2.10   size=8972 df=1
+"JUNOS VRF"       192.0.2.33   probe=ssh relay=198.51.100.1 os=JUNOS instance=MGMT source=192.0.2.2 timeout=10
 "NextHop"         10.0.0.1     probe=nexthop nexthop=192.168.0.254 source=eth0
 ```
 
 監視方式は `probe=` で選びます（省略時は監視元からの ICMP）。
 属性や値に誤りのある行は監視せず、RESULT 欄に理由を表示します。ほかの行は監視を続けます。
 属性、監視方式、表示の既定値を決めるディレクティブ、旧版の書式からの移行は [設定ファイル](docs/configuration.md) を参照してください。
+`size=`・`df=` は `direct` / `ssh` / `netns` / `vrf` で使えます。直接 ICMP の `df=on` は Linux だけで使え、ほかの OS では構築エラーです。
+中継先のサイズ制限は OS に応じて検証します（最小値は 16 バイト、上限は 65507 バイト・JUNOS は 65468 バイト）。
 
 分野ごとに段組みの区切りを指定する場合は、同じ conf に次のように書きます。
 
