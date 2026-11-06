@@ -14,7 +14,7 @@ BUILDFLAGS := -trimpath -ldflags '-s -w -X main.version=$(VERSION)'
 
 # リリースする対象と、go vet と golangci-lint を開発機に加えて回す対象。後者は OS 別のファイルと 32bit を見るため。
 PLATFORMS       := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
-CROSS_PLATFORMS := linux/386 linux/arm darwin/arm64 windows/amd64
+CROSS_PLATFORMS := linux/386 linux/arm darwin/arm64 freebsd/amd64 windows/amd64
 
 # アーカイブを決定的にするため、中身の時刻をコミット時刻にそろえる。
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct)

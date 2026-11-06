@@ -18,35 +18,23 @@ func TestBSDNativeEchoSocketBuffers(t *testing.T) {
 	for _, address := range []string{"127.0.0.1", "::1"} {
 		for _, privileged := range []bool{false, true} {
 			t.Run(address+"/raw="+strconv.FormatBool(privileged), func(t *testing.T) {
-				for _, df := range []bool{false, true} {
-					t.Run("df="+strconv.FormatBool(df), func(t *testing.T) {
-						if df && !nativeDFSupported {
-							t.Skip("native DF is unsupported on this OS")
-						}
+				p := &icmpPinger{
+					privileged: privileged,
+					echo:       probe.EchoOptions{Size: probe.PayloadBytes(8972)},
+				}
 
-						p := &icmpPinger{
-							privileged: privileged,
-							echo:       probe.EchoOptions{Size: probe.PayloadBytes(8972), DF: df},
-						}
+				fd := openBSDTestEchoSocket(t, p, address)
+				defer unix.Close(fd)
 
-						fd := openBSDTestEchoSocket(t, p, address)
-						defer unix.Close(fd)
+				for _, option := range []int{unix.SO_SNDBUF, unix.SO_RCVBUF} {
+					size, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, option)
+					if err != nil {
+						t.Fatal(err)
+					}
 
-						for _, option := range []int{unix.SO_SNDBUF, unix.SO_RCVBUF} {
-							size, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, option)
-							if err != nil {
-								t.Fatal(err)
-							}
-
-							if size < echoSocketBufferSize(p.echo.Size.Bytes()) {
-								t.Errorf(
-									"socket option %d = %d, too small for a jumbo echo",
-									option,
-									size,
-								)
-							}
-						}
-					})
+					if size < echoSocketBufferSize(p.echo.Size.Bytes()) {
+						t.Errorf("socket option %d = %d, too small for a jumbo echo", option, size)
+					}
 				}
 			})
 		}
@@ -72,7 +60,7 @@ func TestBSDPortableJumboLoopback(t *testing.T) {
 				}
 
 				if result := p.sendPortable(t.Context()); !result.IsSuccess() {
-					t.Fatalf("DF-disabled jumbo loopback: %+v", result)
+					t.Fatalf("jumbo loopback: %+v", result)
 				}
 			})
 		}

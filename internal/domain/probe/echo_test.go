@@ -96,7 +96,7 @@ func TestJUNOSSourceAndFamily(t *testing.T) {
 		Source:    SourceAddr(netip.MustParseAddr("2001:db8::2")),
 		Interface: CLIWordOf("ge-0/0/0.0"),
 		Instance:  CLIWordOf("MGMT"),
-		Echo:      EchoOptions{Size: PayloadBytes(8952), DF: true},
+		Echo:      EchoOptions{Size: PayloadBytes(8952)},
 	}})
 
 	ssh, ok := plan.Params().(SSH)
@@ -129,15 +129,22 @@ func TestEchoDefaultsPreserveIdentity(t *testing.T) {
 			t.Errorf("default changed identity: %q vs %q", left.Identity(), right.Identity())
 		}
 	}
+}
 
-	left := mustCompile(t, Spec{Addr: "2001:db8::1", Params: SSH{Host: "r", OS: OSJUNOS}})
-
-	right := mustCompile(t, Spec{Addr: "2001:db8::1", Params: SSH{
+// Junos OS Evolved cannot send an IPv6 echo with do-not-fragment, so the row is refused
+// instead of probing a path that may fragment; df=off and IPv4 DF still compile.
+func TestJUNOSIPv6RefusesDF(t *testing.T) {
+	_, err := Compile(Spec{Addr: "2001:db8::1", Params: SSH{
 		Host: "r", OS: OSJUNOS, Echo: EchoOptions{DF: true},
 	}})
-	if left.Identity() != right.Identity() {
-		t.Error("JUNOS IPv6 ignores DF, so its identity must not change")
+	if err == nil || !strings.Contains(err.Error(), "df=on") {
+		t.Errorf("JUNOS IPv6 df=on = %v, want a build error", err)
 	}
+
+	mustCompile(t, Spec{Addr: "2001:db8::1", Params: SSH{Host: "r", OS: OSJUNOS}})
+	mustCompile(t, Spec{Addr: "192.0.2.1", Params: SSH{
+		Host: "r", OS: OSJUNOS, Echo: EchoOptions{DF: true},
+	}})
 }
 
 func TestEchoIdentitySeparatesConditions(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"syscall"
 
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -75,18 +76,12 @@ func (p *icmpPinger) nativeEchoSocket(dest *net.IPAddr) (int, error) {
 		socketType = unix.SOCK_RAW
 	}
 
-	fd, err := unix.Socket(family, socketType, protocol)
+	fd, err := openCloseOnExecSocket(family, socketType, protocol)
 	if err != nil {
-		return -1, fmt.Errorf("open ICMP socket: %w", err)
+		return -1, err
 	}
-
-	unix.CloseOnExec(fd)
 
 	err = growICMPSocketBuffers(fd, p.echo.Size.Bytes())
-	if err == nil && p.echo.DF {
-		err = setNativeDF(fd, dest.IP)
-	}
-
 	if err == nil {
 		err = p.bindNativeEchoSource(fd)
 	}
@@ -96,6 +91,23 @@ func (p *icmpPinger) nativeEchoSocket(dest *net.IPAddr) (int, error) {
 
 		return -1, fmt.Errorf("configure ICMP socket: %w", err)
 	}
+
+	return fd, nil
+}
+
+// openCloseOnExecSocket opens a socket that a concurrently started child (an ssh or ip
+// relay probe) cannot inherit. Darwin has no SOCK_CLOEXEC, so, as the net package does
+// there, ForkLock keeps a fork out of the gap between socket and CloseOnExec.
+func openCloseOnExecSocket(family, socketType, protocol int) (int, error) {
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+
+	fd, err := unix.Socket(family, socketType, protocol)
+	if err != nil {
+		return -1, fmt.Errorf("open ICMP socket: %w", err)
+	}
+
+	unix.CloseOnExec(fd)
 
 	return fd, nil
 }

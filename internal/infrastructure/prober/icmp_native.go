@@ -20,7 +20,7 @@ const (
 	ipv4IHLWordSize = 4
 )
 
-// nativeEchoConn retains the underlying socket so buffers and DF can be set before
+// nativeEchoConn retains the underlying socket so its buffers can be grown before
 // it is wrapped by x/net. Its IPv4 reader also handles Darwin's IP_STRIPHDR behavior.
 type nativeEchoConn struct {
 	net.PacketConn
@@ -89,8 +89,8 @@ func (c *nativeEchoConn) WriteTo(data []byte, dest net.Addr) (int, error) {
 	return n, nil
 }
 
-// sendNativeEcho sends probes through sockets with payload-sized buffers and, when asked,
-// the do-not-fragment bit. Linux uses its kernel-timestamped Send.
+// sendNativeEcho sends probes through sockets with payload-sized buffers. Linux uses its
+// kernel-timestamped Send.
 func (p *icmpPinger) sendNativeEcho(ctx context.Context, dest *net.IPAddr) probe.Result {
 	conn, err := p.listenNativeEcho(dest)
 	if err != nil {

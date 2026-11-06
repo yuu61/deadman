@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,9 +46,12 @@ func TestRelayPingOptions(t *testing.T) {
 			"size", "8972", "interface", "ge-0/0/0.0", "routing-instance", "MGMT",
 		}},
 	} {
+		// Compile refuses DF for a JUNOS IPv6 ping, so that case checks its argv without it.
+		df := tc.os != probe.OSJUNOS || !strings.Contains(tc.addr, ":")
+
 		params := probe.SSH{
 			Host: "r", OS: tc.os,
-			Echo: probe.EchoOptions{Size: probe.PayloadBytes(8972), DF: true},
+			Echo: probe.EchoOptions{Size: probe.PayloadBytes(8972), DF: df},
 		}
 		if tc.os == probe.OSJUNOS {
 			params.Interface = probe.CLIWordOf("ge-0/0/0.0")

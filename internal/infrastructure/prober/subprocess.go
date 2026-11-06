@@ -151,7 +151,8 @@ func (p *subprocessPinger) Send(ctx context.Context) probe.Result {
 }
 
 // pingExitStatus accepts successful exits and the OS's no-reply exit code.
-// Linux uses 1; Darwin and FreeBSD use 2. Other failures measured no target.
+// Linux uses 1; Darwin and FreeBSD use 2; a JUNOS CLI may return either. Other failures
+// measured no target.
 func pingExitStatus(pingOS probe.OS, err error) bool {
 	if err == nil {
 		return true

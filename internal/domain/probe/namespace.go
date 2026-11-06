@@ -75,7 +75,7 @@ func (n Namespace) resolve(m Method, dest Destination) (Namespace, error) {
 
 	n.Source, n.Family = src, f
 
-	n.Echo, err = n.Echo.normalize(RelayMinPayload, maxEchoPayload, RelayPayloadSize)
+	n.Echo, err = n.Echo.normalizeRelay(OSLinux)
 	if err != nil {
 		return Namespace{}, err
 	}

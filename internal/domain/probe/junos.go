@@ -39,8 +39,11 @@ func (s SSH) compileOptions(dest Destination) (SSH, error) {
 		return s, err
 	}
 
-	if s.OS == OSJUNOS && s.Family == FamilyIPv6 {
-		echo.DF = false
+	// Whether a relay honors do-not-fragment for inet6 depends on its Junos variant and
+	// release (Junos OS Evolved does not), so an IPv6 echo might fragment and hide the path
+	// MTU. Refuse it instead.
+	if s.OS == OSJUNOS && s.Family == FamilyIPv6 && echo.DF {
+		return s, errors.New("df=on is not supported for a JUNOS IPv6 ping")
 	}
 
 	timeout, err := s.Timeout.normalize(s.DefaultTimeout())

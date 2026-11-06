@@ -166,3 +166,17 @@ func TestNewRejectsZeroPlan(t *testing.T) {
 		t.Fatal("the tcp builder accepted a direct plan")
 	}
 }
+
+// Only Linux reads the router's error for an oversized do-not-fragment echo. Elsewhere that
+// echo would time out and count as loss, so a direct df=on row is refused when it is built.
+func TestDirectDFBuildsOnlyOnLinux(t *testing.T) {
+	plan := compiled(t, probe.Spec{
+		Addr:   "192.0.2.1",
+		Params: probe.Direct{Echo: probe.EchoOptions{Size: probe.PayloadBytes(8972), DF: true}},
+	})
+
+	_, err := New(plan, "row#1")
+	if built, linux := err == nil, runtime.GOOS == "linux"; built != linux {
+		t.Errorf("direct df=on on %s: built = %v (%v), want %v", runtime.GOOS, built, err, linux)
+	}
+}

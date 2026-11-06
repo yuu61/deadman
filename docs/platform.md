@@ -37,7 +37,7 @@
 - 外部コマンドが無い場合、その行は `?` になります。
 - `nexthop` の行があり raw ソケットを開けない場合は、起動時に警告と対処方法を表示し、その行は `?` になります。
 - ssh の中継先の OS（`os=`）ごとの違いは [ssh](configuration.md#ssh) を参照してください。
-- 直接 ICMP の `size=` はすべての OS で使えます。`df=on` は Linux / macOS / FreeBSD で使え、Windows などでは構築エラーです。macOS / FreeBSD の DF も外部コマンドを使わず送ります。
+- 直接 ICMP の `size=` はすべての OS で使えます。`df=on` は Linux だけで使え、macOS・FreeBSD・Windows などでは構築エラーです。これらの OS では、経路の MTU を超えたという知らせを受け取れず、死活不明でなく損失に数えてしまうためです。
 
 ## プローブの待ち時間
 

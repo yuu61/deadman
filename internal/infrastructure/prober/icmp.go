@@ -65,10 +65,10 @@ func echoReceiveSize(payload int) int {
 const bsdRawSpace = 8192
 
 // needsNativeEcho reports whether a direct row needs the native echo path instead of the
-// default one (pro-bing, or sendScoped for a zoned source): a do-not-fragment bit pro-bing
-// does not set, or, on a BSD, an echo too big for a raw socket's default space.
+// default one (pro-bing, or sendScoped for a zoned source): on a BSD, an echo too big for a
+// raw socket's default space. A do-not-fragment echo is sent only by Linux's own Send.
 func needsNativeEcho(echo probe.EchoOptions, bsd bool) bool {
-	return echo.DF || bsd && echoReceiveSize(echo.Size.Bytes()) > bsdRawSpace
+	return bsd && echoReceiveSize(echo.Size.Bytes()) > bsdRawSpace
 }
 
 // echoSocketBufferSize also reserves kernel address/control data and room for a

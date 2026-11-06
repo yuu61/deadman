@@ -273,9 +273,9 @@ SNMPv2c でエージェントに RFC 4560（DISMAN-PING-MIB）の ping を依頼
 
 - `size=バイト数` は、IP ヘッダーと ICMP ヘッダーを除くペイロードの長さです。上限は 65507 バイト（JUNOS は 65468 バイト）です。直接 ICMP は返信を識別する情報を収めるため 24 バイト以上、中継先の ping は 16 バイト以上を受け付けます。中継先の ping は送信時刻をペイロードに入れて RTT を出すため、それより短いと RTT の無い返信になり、0 ms と見分けがつかないからです。既定は直接 ICMP が 24、中継先の ping が 56 バイトです。
 - `df=on|off` は断片化を禁止するかです。`true` / `false`、`yes` / `no`、`1` / `0` も、大文字小文字を区別せずに受け付けます。既定は `off`（OS の標準動作）です。
-- Linux の中継先には `-s` / `-M do`、Darwin / FreeBSD には `-s` / `-D`、JUNOS には `size` / `do-not-fragment` として渡します。JUNOS の IPv6 では `df` を無視し、IPv4 でだけ `do-not-fragment` を付けます。
-- 直接 ICMP は外部の ping を使いません。`df=on` は Linux / macOS / FreeBSD に対応し、Windows などの非対応 OS では構築エラーです。
-- MTU 9000 の経路を調べる例は IPv4 で `size=8972 df=1`、IPv6 で `size=8952 df=1` です。送信元でサイズ超過などにより送信できない結果や、経路の MTU を超えたことを示す ICMP エラー（Frag needed / Packet too big）は死活不明（`?`）として、損失の統計に加えません。直接 ICMP でこのエラーを読むのは Linux の `df=on` だけです。Destination Unreachable など、サイズと関係のない ICMP エラーは、`df` の有無にかかわらず応答なし（`X`）です。
+- Linux の中継先には `-s` / `-M do`、Darwin / FreeBSD には `-s` / `-D`、JUNOS には `size` / `do-not-fragment` として渡します。JUNOS の IPv6 で `df=on` を書くと構築エラーです。IPv6 の `do-not-fragment` に対応するかは Junos の種類や版で異なり、断片化されると経路の MTU を確かめられないためです。
+- 直接 ICMP は外部の ping を使いません。`df=on` は Linux だけで使え、macOS・FreeBSD・Windows などでは構築エラーです。これらの OS では経路の MTU を超えたことを示す ICMP エラーを受け取れず、損失に数えてしまうためです。
+- MTU 9000 の経路を調べる例は IPv4 で `size=8972 df=1`、IPv6 で `size=8952 df=1` です。送信元でサイズ超過などにより送信できない結果や、経路の MTU を超えたことを示す ICMP エラー（Frag needed / Packet too big）は死活不明（`?`）として、損失の統計に加えません。Destination Unreachable など、サイズと関係のない ICMP エラーは、`df` の有無にかかわらず応答なし（`X`）です。
 
 ### source
 
@@ -424,7 +424,7 @@ IP アドレスの中継先も正規化して比べます。ホスト名の大�
 
 - 名前、認証情報（`user` / `key` / `username` / `password` / `community`）、制限時間（`timeout`）を変えても、同じ行のままです。
 - 条件を変えると、新しい履歴と新しいログファイルで始まります。`verify` の切り替えは成功とみなす条件が変わるため、ここに含めています。
-- 新しい ping オプションを省略した既存行の同一性とログファイル名は変わりません。`size` の既定値や `df=off` を明示しても同じ行です。JUNOS の IPv6 の `df` は監視経路に含めません。
+- 新しい ping オプションを省略した既存行の同一性とログファイル名は変わりません。`size` の既定値や `df=off` を明示しても同じ行です。
 - 出現順は構築できた行だけで数えます。同じ監視経路の行が複数あるときに前の行を構築エラーにすると、後の行が繰り上がって、その行の履歴とログファイルを引き継ぎます。
 
 ## 旧版からの移行

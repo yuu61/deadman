@@ -51,7 +51,8 @@ func (p *subprocessPinger) junosCommand() []string {
 		args = append(args, "size", strconv.Itoa(size))
 	}
 
-	if p.echo.DF && p.family == probe.FamilyIPv4 {
+	// Compile refuses DF where this dialect cannot send it (JUNOS IPv6).
+	if p.echo.DF {
 		args = append(args, "do-not-fragment")
 	}
 
