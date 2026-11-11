@@ -179,7 +179,7 @@ func TestTimespecToTimeValidation(t *testing.T) {
 }
 
 // scmTimestampOOB packs a SCM_TIMESTAMPNS control message carrying when, as the kernel
-// would deliver it, so replyResult's clock-step handling can be tested without a socket.
+// would deliver it, so replyRTT's clock-step handling can be tested without a socket.
 func scmTimestampOOB(t *testing.T, when time.Time) []byte {
 	t.Helper()
 
@@ -224,13 +224,9 @@ func TestResultClockStepFallback(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			res := replyResult(c.oob, recvUser, tSend)
-			if !res.IsSuccess() {
-				t.Fatal("result must be a success")
-			}
-
-			if res.RTT < c.wantMs-0.5 || res.RTT > c.wantMs+0.5 {
-				t.Fatalf("RTT=%.3fms, want ~%.1fms", res.RTT, c.wantMs)
+			rtt := replyRTT(c.oob, recvUser, tSend)
+			if rtt < c.wantMs-0.5 || rtt > c.wantMs+0.5 {
+				t.Fatalf("RTT=%.3fms, want ~%.1fms", rtt, c.wantMs)
 			}
 		})
 	}

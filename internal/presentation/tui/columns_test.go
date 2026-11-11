@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -106,4 +107,44 @@ func TestSingleColumnWideCountKeepsRowWidth(t *testing.T) {
 	// widened stat columns and shrinks the result bar to keep the row aligned.
 	_, out := drive(t, m, tea.WindowSizeMsg{Width: width, Height: 40})
 	assertNoLineExceedsWidth(t, out, width)
+}
+
+// LOSS rounds, but a row that lost any probe never shows 0% beside a non-zero FAIL, and
+// one that answered any never shows the 100% of a total loss.
+func TestLossCellRoundsWithoutHidingLoss(t *testing.T) {
+	i := slices.IndexFunc(statColumns, func(c statColumn) bool { return c.Key == colLoss })
+	if i < 0 {
+		t.Fatal("no LOSS column")
+	}
+
+	lossColumn := statColumns[i]
+
+	for _, c := range []struct {
+		rate float64
+		want string
+	}{
+		{0, "   0%"},
+		{0.01, "   1%"},
+		{0.4, "   1%"},
+		{1.5, "   2%"},
+		{33.3, "  33%"},
+		{99.4, "  99%"},
+		{99.96, "  99%"},
+		{100, " 100%"},
+	} {
+		got := lossColumn.cell(monitor.Stats{LossRate: c.rate}, precisionModes[0])
+		if got != c.want {
+			t.Errorf("LossRate %v: cell %q, want %q", c.rate, got, c.want)
+		}
+	}
+}
+
+// The integer ms mode rounds like the decimal modes, so switching precision never moves
+// a value to a different whole millisecond.
+func TestIntegerMSModeRounds(t *testing.T) {
+	for v, want := range map[float64]string{0.4: "    0", 0.96: "    1", 12.5: "   12", 12.51: "   13"} {
+		if got := precisionModes[0].Format(v); got != want {
+			t.Errorf("ms mode formats %v as %q, want %q", v, got, want)
+		}
+	}
 }

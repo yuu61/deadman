@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,5 +131,52 @@ func TestLogStorageFailureIsShownAndSurvivesReload(t *testing.T) {
 	model = model.composeWarnings()
 	if len(model.warnings) != 1 || !strings.Contains(model.warnings[0], "disk full") {
 		t.Fatal("config refresh discarded storage warning")
+	}
+}
+
+// recoveringLog fails its writes until healed, then writes again.
+type recoveringLog struct{ healed *atomic.Bool }
+
+func (recoveringLog) Log(monitor.Reading, time.Time) bool { return true }
+
+func (l recoveringLog) Err() error {
+	if l.healed.Load() {
+		return nil
+	}
+
+	return errors.New("disk full")
+}
+
+// The header follows the log's status: a failure while it lasts, then — once the log
+// writes again — that it failed earlier, since the log lacks the lines of that time.
+func TestLogStorageRecoveryIsShown(t *testing.T) {
+	src := sourceOf([]config.Line{config.Target{Name: "h", Addr: "192.0.2.1"}}, testOptions{})
+	replies := newReplies()
+	healed := new(atomic.Bool)
+	svc := monitoring.NewService(monitoring.Ports{
+		NewPinger:  replies.pinger,
+		LoadConfig: src.load,
+		Host:       stubHost{},
+		Log:        recoveringLog{healed: healed},
+		Wait:       noWait,
+	})
+	scripts.Store(svc, replies)
+	model := openModel(t, svc, testOptions{})
+
+	model, view := drive(t, model, tea.WindowSizeMsg{Width: 160, Height: 30}, success(1))
+	if !strings.Contains(view, logFailingLine("disk full")) {
+		t.Fatalf("storage failure invisible: %s", view)
+	}
+
+	healed.Store(true)
+
+	model, view = drive(t, model, success(2))
+	if !strings.Contains(view, logRecoveredLine("disk full")) ||
+		strings.Contains(view, logFailingLine("disk full")) {
+		t.Fatalf("recovery not shown: %s", view)
+	}
+
+	if len(model.warnings) != 1 {
+		t.Fatalf("warnings = %q, want the one log line", model.warnings)
 	}
 }

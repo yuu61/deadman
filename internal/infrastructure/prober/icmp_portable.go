@@ -14,14 +14,15 @@ import (
 // sendScoped for a zoned source. Linux replaces this with a synchronous, kernel-timestamped
 // prober (icmp_linux.go); see that file for why.
 func (p *icmpPinger) sendPortable(ctx context.Context) probe.Result {
-	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
-	defer cancel()
-
 	// Resolve under the caller lifetime before pro-bing starts its synchronous setup.
 	dest, err := p.resolvePortable(ctx)
 	if err != nil {
 		return probe.UnavailableResult()
 	}
+
+	// The reply wait starts after the lookup, so the lookup's time is not taken from it.
+	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
+	defer cancel()
 
 	if needsNativeEcho(p.echo, nativeBSDEcho) {
 		return p.sendNativeEcho(ctx, dest)
@@ -64,9 +65,9 @@ func portableICMPResult(err error, st *probing.Statistics) probe.Result {
 		return probe.SuccessResult(float64(st.AvgRtt.Microseconds()) / usPerMs)
 	}
 
-	// pro-bing starts its own response timer only after DNS and socket setup. The
-	// outer deadline may therefore end first, even after an echo was sent. A sent
-	// echo with no reply is observed loss; a lookup/socket failure sent nothing.
+	// pro-bing starts its own response timer only after socket setup. The outer
+	// deadline may therefore end first, even after an echo was sent. A sent echo with
+	// no reply is observed loss; a lookup/socket failure sent nothing.
 	if st.PacketsSent > 0 && (err == nil || errors.Is(err, context.DeadlineExceeded)) {
 		return probe.FailedResult()
 	}

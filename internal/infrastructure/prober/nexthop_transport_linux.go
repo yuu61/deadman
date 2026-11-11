@@ -44,12 +44,14 @@ type afpacketTransport struct{}
 // send opens and closes its own socket, so concurrent probes never share an fd.
 func newLinkTransport() (linkTransport, error) { return afpacketTransport{}, nil }
 
+// send takes the send instant right before sendto, as the direct prober does
+// (sendProbe), so opening the packet socket is not part of the RTT.
 func (afpacketTransport) send(
 	iface *net.Interface,
 	dstMAC net.HardwareAddr,
 	ethertype uint16,
 	l3 []byte,
-) error {
+) (time.Time, error) {
 	proto := int(htons(ethertype))
 
 	fd, err := unix.Socket(
@@ -58,7 +60,7 @@ func (afpacketTransport) send(
 		proto,
 	)
 	if err != nil {
-		return fmt.Errorf("open a packet socket: %w", err)
+		return time.Time{}, fmt.Errorf("open a packet socket: %w", err)
 	}
 	defer func() { _ = unix.Close(fd) }()
 
@@ -67,7 +69,7 @@ func (afpacketTransport) send(
 
 	n := len(dstMAC)
 	if n > len(addr) {
-		return fmt.Errorf(
+		return time.Time{}, fmt.Errorf(
 			"nexthop: link-layer address %s is longer than %d bytes",
 			dstMAC,
 			len(addr),
@@ -88,12 +90,14 @@ func (afpacketTransport) send(
 		Addr:     addr,
 	}
 
+	sent := time.Now()
+
 	err = unix.Sendto(fd, l3, 0, &ll)
 	if err != nil {
-		return fmt.Errorf("send a link-layer frame: %w", err)
+		return time.Time{}, fmt.Errorf("send a link-layer frame: %w", err)
 	}
 
-	return nil
+	return sent, nil
 }
 
 // resolveGateway reads the gateway's MAC from the kernel neighbor cache (ARP for IPv4,

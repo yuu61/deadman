@@ -2,7 +2,6 @@ package prober
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/netip"
 	"time"
@@ -13,7 +12,8 @@ import (
 	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
-// resolvePortable keeps DNS within the probe's lifetime and preserves literal zones.
+// resolvePortable resolves a name within the caller's lifetime and its own resolveTimeout,
+// apart from the reply wait, and preserves a literal's zone.
 func (p *icmpPinger) resolvePortable(ctx context.Context) (*net.IPAddr, error) {
 	err := ctx.Err()
 	if err != nil {
@@ -31,28 +31,16 @@ func (p *icmpPinger) resolvePortable(ctx context.Context) (*net.IPAddr, error) {
 
 	name, _ := p.dest.Name()
 
-	addresses, err := net.DefaultResolver.LookupIP(ctx, network, name)
+	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
+	defer cancel()
+
+	// The resolver's first address, as on Linux (icmp_linux.go) and in the other methods.
+	chosen, err := lookupFirst(ctx, network, name)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(addresses) == 0 {
-		return nil, fmt.Errorf("ping: no addresses for %s", name)
-	}
-
-	// Match net.ResolveIPAddr's IPv4 preference for a name in automatic mode.
-	chosen := addresses[0]
-	if network == networkAny {
-		for _, address := range addresses {
-			if address.To4() != nil {
-				chosen = address
-
-				break
-			}
-		}
-	}
-
-	return &net.IPAddr{IP: chosen}, nil
+	return &net.IPAddr{IP: net.IP(chosen.AsSlice())}, nil
 }
 
 // sendScoped binds the full scoped source. pro-bing's Source validation uses ParseIP,

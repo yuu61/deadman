@@ -19,8 +19,14 @@ type Diagnostic struct {
 
 // Check reports all invalid lines, including constructs that monitoring tolerates.
 // It uses the normal parser and probe.Compile, without creating probes or performing
-// network I/O. checkSetting must validate the frontend's display vocabulary and ranges.
-func Check(r io.Reader, checkSetting func(config.Setting) error) ([]Diagnostic, error) {
+// network I/O. checkSetting must validate the frontend's display vocabulary and ranges,
+// and checkPlan a compiled target's probe the way the probing adapters will build it,
+// without I/O and on any OS.
+func Check(
+	r io.Reader,
+	checkSetting func(config.Setting) error,
+	checkPlan func(probe.Plan) error,
+) ([]Diagnostic, error) {
 	var diagnostics []Diagnostic
 
 	err := scanLines(r, func(number int, raw string) {
@@ -33,7 +39,7 @@ func Check(r io.Reader, checkSetting func(config.Setting) error) ([]Diagnostic, 
 		}
 
 		line := stripComment(strings.ReplaceAll(raw, "\t", " "))
-		for _, problem := range checkLine(line, checkSetting) {
+		for _, problem := range checkLine(line, checkSetting, checkPlan) {
 			diagnostics = append(diagnostics, Diagnostic{Line: number, Problem: problem.Error()})
 		}
 	})
@@ -41,7 +47,11 @@ func Check(r io.Reader, checkSetting func(config.Setting) error) ([]Diagnostic, 
 	return diagnostics, err
 }
 
-func checkLine(line string, checkSetting func(config.Setting) error) []error {
+func checkLine(
+	line string,
+	checkSetting func(config.Setting) error,
+	checkPlan func(probe.Plan) error,
+) []error {
 	fields, terminated := tokenize(line)
 	if !terminated {
 		return []error{errors.New("unterminated double quote")}
@@ -56,10 +66,10 @@ func checkLine(line string, checkSetting func(config.Setting) error) []error {
 		return checkDirective(keyword, fields[1:], checkSetting)
 	}
 
-	return checkTarget(fields)
+	return checkTarget(fields, checkPlan)
 }
 
-func checkTarget(fields []string) []error {
+func checkTarget(fields []string, checkPlan func(probe.Plan) error) []error {
 	line, note := parseTarget(fields)
 
 	var problems []error
@@ -72,7 +82,11 @@ func checkTarget(fields []string) []error {
 
 	switch value := line.(type) {
 	case config.Target:
-		_, err := probe.Compile(value.ProbeSpec())
+		plan, err := probe.Compile(value.ProbeSpec())
+		if err == nil {
+			err = checkPlan(plan)
+		}
+
 		if err != nil {
 			problems = append(problems, err)
 		}

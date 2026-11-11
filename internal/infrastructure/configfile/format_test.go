@@ -174,7 +174,7 @@ func TestFormatSortsAttributes(t *testing.T) {
 			input := "h 192.0.2.1 " + tc.input + " ;# keep probe=word\n"
 			want := "h  192.0.2.1  " + tc.want + " ;# keep probe=word\n"
 
-			diagnostics, err := Check(strings.NewReader(input), acceptSetting)
+			diagnostics, err := Check(strings.NewReader(input), acceptSetting, acceptPlan)
 			if err != nil || len(diagnostics) > 0 {
 				t.Fatalf("invalid input: %v, %v", diagnostics, err)
 			}
@@ -214,7 +214,7 @@ func TestFormatAlignedLineSizeBoundary(t *testing.T) {
 			key := strings.Repeat("a", tc.size-len(wantPrefix)-1)
 			input := inputPrefix + key + "\n"
 
-			diagnostics, err := Check(strings.NewReader(input), acceptSetting)
+			diagnostics, err := Check(strings.NewReader(input), acceptSetting, acceptPlan)
 			if err != nil || len(diagnostics) > 0 {
 				t.Fatalf("invalid input: %v, %v", diagnostics, err)
 			}

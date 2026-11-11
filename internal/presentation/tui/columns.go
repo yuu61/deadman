@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/yuu61/deadman/internal/domain/monitor"
@@ -23,9 +24,10 @@ type precisionMode struct {
 
 // Stat-cell widths per precision mode: the header label and each cell render to this
 // many columns. Every mode reserves four integer digits (matching the integer ms
-// mode's %4d, good to 9999 ms — WAN/LTE RTTs reach 1000 ms+ routinely), and each added
+// mode's %4.0f, good to 9999 ms — WAN/LTE RTTs reach 1000 ms+ routinely), and each added
 // decimal place is one more column (the dot plus N decimals); the leading space is
-// shared. So a value only overflows at >= 10000 ms, the same ceiling in every mode.
+// shared. Every mode rounds to its last place, so a value only overflows once it rounds
+// to 10000 ms, the same ceiling in every mode.
 const (
 	msWidth  = 5 // integer ms, e.g. " 1234".
 	ms1Width = 7 // one decimal, e.g. " 1234.5".
@@ -37,7 +39,7 @@ var precisionModes = []precisionMode{
 	{
 		Label:  "ms",
 		Width:  msWidth,
-		Format: func(v float64) string { return fmt.Sprintf(" %4d", int(v)) },
+		Format: func(v float64) string { return fmt.Sprintf(" %4.0f", v) },
 	},
 	{
 		Label:  "ms.1",
@@ -141,7 +143,7 @@ var statColumns = []statColumn{
 	{
 		Key:    colLoss,
 		Header: " LOSS",
-		Cell:   func(s monitor.Stats) string { return fmt.Sprintf(" %3d%%", int(s.LossRate)) },
+		Cell:   func(s monitor.Stats) string { return fmt.Sprintf(" %3d%%", lossPercent(s.LossRate)) },
 	},
 	{Key: colRTT, Name: colRTT, Value: func(s monitor.Stats) float64 { return s.RTT }},
 	{Key: colAvg, Name: colAvg, Value: func(s monitor.Stats) float64 { return s.Avg }},
@@ -154,6 +156,28 @@ var statColumns = []statColumn{
 		Header: " FAIL",
 		Cell:   func(s monitor.Stats) string { return col4i(s.Loss) },
 	},
+}
+
+// lossPercent is the LOSS cell's whole percentage: the rate rounded, but kept off 0 while
+// any probe was lost and off 100 while any was answered, so the cell neither hides a loss
+// (a non-zero FAIL beside 0%) nor reads as a total one.
+func lossPercent(rate float64) int {
+	const (
+		someLost     = 1
+		someAnswered = 99
+		allLost      = 100
+	)
+
+	pct := int(math.Round(rate))
+
+	switch {
+	case rate > 0 && pct < someLost:
+		return someLost
+	case rate < allLost && pct > someAnswered:
+		return someAnswered
+	default:
+		return pct
+	}
 }
 
 // buildVisible returns a per-column visibility map seeded to all-shown, then

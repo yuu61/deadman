@@ -57,11 +57,30 @@ func newLocalPinger(dest probe.Destination, params probe.LocalParams) (probe.Pin
 	}
 }
 
+// Check reports the build errors New returns for plan that need no I/O and hold on every
+// OS: a value the relay's argv would carry as a bare operand that begins with '-'. --check
+// runs it after probe.Compile, so a line monitoring would refuse to build fails the check
+// too. What this OS cannot send stays New's alone: a configuration may be checked on
+// another host than the one that monitors with it.
+func Check(plan probe.Plan) error {
+	relay, ok := plan.Params().(probe.RelayParams)
+	if !ok {
+		return nil
+	}
+
+	return argvOperandError(plan.Destination(), relay)
+}
+
 func newRelayPinger(
 	dest probe.Destination,
 	params probe.RelayParams,
 	row string,
 ) (probe.Pinger, error) {
+	err := argvOperandError(dest, params)
+	if err != nil {
+		return nil, err
+	}
+
 	switch p := params.(type) {
 	case probe.SNMP:
 		return newSNMPPinger(dest, p, row)

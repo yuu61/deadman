@@ -97,7 +97,8 @@ func (w *capWriter) String() string { return w.buf.String() }
 // begins with '-'. Values consumed as a PRECEDING flag's argument (community after -c,
 // user after -l, key after -i, source after -I/-S) are not operands and are not passed
 // here. New surfaces the error so the target degrades to a permanent failure glyph
-// with a startup warning rather than aborting the program.
+// with a startup warning rather than aborting the program, and Check surfaces it to
+// --check (argvOperandError lists the operands).
 func validateOperands(values ...string) error {
 	for _, v := range values {
 		if strings.HasPrefix(v, "-") {

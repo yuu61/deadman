@@ -84,6 +84,21 @@ func TestParseLeavesPortRangeToCompile(t *testing.T) {
 	}
 }
 
+// A line with several unreadable attributes reports the first its method reads, not
+// whichever was read last.
+func TestParseReportsFirstAttributeError(t *testing.T) {
+	cfg, err := Parse(strings.NewReader(
+		"h 192.0.2.1 probe=ssh relay=r os=linux resolve_family=ipv5 size=big timeout=soon",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if p := malformed(t, cfg, 0).Problem; !strings.Contains(p, "resolve_family") {
+		t.Errorf("problem = %q, want the resolve_family error read first", p)
+	}
+}
+
 // source= is an address when it parses as one — a zoned IPv6 address included — and an
 // interface name otherwise; the adapters never classify the text again.
 func TestParseSourceKinds(t *testing.T) {

@@ -8,6 +8,8 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv6"
+
+	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
 const (
@@ -77,22 +79,10 @@ func (echoIPv6) listen(src net.IP, id int) (replyWaiter, error) {
 	// link-local source falls back to the wildcard: its bind would need a zone, and
 	// link-local addresses do not rotate. The userspace match (peer + id + seq +
 	// token) isolates our reply from the raw socket's fan-out either way.
-	addr := "::"
+	var bind net.IP
 	if src != nil && !src.IsLinkLocalUnicast() {
-		addr = src.String()
+		bind = src
 	}
 
-	conn, err := icmp.ListenPacket("ip6:ipv6-icmp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("listen for ICMPv6 replies: %w", err)
-	}
-
-	err = filterEcho(conn, id)
-	if err != nil {
-		_ = conn.Close()
-
-		return nil, err
-	}
-
-	return &echoWaiter{conn: conn, kind: echoKindV6}, nil
+	return listenReplies(probe.FamilyIPv6, bind, id)
 }

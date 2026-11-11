@@ -54,7 +54,7 @@ func TestCheckRejectsInvalidPingOptions(t *testing.T) {
 		"probe=ssh relay=r os=JUNOS timeout=9999999999999999999999",
 		"probe=ssh relay=r os=JUNOS timeout=1h", "probe=ssh relay=r os=JUNOS timeout=1h2",
 	} {
-		problems, err := Check(strings.NewReader("h 192.0.2.1 "+attrs), acceptSetting)
+		problems, err := Check(strings.NewReader("h 192.0.2.1 "+attrs), acceptSetting, acceptPlan)
 		if err != nil || len(problems) != 1 {
 			t.Errorf("%s: Check = %+v, %v; want one diagnostic", attrs, problems, err)
 		}

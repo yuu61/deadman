@@ -25,7 +25,9 @@ import (
 // without touching the transport or the orchestration core.
 //
 // The OS-specific half — putting an L3 packet on the wire toward a MAC and resolving
-// that MAC from the kernel neighbor cache — is linkTransport (Linux AF_PACKET).
+// that MAC from the kernel neighbor cache — is linkTransport (Linux AF_PACKET). The
+// reply is read on the same kernel-timestamped raw socket the direct prober uses
+// (listenReplies), so a forced RTT is measured as a direct one is.
 // Next-hop forcing is a Linux-only feature, like the other Linux-bound methods
 // (netns/vrf through `ip`): the AF_PACKET injection it needs has no
 // portable equivalent, so the transport is build-tagged, and elsewhere a forced target
@@ -46,8 +48,8 @@ var errNexthopTimeout = errors.New("nexthop: probe deadline exceeded")
 
 // linkTransport is the OS-specific half of next-hop forcing. The Linux AF_PACKET
 // implementation lives in nexthop_transport_linux.go; nexthop_transport_other.go has
-// none, so newLinkTransport fails there. Receiving replies is cross-platform, so it is
-// not here.
+// none, so newLinkTransport fails there. Receiving replies is not here: it is the
+// echoFamily's listen.
 type linkTransport interface {
 	// resolveGateway returns the link-layer address of nexthop as reached out
 	// iface, consulting (and if needed populating) the OS neighbor cache. A gateway that
@@ -57,14 +59,21 @@ type linkTransport interface {
 		iface *net.Interface,
 		nexthop net.IP,
 	) (net.HardwareAddr, error)
-	// send transmits an already-built L3 packet to dstMAC out iface. ethertype
-	// selects the L3 protocol carried in the frame.
-	send(iface *net.Interface, dstMAC net.HardwareAddr, ethertype uint16, l3 []byte) error
+	// send transmits an already-built L3 packet to dstMAC out iface, and returns the
+	// instant it handed the frame to the kernel: the RTT's start, taken after the socket is
+	// set up so that setup is not measured. ethertype selects the L3 protocol carried in
+	// the frame.
+	send(
+		iface *net.Interface,
+		dstMAC net.HardwareAddr,
+		ethertype uint16,
+		l3 []byte,
+	) (time.Time, error)
 }
 
-// echoFamily is the address-family-specific half: building the echo request,
-// opening a raw ICMP listener, and matching the reply. Both families are
-// implemented: echoIPv4 (ICMP/ARP) and echoIPv6 (ICMPv6/NDP).
+// echoFamily is the address-family-specific half: building the echo request and
+// opening the raw ICMP listener its reply returns on (which the listener matches). Both
+// families are implemented: echoIPv4 (ICMP/ARP) and echoIPv6 (ICMPv6/NDP).
 type echoFamily interface {
 	ethertype() uint16
 	build(src, dst net.IP, id, seq int, token []byte) ([]byte, error)
@@ -73,16 +82,20 @@ type echoFamily interface {
 
 // replyWaiter blocks for the echo reply to one probe. close releases the listener.
 type replyWaiter interface {
-	// wait reports ok once an echo reply matching id/seq/token from peer arrives, or
-	// ok=false once deadline passes with no match.
-	wait(
-		ctx context.Context,
-		peer net.IP,
-		id, seq int,
-		token []byte,
-		deadline time.Time,
-	) (ok bool, err error)
+	// wait reports ok and the RTT in milliseconds once the reply to echo arrives, or
+	// ok=false once deadline passes with no match. An err is a wait that observed
+	// nothing: a socket failure, or the caller's cancellation or deadline.
+	wait(ctx context.Context, echo sentEcho, deadline time.Time) (rtt float64, ok bool, err error)
 	close() error
+}
+
+// sentEcho is a forced echo as its reply must match it: the target it went to, its id,
+// seq and token, and when it was sent.
+type sentEcho struct {
+	peer    net.IP
+	id, seq int
+	token   []byte
+	at      time.Time
 }
 
 // resolved is the cached result of locating the gateway: where to send and as what.
@@ -165,12 +178,10 @@ func newNexthopPinger(dest probe.Destination, n probe.Nexthop) (probe.Pinger, er
 	}, nil
 }
 
+// Send resolves the name and the gateway, each on its own bound (resolveTimeout,
+// neighborResolveTimeout), before the reply wait starts, so neither shortens it. Generation
+// cancellation stops each phase without waiting for its bound.
 func (p *nexthopPinger) Send(ctx context.Context) probe.Result {
-	// Bound DNS, neighbor resolution and the echo to one deadline. Generation
-	// cancellation also stops each phase without waiting for the probe timeout.
-	ctx, cancel := context.WithTimeoutCause(ctx, icmpTimeout, errNexthopTimeout)
-	defer cancel()
-
 	// Forcing is same-family only: IPv4 uses ARP, IPv6 uses NDP, and their egress and
 	// source selection diverge. The plan fixes the probe's family to the gateway's; a
 	// name with no address in it (e.g. an IPv6-only name behind an IPv4 gateway) cannot
@@ -197,10 +208,21 @@ func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.
 		return probe.UnavailableResult()
 	}
 
-	// Resolving the name and the gateway may have spent the probe's time: an echo sent
-	// now could not be waited for, so it would count a loss nothing observed.
+	// The caller may have stopped the probe, or run out of its own time, while the name
+	// and the gateway resolved: an echo sent now could not be waited for, so it would count
+	// a loss nothing observed.
+	if ctx.Err() != nil {
+		return probe.UnavailableResult()
+	}
+
+	// The reply wait starts here, after both lookups, so their time is not taken from it;
+	// what runs before the send (socket setup) takes microseconds. Its own timeout carries
+	// a cause, which tells the target's silence from the caller's deadline.
+	ctx, cancel := context.WithTimeoutCause(ctx, icmpTimeout, errNexthopTimeout)
+	defer cancel()
+
 	deadline := probeDeadline(ctx)
-	if ctx.Err() != nil || time.Until(deadline) <= 0 {
+	if time.Until(deadline) <= 0 {
 		return probe.UnavailableResult()
 	}
 
@@ -220,16 +242,16 @@ func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.
 		return probe.UnavailableResult()
 	}
 
-	start := time.Now()
-
-	err = p.transport.send(route.iface, route.mac, fam.ethertype(), pkt)
+	sent, err := p.transport.send(route.iface, route.mac, fam.ethertype(), pkt)
 	if err != nil {
 		p.reset() // the ifindex/MAC may be stale (interface or gateway changed); re-select.
 
 		return probe.UnavailableResult()
 	}
 
-	ok, err := waiter.wait(ctx, dst, id, seq, token, deadline)
+	echo := sentEcho{peer: dst, id: id, seq: seq, token: token, at: sent}
+
+	rtt, ok, err := waiter.wait(ctx, echo, deadline)
 	if err != nil {
 		p.invalidateMAC()
 
@@ -241,8 +263,6 @@ func (p *nexthopPinger) sendForced(ctx context.Context, fam echoFamily, dst net.
 
 		return probe.FailedResult()
 	}
-
-	rtt := float64(time.Since(start).Microseconds()) / usPerMs
 
 	return probe.SuccessResult(rtt)
 }
@@ -312,7 +332,7 @@ func (p *nexthopPinger) reset() {
 // (Compile refuses either, since the egress is chosen from the gateway). Forcing pins the
 // family because ARP/IPv4 and NDP/IPv6 cannot be mixed: a name that resolves only to the
 // other family is reported unreachable rather than probed via a path the next-hop cannot
-// serve.
+// serve. A name takes the resolver's first address in that family, within resolveTimeout.
 func resolveInFamily(ctx context.Context, dest probe.Destination, fam probe.Family) net.IP {
 	if a, ok := dest.IP(); ok {
 		return net.IP(a.AsSlice())
@@ -320,27 +340,15 @@ func resolveInFamily(ctx context.Context, dest probe.Destination, fam probe.Fami
 
 	name, _ := dest.Name()
 
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, name)
+	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
+	defer cancel()
+
+	a, err := lookupFirst(ctx, resolveNetwork(fam), name)
 	if err != nil {
 		return nil
 	}
 
-	for _, ip := range ips {
-		if ipFamily(ip.IP) == fam {
-			return ip.IP
-		}
-	}
-
-	return nil
-}
-
-// ipFamily reports the family of a resolved address.
-func ipFamily(ip net.IP) probe.Family {
-	if ip.To4() != nil {
-		return probe.FamilyIPv4
-	}
-
-	return probe.FamilyIPv6
+	return net.IP(a.AsSlice())
 }
 
 // selectEgress picks the egress interface and source IP for reaching nexthop. The
