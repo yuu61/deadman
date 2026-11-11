@@ -8,6 +8,8 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+
+	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
 const (
@@ -76,25 +78,10 @@ func (echoIPv4) build(src, dst net.IP, id, seq int, token []byte) ([]byte, error
 	return append(header, payload...), nil
 }
 
+// listen binds the source the echo is sent from, so a source that left its interface
+// fails here and the pinger re-selects.
 func (echoIPv4) listen(src net.IP, id int) (replyWaiter, error) {
-	addr := "0.0.0.0"
-	if src != nil {
-		addr = src.String()
-	}
-
-	conn, err := icmp.ListenPacket("ip4:icmp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("listen for ICMP replies: %w", err)
-	}
-
-	err = filterEcho(conn, id)
-	if err != nil {
-		_ = conn.Close()
-
-		return nil, err
-	}
-
-	return &echoWaiter{conn: conn, kind: echoKindV4}, nil
+	return listenReplies(probe.FamilyIPv4, src, id)
 }
 
 func isTimeout(err error) bool {

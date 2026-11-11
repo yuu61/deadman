@@ -29,6 +29,31 @@ func TestPortableLiteralPreservesZone(t *testing.T) {
 	}
 }
 
+// A name probes the resolver's first address on the portable path too, as on Linux and in
+// the other methods: no family of its own is preferred.
+func TestPortableNameTakesResolversFirstAddress(t *testing.T) {
+	useProbeDNS(t, []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("::1")}, nil)
+
+	name := "dual-stack.example.invalid."
+
+	first, err := lookupFirst(t.Context(), networkAny, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := &icmpPinger{dest: compiled(t, probe.Spec{Addr: name}).Destination()}
+
+	resolved, err := p.resolvePortable(t.Context())
+	if err != nil || !resolved.IP.Equal(net.IP(first.AsSlice())) {
+		t.Fatalf(
+			"portable resolved %v (%v), want the resolver's first address %v",
+			resolved,
+			err,
+			first,
+		)
+	}
+}
+
 func TestNativeEchoReplyRejectsUnrelatedEchoes(t *testing.T) {
 	peer := net.ParseIP("fe80::2")
 	token := []byte("our-token")

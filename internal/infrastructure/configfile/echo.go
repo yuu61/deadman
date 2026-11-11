@@ -14,7 +14,7 @@ func (p *probeInput) echo() probe.EchoOptions {
 	if raw := p.take("size"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
-			p.err = fmt.Errorf("invalid size=%q: expected integer bytes", raw)
+			p.fail(fmt.Errorf("invalid size=%q: expected integer bytes", raw))
 		}
 
 		echo.Size = probe.PayloadBytes(n)
@@ -23,7 +23,7 @@ func (p *probeInput) echo() probe.EchoOptions {
 	if raw := p.take("df"); raw != "" {
 		on, err := parseBool(raw)
 		if err != nil {
-			p.err = fmt.Errorf("invalid df=%q: expected a boolean", raw)
+			p.fail(fmt.Errorf("invalid df=%q: expected a boolean", raw))
 		}
 
 		echo.DF = on
@@ -44,7 +44,7 @@ func (p *probeInput) timeout() probe.Timeout {
 
 	duration, durationErr := time.ParseDuration(raw + "s")
 	if numberErr != nil || durationErr != nil {
-		p.err = fmt.Errorf("invalid timeout=%q: expected seconds", raw)
+		p.fail(fmt.Errorf("invalid timeout=%q: expected seconds", raw))
 	}
 
 	return probe.TimeoutAfter(duration)

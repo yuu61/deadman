@@ -61,6 +61,15 @@ func logDroppedLine(n int) string {
 	)
 }
 
+// logFailingLine words a storage failure the log is still in.
+func logFailingLine(err string) string { return "log write failed: " + err }
+
+// logRecoveredLine words a storage failure the log has recovered from, which left its
+// lines of that time missing.
+func logRecoveredLine(err string) string {
+	return "log write failed earlier (writing again now): " + err
+}
+
 // formatDiagnostic words one diagnostic.
 func formatDiagnostic(d monitoring.Diagnostic) []string {
 	switch d := d.(type) {

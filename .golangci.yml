@@ -398,7 +398,7 @@ linters:
         path: internal/infrastructure/logfile/logging\.go
         text: '^statusWords is a global variable$'
       - linters: [gochecknoglobals]
-        path: internal/infrastructure/prober/(match_echo|prober|snmp|subprocess)\.go
+        path: internal/infrastructure/prober/(icmp_native|prober|snmp|subprocess)\.go
         text: '^(echoKindV4|echoKindV6|familyNetworks|resultColumns|snmpNumberTypes|sourceFlags) is a global variable$'
       # 同期を持つプロセス共有の状態: ICMP の id の採番 (atomic)、特権で送れるかの 1 回きりの判定、
       # SNMP の自プロセスの識別子 (起動時に決めて以後は読むだけ)、SNMP の行ごとのロック表 (mutex)。

@@ -129,6 +129,30 @@ func TestProcessConfigRejectsInvalidSettings(t *testing.T) {
 	}
 }
 
+// A line that compiles but that monitoring would refuse to build on any OS — an argv
+// operand starting with '-' — fails --check too, rather than only once monitoring starts.
+func TestProcessConfigRejectsOptionLikeOperands(t *testing.T) {
+	input := "ok 192.0.2.1 probe=ssh relay=jump os=Linux\n" +
+		"ssh 192.0.2.1 probe=ssh relay=-oProxyCommand=x os=Linux\n" +
+		"ns 192.0.2.1 probe=netns relay=-x\n"
+	path := writeConfig(t, input)
+
+	err := processConfig(cliArgs{ConfigPath: path, Check: true}, io.Discard)
+	if err == nil {
+		t.Fatal("expected option-like operands to fail the check")
+	}
+
+	for _, suffix := range []string{":2: ", ":3: "} {
+		if !strings.Contains(err.Error(), path+suffix) {
+			t.Errorf("missing diagnostic for %s: %v", suffix, err)
+		}
+	}
+
+	if strings.Contains(err.Error(), path+":1: ") {
+		t.Errorf("a valid relay was reported: %v", err)
+	}
+}
+
 func TestProcessConfigIOErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.conf")
 

@@ -55,21 +55,20 @@ var errAddrFamily = errors.New("ping: address family mismatch")
 //
 // raw vs datagram follows useICMPPrivileged() exactly as the portable path does, so the
 // behavior on root, non-root, and unprivileged LXC (where the datagram path is blocked
-// and the raw path is used) is unchanged. Reply matching mirrors the next-hop prober
-// (nexthop_ipv4.go): a raw ICMP socket sees every host's ICMP, so id+seq+token+src is
-// load-bearing there; the datagram socket is demuxed by the kernel and rewrites our id,
-// so it matches on seq+token+src only.
+// and the raw path is used) is unchanged. A raw ICMP socket sees every host's ICMP, so
+// id+seq+token+src is load-bearing there; the datagram socket is demuxed by the kernel and
+// rewrites our id, so it matches on seq+token+src only. The next-hop prober reads its
+// replies through the same raw-path receive (awaitReply, nexthop_reply_linux.go).
 func (p *icmpPinger) Send(ctx context.Context) probe.Result {
-	ctx, cancel := context.WithTimeout(ctx, icmpTimeout)
-	defer cancel()
-
 	ip, zoneID, err := p.resolve(ctx)
 	if err != nil {
 		return probe.UnavailableResult()
 	}
 
+	// The reply wait starts after the lookup, so the lookup's time is not taken from it.
+	// What runs from here to the send (socket setup) takes microseconds.
 	deadline := probeDeadline(ctx)
-	if time.Until(deadline) <= 0 {
+	if ctx.Err() != nil || time.Until(deadline) <= 0 {
 		return probe.UnavailableResult()
 	}
 
@@ -129,8 +128,8 @@ func (p *icmpPinger) Send(ctx context.Context) probe.Result {
 
 // resolve turns the destination into an IP plus an IPv6 zone (scope) index. An address
 // is already of the pinned family (Compile refuses one of another); a name resolves in the
-// resolve_family pin (network) the same way the pro-bing path did. The resolver drops a
-// zone, so only an address destination carries one.
+// resolve_family pin (network) to the resolver's first address, within resolveTimeout.
+// The resolver drops a zone, so only an address destination carries one.
 func (p *icmpPinger) resolve(ctx context.Context) (net.IP, int, error) {
 	if a, ok := p.dest.IP(); ok {
 		ip, zone := literalAddr(a)
@@ -138,19 +137,22 @@ func (p *icmpPinger) resolve(ctx context.Context) (net.IP, int, error) {
 		return ip, zone, nil
 	}
 
-	netw := "ip"
+	netw := networkAny
 	if p.network != "" {
 		netw = p.network
 	}
 
 	name, _ := p.dest.Name()
 
-	ips, err := net.DefaultResolver.LookupIP(ctx, netw, name)
-	if err != nil || len(ips) == 0 {
+	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
+	defer cancel()
+
+	a, err := lookupFirst(ctx, netw, name)
+	if err != nil {
 		return nil, 0, errAddrFamily
 	}
 
-	return ips[0], 0, nil
+	return net.IP(a.AsSlice()), 0, nil
 }
 
 // literalAddr is an address destination as the socket takes it: its bytes, and its IPv6
@@ -196,6 +198,16 @@ type icmpFamily struct {
 // familyOf returns the icmpFamily for ip's address family.
 func familyOf(ip net.IP) icmpFamily {
 	if ip.To4() != nil {
+		return icmpFamilyFor(probe.FamilyIPv4)
+	}
+
+	return icmpFamilyFor(probe.FamilyIPv6)
+}
+
+// icmpFamilyFor returns the icmpFamily of an IP family: IPv6 for probe.FamilyIPv6, IPv4
+// otherwise.
+func icmpFamilyFor(f probe.Family) icmpFamily {
+	if f != probe.FamilyIPv6 {
 		return icmpFamily{
 			domain:    unix.AF_INET,
 			proto:     unix.IPPROTO_ICMP,
@@ -371,10 +383,28 @@ func (pr icmpProbe) build() ([]byte, error) {
 	return wire, nil
 }
 
-// recv reads through the runtime poller until this probe's echo reply arrives or the
-// os.File read deadline passes, skipping foreign ICMP (raw fan-out). A parked read holds
-// no OS thread, and the absolute deadline bounds the loop even under continuous ICMP.
+// recv waits for this probe's echo reply: a reply is a success, the read deadline passing
+// without one is the target's loss, and any other failure observed nothing.
 func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) probe.Result {
+	rtt, err := pr.awaitReply(rc, peer, tSend)
+
+	switch {
+	case err == nil:
+		return probe.SuccessResult(rtt)
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		return probe.FailedResult()
+	default:
+		return probe.UnavailableResult()
+	}
+}
+
+// awaitReply reads through the runtime poller until this probe's echo reply arrives, and
+// returns its RTT in milliseconds, skipping foreign ICMP (raw fan-out). It returns the
+// error that ended the wait instead: os.ErrDeadlineExceeded once the os.File read deadline
+// passed. A parked read holds no OS thread, and the absolute deadline bounds the loop even
+// under continuous ICMP. The forced (nexthop) probe waits for its reply here too, so both
+// measure an RTT the same way.
+func (pr icmpProbe) awaitReply(rc syscall.RawConn, peer net.IP, tSend time.Time) (float64, error) {
 	buf := make([]byte, echoReceiveSize(len(pr.token)))
 	oob := make([]byte, controlBufSize)
 
@@ -397,12 +427,12 @@ func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) probe
 			continue
 		}
 
-		if readErr != nil || rerr != nil {
-			if errors.Is(readErr, os.ErrDeadlineExceeded) {
-				return probe.FailedResult()
-			}
+		if readErr != nil {
+			return 0, fmt.Errorf("receive the ICMP reply: %w", readErr)
+		}
 
-			return probe.UnavailableResult()
+		if rerr != nil {
+			return 0, fmt.Errorf("receive the ICMP reply: %w", rerr)
 		}
 
 		data, ok := pr.payload(buf[:bufn])
@@ -410,7 +440,7 @@ func (pr icmpProbe) recv(rc syscall.RawConn, peer net.IP, tSend time.Time) probe
 			continue
 		}
 
-		return replyResult(oob[:oobn], recvUser, tSend)
+		return replyRTT(oob[:oobn], recvUser, tSend), nil
 	}
 }
 
@@ -475,13 +505,13 @@ func (pr icmpProbe) match(data []byte, from unix.Sockaddr, peer net.IP) bool {
 	return echo.Seq == pr.seq && bytes.Equal(echo.Data, pr.token)
 }
 
-// replyResult turns a matched reply into a success probe.Result. RTT prefers the kernel RX timestamp
+// replyRTT is a matched reply's RTT in milliseconds. It prefers the kernel RX timestamp
 // (precise) but falls back to the monotonic send->recv span when the kernel value is
 // implausible — i.e. a CLOCK_REALTIME step between send and receive moved it outside
 // [0, rttMono]. recvUser carries a monotonic reading, so rttMono is step-immune and is a
 // valid upper bound (the kernel stamps RX before the userspace Recvmsg returns). k==0 is
 // accepted: a genuine sub-microsecond reply truncates to 0 ms.
-func replyResult(oob []byte, recvUser, tSend time.Time) probe.Result {
+func replyRTT(oob []byte, recvUser, tSend time.Time) float64 {
 	rttMono := recvUser.Sub(tSend)
 	dur := rttMono
 
@@ -492,9 +522,7 @@ func replyResult(oob []byte, recvUser, tSend time.Time) probe.Result {
 		}
 	}
 
-	rtt := float64(dur.Microseconds()) / usPerMs
-
-	return probe.SuccessResult(rtt)
+	return float64(dur.Microseconds()) / usPerMs
 }
 
 // rxTimestamp extracts the kernel RX timestamp (SCM_TIMESTAMPNS) from the ancillary data.

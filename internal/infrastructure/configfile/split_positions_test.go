@@ -33,7 +33,7 @@ func TestColumnBreakConfigRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected targets or parser notes: %+v", cfg)
 	}
 
-	diagnostics, err := Check(strings.NewReader(input), acceptSetting)
+	diagnostics, err := Check(strings.NewReader(input), acceptSetting, acceptPlan)
 	if err != nil || len(diagnostics) != 0 {
 		t.Fatalf("Check = %+v, %v", diagnostics, err)
 	}
@@ -60,6 +60,7 @@ func TestColumnBreakDescriptionOptional(t *testing.T) {
 	diagnostics, err := Check(
 		strings.NewReader(input),
 		acceptSetting,
+		acceptPlan,
 	)
 	if err != nil || len(diagnostics) != 0 {
 		t.Fatalf("Check = %+v, %v", diagnostics, err)

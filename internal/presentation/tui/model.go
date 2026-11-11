@@ -43,7 +43,8 @@ type Model struct {
 	flagWarns   []string // warnings about the command-line flags; kept across reloads.
 	configWarns []string // warnings of the latest config read (e.g. rp_filter).
 	logDropped  int      // result lines the log has dropped, as the session last reported.
-	logError    string   // the first persistent storage failure.
+	logError    string   // the latest storage failure the log reported; "" while none has.
+	logFailing  bool     // the log is still in that failure (false once it writes again).
 	warnings    []string // header warnings: flagWarns, configWarns, then the log's.
 }
 
@@ -155,8 +156,12 @@ func (m Model) composeWarnings() Model {
 		w = append(w, logDroppedLine(m.logDropped))
 	}
 
-	if m.logError != "" {
-		w = append(w, "log write failed: "+m.logError)
+	switch {
+	case m.logError == "":
+	case m.logFailing:
+		w = append(w, logFailingLine(m.logError))
+	default:
+		w = append(w, logRecoveredLine(m.logError))
 	}
 
 	m.warnings = w
@@ -197,9 +202,9 @@ func (m Model) handleMonitoring(event monitoring.Event) (tea.Model, tea.Cmd) {
 		m = m.showLogDropped(out.LogDropped)
 	}
 
-	if out.LogError != nil && m.logError == "" {
-		m.logError = out.LogError.Error()
-		m = m.composeWarnings().recalcWidths().clampScroll()
+	// Only a recorded result carries the log's status; other transitions leave it nil.
+	if out.Recorded != nil {
+		m = m.showLogHealth(out.LogError)
 	}
 
 	cmds := make([]tea.Cmd, 0, len(out.Tasks))
@@ -257,6 +262,30 @@ func (m Model) showRecorded(r monitoring.Recorded) Model {
 func (m Model) showLogDropped(n int) Model {
 	first := m.logDropped == 0
 	m.logDropped = n
+	m = m.composeWarnings()
+
+	if first {
+		m = m.recalcWidths().clampScroll()
+	}
+
+	return m
+}
+
+// showLogHealth shows the log's storage status as a recorded result reports it: a failure
+// while it lasts, and once the log writes again, that it failed earlier — the log lacks
+// the lines of that time. Nothing changes while the status does not.
+func (m Model) showLogHealth(err error) Model {
+	failing, text := err != nil, m.logError
+	if failing {
+		text = err.Error()
+	}
+
+	if failing == m.logFailing && text == m.logError {
+		return m
+	}
+
+	first := m.logError == ""
+	m.logError, m.logFailing = text, failing
 	m = m.composeWarnings()
 
 	if first {

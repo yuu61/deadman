@@ -50,9 +50,10 @@ type LogWriter struct {
 	ch    chan logEntry
 	done  chan struct{}
 
-	mu sync.Mutex
-	// firstErr is shared with the session's nonblocking status reader.
-	firstErr error
+	// firstErr and health are shared with the session's nonblocking status reader.
+	mu       sync.Mutex
+	firstErr error     // the first storage failure, which Close reports.
+	health   logHealth // whose writes are failing now, which Err reports.
 
 	dropped atomic.Int64 // lines Log dropped because the queue was full.
 }
@@ -60,9 +61,10 @@ type LogWriter struct {
 // NewLogWriter starts a LogWriter writing under dir.
 func NewLogWriter(dir string) *LogWriter {
 	w := &LogWriter{
-		store: newLogStore(dir),
-		ch:    make(chan logEntry, logQueueDepth),
-		done:  make(chan struct{}),
+		store:  newLogStore(dir),
+		ch:     make(chan logEntry, logQueueDepth),
+		done:   make(chan struct{}),
+		health: newLogHealth(),
 	}
 	go w.run()
 
@@ -111,12 +113,14 @@ func (w *LogWriter) Close() error {
 	return err
 }
 
-// Err reports the first storage failure without waiting for a filesystem operation.
+// Err reports the storage failure the writer is in now, without waiting for a filesystem
+// operation: the most recent failure while a row's latest write failed, nil once the rows
+// that failed have written again. Close still reports the first failure of the run.
 func (w *LogWriter) Err() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	return w.firstErr
+	return w.health.current()
 }
 
 func (w *LogWriter) run() {
@@ -126,7 +130,15 @@ func (w *LogWriter) run() {
 	for e := range w.ch {
 		err := w.store.write(e.reading, e.now)
 		w.rememberError(err)
+		w.recordHealth(e.reading.ID, err)
 	}
+}
+
+func (w *LogWriter) recordHealth(id string, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.health.record(id, err)
 }
 
 func (w *LogWriter) rememberError(err error) {

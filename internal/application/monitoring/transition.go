@@ -30,7 +30,10 @@ type Transition struct {
 	// LogDropped is how many result lines the log has dropped over the session, reported
 	// when the Recorded result was one of them; 0 when it was logged (or not logging).
 	LogDropped int
-	LogError   error // a storage failure reported by a background log writer.
+	// LogError is the storage failure a background log writer is in now (ResultLogStatus),
+	// reported with each Recorded result: nil there means the log writes again, or that it
+	// reports no status.
+	LogError error
 }
 
 // Recorded is a row a probe result just changed: its position in Table, and the detached

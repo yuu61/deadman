@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/yuu61/deadman/internal/infrastructure/configfile"
+	"github.com/yuu61/deadman/internal/infrastructure/prober"
 	"github.com/yuu61/deadman/internal/presentation/tui"
 )
 
@@ -19,7 +20,7 @@ func processConfig(args cliArgs, output io.Writer) error {
 		return err
 	}
 
-	diagnostics, err := configfile.Check(bytes.NewReader(data), tui.CheckSetting)
+	diagnostics, err := configfile.Check(bytes.NewReader(data), tui.CheckSetting, prober.Check)
 	if err != nil {
 		return fmt.Errorf("%s: read configuration: %w", args.ConfigPath, err)
 	}

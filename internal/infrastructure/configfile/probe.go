@@ -18,7 +18,15 @@ import (
 // "" from take means the attribute was omitted.
 type probeInput struct {
 	attrs map[string]string
-	err   error
+	err   error // the first attribute error, which parseProbe reports.
+}
+
+// fail records an attribute error. The first one is kept, so the reported error follows
+// the order in which the method's reader reads its attributes rather than which came last.
+func (p *probeInput) fail(err error) {
+	if p.err == nil {
+		p.err = err
+	}
 }
 
 func (p *probeInput) take(key string) string {
@@ -52,7 +60,7 @@ func (p *probeInput) port() probe.Port {
 
 	port, err := parsePort(raw)
 	if err != nil {
-		p.err = fmt.Errorf("invalid port %q: expected an integer", raw)
+		p.fail(fmt.Errorf("invalid port %q: expected an integer", raw))
 	}
 
 	return port
@@ -76,7 +84,7 @@ func (p *probeInput) relayHostPort() (string, probe.Port) {
 
 	host, port, err := splitHostPort(raw)
 	if err != nil {
-		p.err = fmt.Errorf("invalid relay=%q: %w", raw, err)
+		p.fail(fmt.Errorf("invalid relay=%q: %w", raw, err))
 	}
 
 	return host, port
@@ -184,7 +192,7 @@ func (p *probeInput) family() probe.Family {
 	case "ipv6":
 		return probe.FamilyIPv6
 	default:
-		p.err = fmt.Errorf("invalid resolve_family=%q", raw)
+		p.fail(fmt.Errorf("invalid resolve_family=%q", raw))
 
 		return probe.FamilyUnknown
 	}
@@ -200,7 +208,7 @@ func (p *probeInput) verify() probe.Verification {
 
 	on, err := parseBool(raw)
 	if err != nil {
-		p.err = fmt.Errorf("invalid verify=%q", raw)
+		p.fail(fmt.Errorf("invalid verify=%q", raw))
 	}
 
 	if on {
@@ -220,7 +228,7 @@ func (p *probeInput) gateway() netip.Addr {
 
 	a, err := probe.ParseIP(raw)
 	if err != nil {
-		p.err = fmt.Errorf("invalid nexthop=%q: expected IP address", raw)
+		p.fail(fmt.Errorf("invalid nexthop=%q: expected IP address", raw))
 	}
 
 	return a

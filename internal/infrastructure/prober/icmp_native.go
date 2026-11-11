@@ -20,6 +20,18 @@ const (
 	ipv4IHLWordSize = 4
 )
 
+// echoReplyKind selects the address family for nativeEchoReply: the IP protocol number
+// passed to icmp.ParseMessage and the ICMP type a reply must carry.
+type echoReplyKind struct {
+	proto     int
+	replyType icmp.Type
+}
+
+var (
+	echoKindV4 = echoReplyKind{ianaProtocolICMP, ipv4.ICMPTypeEchoReply}
+	echoKindV6 = echoReplyKind{ianaProtocolICMPv6, ipv6.ICMPTypeEchoReply}
+)
+
 // nativeEchoConn retains the underlying socket so its buffers can be grown before
 // it is wrapped by x/net. Its IPv4 reader also handles Darwin's IP_STRIPHDR behavior.
 type nativeEchoConn struct {

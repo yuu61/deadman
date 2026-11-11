@@ -58,17 +58,30 @@ type subprocessPinger struct {
 	ssh bool
 }
 
-func newSSHPinger(dest probe.Destination, relay probe.SSH) (probe.Pinger, error) {
-	// The ssh host and the remote ping's destination are bare operands in the argv, so a
-	// leading '-' would be parsed as an option — most dangerously a relay of
-	// "-oProxyCommand=..." that runs an arbitrary local command. Reject both.
+// argvOperandError rejects a relay whose argv would carry a value starting with '-' as a
+// bare operand, where it would be parsed as an option: the ssh host or the namespace / VRF
+// name, and the ping's destination — most dangerously an ssh relay of "-oProxyCommand=..."
+// that runs an arbitrary local command. New refuses to build such a row, and Check reports
+// it to --check.
+func argvOperandError(dest probe.Destination, params probe.RelayParams) error {
 	addr := dest.String()
 
-	err := validateOperands(relay.Host, addr)
-	if err != nil {
-		return nil, err
+	switch p := params.(type) {
+	case probe.SSH:
+		return validateOperands(p.Host, addr)
+	case probe.Netns:
+		return validateOperands(p.Name, addr)
+	case probe.VRF:
+		return validateOperands(p.Name, addr)
+	case probe.SNMP, probe.RouterOS:
+		return nil // their requests carry no argv.
+	default:
+		return nil
 	}
+}
 
+func newSSHPinger(dest probe.Destination, relay probe.SSH) (probe.Pinger, error) {
+	addr := dest.String()
 	_, named := dest.Name()
 
 	return &subprocessPinger{
@@ -101,14 +114,7 @@ func newNamespacePinger(
 	n probe.Namespace,
 	kind string,
 ) (probe.Pinger, error) {
-	// The namespace or VRF name and addr are bare operands in the argv; reject a leading '-'.
 	addr := dest.String()
-
-	err := validateOperands(n.Name, addr)
-	if err != nil {
-		return nil, err
-	}
-
 	_, named := dest.Name()
 
 	return &subprocessPinger{

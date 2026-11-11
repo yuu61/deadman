@@ -8,9 +8,44 @@ import (
 	"testing"
 
 	"github.com/yuu61/deadman/internal/application/config"
+	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
 func acceptSetting(config.Setting) error { return nil }
+
+func acceptPlan(probe.Plan) error { return nil }
+
+// A target that compiles is still a problem when the probing adapters would refuse to
+// build it: Check asks checkPlan about every compiled target, and only those.
+func TestCheckReportsAdapterRefusals(t *testing.T) {
+	input := "ok 192.0.2.1\nrefused 192.0.2.2 probe=tcp port=80\nbad 192.0.2.3 probe=tcp port=0\n"
+
+	var asked []string
+
+	got, err := Check(strings.NewReader(input), acceptSetting, func(plan probe.Plan) error {
+		asked = append(asked, plan.Destination().String())
+		if plan.Destination().String() == "192.0.2.2" {
+			return errors.New("adapter refusal")
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []Diagnostic{{Line: 2, Problem: "adapter refusal"}}
+	if len(got) != 2 || got[0] != want[0] || got[1].Line != 3 {
+		t.Fatalf(
+			"diagnostics = %+v, want the refusal on line 2 and the Compile error on line 3",
+			got,
+		)
+	}
+
+	if !reflect.DeepEqual(asked, []string{"192.0.2.1", "192.0.2.2"}) {
+		t.Fatalf("checkPlan asked about %q, want only the compiled targets", asked)
+	}
+}
 
 func TestCheckReportsPhysicalLines(t *testing.T) {
 	input := "\ufeff# comment\r\n\r\n" +
@@ -38,7 +73,7 @@ func TestCheckReportsPhysicalLines(t *testing.T) {
 		{12, "address is required"},
 	}
 
-	got, err := Check(strings.NewReader(input), acceptSetting)
+	got, err := Check(strings.NewReader(input), acceptSetting, acceptPlan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +102,7 @@ func TestCheckDirectiveSyntax(t *testing.T) {
 		"separator_blank", "separator_blank maybe", "separator_blank on off",
 	} {
 		t.Run(input, func(t *testing.T) {
-			got, err := Check(strings.NewReader(input), acceptSetting)
+			got, err := Check(strings.NewReader(input), acceptSetting, acceptPlan)
 			if err != nil || len(got) != 1 {
 				t.Fatalf("Check = %+v, %v; want one diagnostic", got, err)
 			}
@@ -85,7 +120,7 @@ func TestCheckSettingsIncludingOverriddenValues(t *testing.T) {
 		got = append(got, setting)
 
 		return errors.New("frontend validation")
-	})
+	}, acceptPlan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +151,7 @@ func TestCheckValidConfig(t *testing.T) {
 		"router 192.0.2.2 probe=routeros relay=192.0.2.1 username=ops password=\"a;# b\"\n" +
 		"namespace 192.0.2.3 probe=netns relay=blue\nblank 192.0.2.4\n#blank\n"
 
-	got, err := Check(strings.NewReader(input), acceptSetting)
+	got, err := Check(strings.NewReader(input), acceptSetting, acceptPlan)
 	if err != nil || len(got) != 0 {
 		t.Fatalf(
 			"Check = %+v, %v; want valid without resolving hosts or checking local resources",
@@ -131,7 +166,7 @@ type failedReader struct{}
 func (failedReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
 func TestConfigToolsReadErrors(t *testing.T) {
-	_, err := Check(failedReader{}, acceptSetting)
+	_, err := Check(failedReader{}, acceptSetting, acceptPlan)
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Errorf("Check read error = %v", err)
 	}
@@ -143,7 +178,7 @@ func TestConfigToolsReadErrors(t *testing.T) {
 
 	longLine := strings.Repeat("x", 100_000)
 
-	_, err = Check(strings.NewReader(longLine), acceptSetting)
+	_, err = Check(strings.NewReader(longLine), acceptSetting, acceptPlan)
 	if err == nil {
 		t.Error("Check accepted an oversized line rejected by Parse")
 	}

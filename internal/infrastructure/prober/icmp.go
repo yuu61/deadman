@@ -16,7 +16,15 @@ import (
 	"github.com/yuu61/deadman/internal/domain/probe"
 )
 
-const icmpTimeout = 1 * time.Second
+// icmpTimeout is how long a direct or forced echo waits for its reply, counted from when
+// it is sent, as ping's -W counts it. resolveTimeout bounds the name lookup before it on
+// its own budget, so a slow resolver never shortens the wait into a loss the target did
+// not cause; a lookup that runs out observed nothing. (The forced probe's gateway lookup
+// has its own bound, neighborResolveTimeout.)
+const (
+	icmpTimeout    = 1 * time.Second
+	resolveTimeout = 1 * time.Second
+)
 
 // icmpPinger sends a native direct ICMP echo; how is each platform's Send
 // (icmp_linux.go, icmp_other.go). The probe.Direct->pinger wiring test

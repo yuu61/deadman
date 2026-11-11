@@ -7,7 +7,6 @@ import (
 	"math"
 
 	"golang.org/x/net/bpf"
-	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
@@ -68,32 +67,6 @@ func filterICMPSocket(fd, proto, id int) error {
 	program := unix.SockFprog{Len: uint16(n), Filter: &code[0]}
 
 	err = unix.SetsockoptSockFprog(fd, unix.SOL_SOCKET, unix.SO_ATTACH_FILTER, &program)
-	if err != nil {
-		return fmt.Errorf("attach the ICMP echo filter: %w", err)
-	}
-
-	return nil
-}
-
-func filterEcho(conn *icmp.PacketConn, id int) error {
-	v4 := conn.IPv4PacketConn()
-
-	proto := ianaProtocolICMPv6
-	if v4 != nil {
-		proto = ianaProtocolICMP
-	}
-
-	filter, err := echoFilter(proto, id)
-	if err != nil {
-		return err
-	}
-
-	if v4 != nil {
-		err = v4.SetBPF(filter)
-	} else {
-		err = conn.IPv6PacketConn().SetBPF(filter)
-	}
-
 	if err != nil {
 		return fmt.Errorf("attach the ICMP echo filter: %w", err)
 	}
