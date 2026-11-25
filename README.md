@@ -23,8 +23,8 @@ deadman は ICMP echo によるホストの死活監視に特化した TUI ツ�
 [Releases](https://github.com/yuu61/deadman/releases) から OS・アーキテクチャに合ったアーカイブ（Windows は `.zip`、ほかは `.tar.gz`）をダウンロードして展開します。
 
 ```sh
-tar xzf deadman-v0.1.0-linux-amd64.tar.gz
-cd deadman-v0.1.0-linux-amd64
+tar xzf deadman-v0.10.0-linux-amd64.tar.gz
+cd deadman-v0.10.0-linux-amd64
 ./deadman deadman.conf
 ```
 
